@@ -774,7 +774,7 @@ function showAddAddress(preset = null) {
           <button class="link-button" id="pf-addr-scan">${SF.qrViewfinder(16)}<span>Scan QR</span></button>
         </div>
       </div>
-      <div class="form-footer">Enter a Kaspa address or a KNS domain like name.kas. Every received transaction on this address becomes a buy, every sent transaction becomes a sell, priced at that day's historical KAS price. Re-adding the same address later only imports transactions found since the last import.</div>
+      <div class="form-footer">Enter a Kaspa address or a KNS domain like name.kas. Every received transaction on this address becomes a buy, every sent transaction becomes a sell, priced at that day's historical K&#x41;S price. Re-adding the same address later only imports transactions found since the last import.</div>
     </div>`;
   const bar = () => ({
     leading: { label: "Cancel", disabled: s.importing, onClick: () => panel.close() },
@@ -984,7 +984,7 @@ export async function showAddToPortfolio(opts) {
       <div class="form-header">Amount and price</div>
       <div class="form-card">
         <label class="form-row pf-field-row"><span>Amount</span><input id="pf-atp-amount" inputmode="decimal" placeholder="0" value="${esc(s.amountText)}" autocomplete="off" /></label>
-        <label class="form-row pf-field-row"><span>Price per KAS</span><span id="pf-atp-spin">${s.lookingUp ? '<span class="spinner small-spin"></span>' : ""}</span><input id="pf-atp-price" inputmode="decimal" placeholder="0" value="${esc(s.priceText)}" autocomplete="off" /></label>
+        <label class="form-row pf-field-row"><span>Price per K&#x41;S</span><span id="pf-atp-spin">${s.lookingUp ? '<span class="spinner small-spin"></span>' : ""}</span><input id="pf-atp-price" inputmode="decimal" placeholder="0" value="${esc(s.priceText)}" autocomplete="off" /></label>
         <div class="form-row between" id="pf-atp-total-row" ${total() != null ? "" : "hidden"}><span>Total</span><span class="muted" id="pf-atp-total">${total() != null ? esc(core.currency(total())) : ""}</span></div>
       </div>
     </div>
