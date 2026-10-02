@@ -136,6 +136,11 @@ export function showKachatMarket({ onBack }) {
   const pageHtml = () => (isLive() ? live.livePageHtml(page) : mockPage());
   const heroStatus = () => {
     if (isLive()) return live.testnetBadge();
+    // The bundled manifest is for the previous registry: a calm "Setting up", no error (iOS d2e0673).
+    if (kachatLive && live.hub.upgrading) {
+      return `<div class="kl-badges">${live.testnetBadge()}<span class="coming-pill kl-setting-up">${SYMBOLS.hammer}<span>Setting up</span></span></div>
+        <p class="muted tiny center-text">The .kachat registry on Testnet is being upgraded. Names open here again once the new registry is live.</p>`;
+    }
     const error = kachatLive && live.hub.ready === false && live.hub.setupError
       ? `<p class="muted tiny center-text">${esc(live.hub.setupError)}</p>` : "";
     return pill() + error;
