@@ -876,7 +876,7 @@ html:has(#app[data-screen="qr"]), body:has(#app[data-screen="qr"]) { background:
 .kp-found { flex-direction: column; align-items: flex-start; gap: 6px; }
 .kp-grow { flex: 1; }
 .kp-avatar { width: 64px; height: 64px; border-radius: 50%; object-fit: cover; background: var(--panel-2); }
-.kp-banner { width: 100%; height: 90px; border-radius: 8px; object-fit: cover; background: var(--panel-2); }
+.kp-banner { border-radius: 8px; overflow: hidden; }
 .kl-paid { display: inline-flex; align-items: center; gap: 6px; }
 .kl-paid svg { flex: none; }
 .kl-badges { display: inline-flex; gap: 6px; align-items: center; }
@@ -884,3 +884,6 @@ html:has(#app[data-screen="qr"]), body:has(#app[data-screen="qr"]) { background:
 .kachat-coming svg { width: 40px; height: 40px; }
 .kl-one { padding: 0 16px; display: flex; }
 .kl-one > button { flex: 1; padding: 12px; }
+.fit-banner { width: 100%; height: var(--placeholder, 140px); position: relative; }
+.fit-banner.loaded { height: auto; }
+.fit-banner img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; display: block; }

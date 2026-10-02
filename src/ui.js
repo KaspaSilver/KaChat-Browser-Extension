@@ -45,6 +45,18 @@ export function render(html, screen = "") {
 
 export function $(selector) { return app.querySelector(selector); }
 
+// A banner shown whole (iOS KNSBannerImageView fitsWidth, c66bfc7): full width at the picture's
+// own proportions, held to 1.5:1 to 8:1 and shown whole inside. Markup: <div class="fit-banner"
+// style="--placeholder: 140px"><img ...></div>; the box keeps the placeholder height until the
+// picture loads. One listener for every banner (extension pages allow no inline handlers).
+document.addEventListener("load", (event) => {
+  const img = event.target;
+  if (!(img instanceof HTMLImageElement) || !img.parentElement?.classList.contains("fit-banner")) return;
+  const ratio = img.naturalHeight > 0 ? Math.min(8, Math.max(1.5, img.naturalWidth / img.naturalHeight)) : 3;
+  img.parentElement.style.aspectRatio = String(ratio);
+  img.parentElement.classList.add("loaded");
+}, true);
+
 let toastTimer = null;
 export function toast(message) {
   toastEl.textContent = unitText(String(message));

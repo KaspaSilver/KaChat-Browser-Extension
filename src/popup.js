@@ -180,7 +180,7 @@ function paintHome() {
 
         <div class="glass hero">
           ${social.banner
-            ? `<div class="banner"><img src="${esc(social.banner)}" alt="" referrerpolicy="no-referrer" /></div>`
+            ? `<div class="fit-banner" style="--placeholder: 140px"><img src="${esc(social.banner)}" alt="" referrerpolicy="no-referrer" /></div>`
             : '<div class="banner gradient"></div>'}
           <div class="hero-row">
             ${social.avatar

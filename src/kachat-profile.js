@@ -111,7 +111,7 @@ function showLiveProfileEditor({ onSaved }) {
       const shown = kind === SocialKind.avatar
         ? `<img class="kp-avatar" src="${esc(piece)}" alt="" referrerpolicy="no-referrer" />`
         : kind === SocialKind.banner
-          ? `<img class="kp-banner" src="${esc(piece)}" alt="" referrerpolicy="no-referrer" />`
+          ? `<div class="fit-banner kp-banner" style="--placeholder: 90px"><img src="${esc(piece)}" alt="" referrerpolicy="no-referrer" /></div>`
           : `<span class="small">${esc(piece)}</span>`;
       return `<div class="form-row kp-preview kp-found">${shown}<span class="muted tiny strong">From ${esc(name)}</span></div>`;
     }
