@@ -1,11 +1,11 @@
 # KaChat Wallet - store listing and review answers
 
 Everything the Chrome Web Store, Microsoft Edge Add-ons and Firefox Add-ons (AMO) forms ask for,
-ready to paste. Build the upload files with `npm run ext:package` (see README.md).
+ready to paste. Build the upload files with `npm run package` (see README.md).
 
 | Store | Upload | Developer dashboard |
 |---|---|---|
-| Chrome Web Store (also Brave, Opera, Vivaldi, Arc) | `extension/packages/kachat-wallet-<version>-chromium.zip` | https://chrome.google.com/webstore/devconsole |
+| Chrome Web Store (also Brave, Opera, Vivaldi, Arc) | `packages/kachat-wallet-<version>-chromium.zip` | https://chrome.google.com/webstore/devconsole |
 | Microsoft Edge Add-ons | the same chromium zip | https://partner.microsoft.com/dashboard/microsoftedge |
 | Firefox Add-ons | `kachat-wallet-<version>-firefox.zip`, plus `kachat-wallet-<version>-source.zip` when asked for source code | https://addons.mozilla.org/developers/ |
 
@@ -94,10 +94,9 @@ Your call - review it before submitting.
   and paste these build notes:
 
   > Requirements: Node.js 20+ and npm. From the repository root: `npm install`, then
-  > `npm run ext:package`. The Firefox build is `extension/dist-firefox/`; the zip is
-  > `extension/packages/kachat-wallet-<version>-firefox.zip`. `kaspa/kaspa.js` and
-  > `kaspa/kaspa_bg.wasm` are the rusty-kaspa WASM SDK (ISC licence), committed prebuilt;
-  > `npm run setup:wasm` rebuilds them from source.
+  > `npm run package`. The Firefox build is `dist-firefox/`; the zip is
+  > `packages/kachat-wallet-<version>-firefox.zip`. `shared/kaspa/kaspa.js` and
+  > `shared/kaspa/kaspa_bg.wasm` are the rusty-kaspa WASM SDK (ISC licence), committed prebuilt.
 
 ## Screenshots
 

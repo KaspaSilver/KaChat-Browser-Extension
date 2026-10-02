@@ -1,0 +1,420 @@
+import { NETWORK_ID, validateMainnetAddress, sompiToKaspaDisplay } from "./utils.js";
+
+// Every real send (messages, handshakes, self-stash, KAS payments, KNS
+// commits) funnels through sendKaspa()'s UTXO-fetch-then-spend window below.
+// Firing several of these concurrently — e.g. a user sending multiple chat
+// messages in quick succession — lets two calls fetch the same unspent UTXOs
+// before either has broadcast, so both try to spend them and one fails.
+// Keyed per source address (not global) so unrelated addresses never wait on
+// each other; queued per address since they share one UTXO pool.
+const sendQueues = new Map();
+
+/** Runs a task in the per-address send queue: anything that picks and spends coins from one
+ *  address goes through here so two builds never choose the same coin. */
+export function enqueueSend(sourceAddress, task) {
+  const previous = sendQueues.get(sourceAddress) || Promise.resolve();
+  const next = previous.then(task, task).finally(() => {
+    if (sendQueues.get(sourceAddress) === next) sendQueues.delete(sourceAddress);
+  });
+  sendQueues.set(sourceAddress, next);
+  return next;
+}
+
+export async function getBalance(kaspa, rpc, address) {
+  const response = await rpc.getUtxosByAddresses([address]);
+  const entries = response.entries || [];
+  const totalSompi = entries.reduce((sum, u) => sum + BigInt(u.amount), 0n);
+  return {
+    entries,
+    totalSompi,
+    totalKas: sompiToKaspaDisplay(kaspa, totalSompi),
+    utxoCount: entries.length,
+  };
+}
+
+// Coins reserved by scheduled KaPosts (KAPOSTS_INDEXER.md §5.10): a signed transaction waiting
+// for its time depends on them, so every builder here leaves them alone. "txid:index" strings.
+let reservedOutpoints = new Set();
+export function setReservedOutpoints(list) {
+  reservedOutpoints = new Set(Array.isArray(list) ? list.map(String) : []);
+}
+export function excludeReservedUtxos(entries) {
+  if (!reservedOutpoints.size) return entries;
+  return (entries || []).filter((entry) => !reservedOutpoints.has(`${entry?.outpoint?.transactionId}:${entry?.outpoint?.index}`));
+}
+
+/** The one coin an arena message spends (iOS builds every chess send with a single input): the
+ *  largest coin that covers the amount plus a fee margin. Null when no single coin can. */
+export function singleInputFor(entries, amountSompi, marginSompi = 300_000n) {
+  const sorted = [...(entries || [])].sort((a, b) => (BigInt(a.amount) > BigInt(b.amount) ? -1 : 1));
+  const pick = sorted.find((e) => BigInt(e.amount || 0) >= amountSompi + marginSompi) || null;
+  return pick ? [pick] : null;
+}
+
+export async function sendKaspa({ kaspa, rpc, withRpc = null, privateKey, sourceAddress, destinationAddress, amountKas, feeKas = "0", payload = null, selectedOutpoints = null, changeAddress = null, singleInput = false, log = () => {} }) {
+  return enqueueSend(sourceAddress, () => sendKaspaWithUtxoRetry({ kaspa, rpc, withRpc, privateKey, sourceAddress, destinationAddress, amountKas, feeKas, payload, selectedOutpoints, changeAddress, singleInput, log }));
+}
+
+// Consolidate ("compound") every UTXO at `sourceAddress` into a single self-output with NO change,
+// matching iOS's Compound UTXOs. A plain self-send that leaves a tiny change output gets rejected
+// by Kaspa's KIP-9 storage-mass rule, so the transaction is assembled by hand with exactly one
+// output of (total - fee); more than 80 coins are compounded in chunks of 80.
+export async function sweepAllToSelf({ kaspa, rpc, withRpc = null, privateKey, sourceAddress, totalFeeSompi = null, log = () => {} }) {
+  return enqueueSend(sourceAddress, () => sweepAllToSelfNow({ kaspa, rpc, withRpc, privateKey, sourceAddress, totalFeeSompi, log }));
+}
+// One all-schnorr-input transaction tops out near the standard mass ceiling around ~85 inputs.
+const MAX_INPUTS_PER_SWEEP = 80;
+async function sweepAllToSelfNow({ kaspa, rpc, withRpc, privateKey, sourceAddress, totalFeeSompi, log }) {
+  const fetchUtxos = (activeRpc) => activeRpc.getUtxosByAddresses([sourceAddress]);
+  let { entries } = withRpc
+    ? await withRpc(fetchUtxos, { retries: 1, label: "Compound UTXO fetch" })
+    : await fetchUtxos(rpc);
+  if (!entries || entries.length === 0) throw new Error("No UTXOs to compound.");
+  entries = excludeReservedUtxos(entries);
+  if (entries.length === 0) throw new Error("Every coin is reserved by a scheduled post.");
+  entries.sort((a, b) => BigInt(a.amount) > BigInt(b.amount) ? 1 : -1);
+
+  // Built by hand, never through the generator: asking it for (total - fee) left it a few
+  // hundred sompi of change, which it dutifully emitted as a second output - and an output that
+  // small has a KIP-9 storage mass far past the maximum, so every compound of a healthy balance
+  // died with "Storage mass exceeds maximum". Exactly one output of (total - fee) per
+  // transaction means no change can exist. Same approach as sendMaxKaspaNow below.
+  const chunks = [];
+  for (let i = 0; i < entries.length; i += MAX_INPUTS_PER_SWEEP) chunks.push(entries.slice(i, i + MAX_INPUTS_PER_SWEEP));
+  const txids = [];
+  for (const [index, chunk] of chunks.entries()) {
+    const total = chunk.reduce((sum, e) => sum + BigInt(e.amount || 0), 0n);
+    const draft = kaspa.createTransaction(chunk, [{ address: sourceAddress, amount: total - (total / 20n) }], 0n);
+    const floorFeeSompi = BigInt(kaspa.calculateTransactionFee(NETWORK_ID, draft, 1) ?? 0n);
+    // The displayed policy fee is what the whole compound pays when it fits one transaction;
+    // a chunked compound pays each chunk's own network floor.
+    let fee = chunks.length === 1 && totalFeeSompi != null ? BigInt(totalFeeSompi) : floorFeeSompi;
+    if (fee < floorFeeSompi) fee = floorFeeSompi;
+    const amount = total - fee;
+    if (amount <= 0n) throw new Error("Balance too low to compound after network fees.");
+    const tx = kaspa.createTransaction(chunk, [{ address: sourceAddress, amount }], 0n);
+    const signed = kaspa.signTransaction(tx, [signingKeyArg(privateKey)], true);
+    const submit = (activeRpc) => activeRpc.submitTransaction({ transaction: signed, allowOrphan: false });
+    const response = withRpc
+      ? await withRpc(submit, { retries: 1, label: "Compound broadcast" })
+      : await submit(rpc);
+    const txid = response?.transactionId || signed.id;
+    txids.push(txid);
+    log(`Compound txid (${index + 1}/${chunks.length}):`, txid);
+  }
+  return { txids };
+}
+
+// True "Max" send to a recipient: probe the exact fee for spending every input, then send
+// exactly (total - totalFee) with the difference over the base fee paid as priority — so the
+// generator emits a SINGLE output and folds any sub-dust remainder into the fee. A near-max
+// amount sent through the normal path can't work: whatever tiny remainder is left becomes a
+// dust change output, and Kaspa's KIP-9 storage-mass rule rejects the transaction (the same
+// reason sweepAllToSelf above is a two-pass exact sweep). `totalFeeSompi` is the UI's
+// displayed policy fee; it is clamped up to the generator's own base fee if too low.
+export async function sendMaxKaspa(args) {
+  return enqueueSend(args.sourceAddress, () => sendMaxKaspaNow(args));
+}
+async function sendMaxKaspaNow({ kaspa, rpc, withRpc = null, privateKey, sourceAddress, destinationAddress, totalFeeSompi = null, selectedOutpoints = null, log = () => {} }) {
+  const fetchUtxos = (activeRpc) => activeRpc.getUtxosByAddresses([sourceAddress]);
+  let { entries } = withRpc
+    ? await withRpc(fetchUtxos, { retries: 1, label: "Max send UTXO fetch" })
+    : await fetchUtxos(rpc);
+  if (!entries || entries.length === 0) throw new Error("No UTXOs to send.");
+  entries = excludeReservedUtxos(entries);
+  if (entries.length === 0) throw new Error("Every coin is reserved by a scheduled post.");
+  if (selectedOutpoints && selectedOutpoints.length) {
+    const wanted = new Set(selectedOutpoints);
+    entries = entries.filter((entry) => {
+      const outpoint = entry.outpoint || {};
+      return wanted.has(`${outpoint.transactionId}:${outpoint.index}`);
+    });
+    if (entries.length === 0) throw new Error("The selected coins are no longer available.");
+  }
+  entries.sort((a, b) => BigInt(a.amount) > BigInt(b.amount) ? 1 : -1);
+  // One all-schnorr-input transaction tops out near the standard mass ceiling around ~85
+  // inputs — the generator would split into a chain, but a max send must be a single tx.
+  if (entries.length > 80) {
+    throw new Error("Too many coins for one transaction — run Compound UTXOs first, then send Max.");
+  }
+  const total = entries.reduce((sum, e) => sum + BigInt(e.amount || 0), 0n);
+
+  // Measure the exact network-floor fee for this transaction shape (all inputs, ONE output)
+  // on a draft, then build the real thing manually: outputs are exactly (total - fee), so no
+  // change output can ever exist — the generator's own change/dust handling is what kept
+  // tripping KIP-9 on near-max amounts. Mirrors the KNS reveal's manual-build approach.
+  const draft = kaspa.createTransaction(entries, [{ address: destinationAddress, amount: total - (total / 20n) }], 0n);
+  const floorFeeSompi = BigInt(kaspa.calculateTransactionFee(NETWORK_ID, draft, 1) ?? 0n);
+  let totalFee = totalFeeSompi != null ? BigInt(totalFeeSompi) : floorFeeSompi;
+  if (totalFee < floorFeeSompi) totalFee = floorFeeSompi;
+  const amount = total - totalFee;
+  if (amount <= 0n) throw new Error("Balance too low after network fees.");
+
+  const tx = kaspa.createTransaction(entries, [{ address: destinationAddress, amount }], 0n);
+  const signed = kaspa.signTransaction(tx, [signingKeyArg(privateKey)], true);
+  const submit = (activeRpc) => activeRpc.submitTransaction({ transaction: signed, allowOrphan: false });
+  const response = withRpc
+    ? await withRpc(submit, { retries: 1, label: "Max send broadcast" })
+    : await submit(rpc);
+  const txid = response?.transactionId || signed.id;
+  log("Max send txid:", txid);
+  return { txids: [txid], amountSompi: amount };
+}
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// Back-to-back self-sends (spamming chat/group messages) each spend the wallet's UTXO and
+// create a change UTXO that the node's confirmed UTXO set doesn't reflect for a moment. The
+// next queued send then finds no spendable UTXO (or tries to spend the just-spent one and the
+// mempool rejects it as already-spent/orphan) until the change lands. These are TRANSIENT: a
+// short wait + refetch succeeds. We retry ONLY on those UTXO-availability symptoms - never on a
+// generic network error (withRpc already handles node failover) or a real "insufficient funds",
+// and never after a tx was actually accepted (a returned result never reaches the retry). This
+// makes rapid message sending reliable without needing full UTXO-chaining.
+function isTransientUtxoError(error) {
+  const m = String(error?.message || error || "").toLowerCase();
+  return m.includes("no utxos") ||
+    m.includes("insufficient") ||
+    m.includes("already spent") ||
+    m.includes("orphan") ||
+    m.includes("outpoint") ||
+    (m.includes("utxo") && m.includes("not found"));
+}
+
+async function sendKaspaWithUtxoRetry(params) {
+  const maxAttempts = 5;
+  const retryDelayMs = 1200;
+  let lastError = null;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await sendKaspaNow(params);
+    } catch (error) {
+      lastError = error;
+      if (attempt >= maxAttempts || !isTransientUtxoError(error)) throw error;
+      params.log?.(`Send attempt ${attempt} hit a transient UTXO state (${error.message}); retrying in ${retryDelayMs}ms.`);
+      await sleep(retryDelayMs);
+    }
+  }
+  throw lastError;
+}
+
+// The SDK takes a private key as "a string or an instance of PrivateKey". The string form can
+// never go stale, so a live key object is handed over as its hex; a dead one (freed, or minted
+// by another module instance) cannot produce hex and goes through as-is for the SDK to judge.
+function signingKeyArg(privateKey) {
+  if (typeof privateKey === "string") return privateKey;
+  try {
+    const hex = privateKey?.__wbg_ptr ? String(privateKey.toString()) : "";
+    return /^[0-9a-f]{64}$/i.test(hex) ? hex : privateKey;
+  } catch {
+    return privateKey;
+  }
+}
+
+function describeKey(privateKey) {
+  if (typeof privateKey === "string") return "key: hex string";
+  if (!privateKey) return "key: missing";
+  return `key: ${privateKey.constructor?.name || typeof privateKey} ptr=${privateKey.__wbg_ptr ?? "n/a"}`;
+}
+
+async function sendKaspaNow({ kaspa, rpc, withRpc = null, privateKey, sourceAddress, destinationAddress, amountKas, feeKas = "0", payload = null, selectedOutpoints = null, changeAddress = null, singleInput = false, log = () => {} }) {
+  const to = validateMainnetAddress(destinationAddress);
+  const amount = String(amountKas || "").trim();
+  const fee = String(feeKas || "0").trim();
+  if (!amount || Number(amount) <= 0) throw new Error("Amount must be greater than 0.");
+
+  const fetchUtxos = (activeRpc) => activeRpc.getUtxosByAddresses([sourceAddress]);
+  let { entries } = withRpc
+    ? await withRpc(fetchUtxos, { retries: 1, label: "UTXO refresh" })
+    : await fetchUtxos(rpc);
+  if (!entries || entries.length === 0) throw new Error("No UTXOs found. Fund the receive address first.");
+  entries = excludeReservedUtxos(entries);
+  if (entries.length === 0) throw new Error("Every coin is reserved by a scheduled post. Wait for it to go out, or cancel it in KaPosts > Scheduled.");
+
+  // Coin control: if the caller picked specific UTXOs, spend only those (mirrors
+  // iOS's manualUtxos). An outpoint is keyed as "transactionId:index".
+  if (selectedOutpoints && selectedOutpoints.length) {
+    const wanted = new Set(selectedOutpoints);
+    entries = entries.filter((entry) => {
+      const outpoint = entry.outpoint || {};
+      return wanted.has(`${outpoint.transactionId}:${outpoint.index}`);
+    });
+    if (entries.length === 0) throw new Error("None of the selected UTXOs are still available. Refresh and try again.");
+  }
+  // An arena message spends one coin when one can carry it, so the fee is the one-input fee
+  // the label promised (mobile parity); a wallet of only small coins falls back to the usual pick.
+  if (singleInput && !selectedOutpoints?.length) {
+    const one = singleInputFor(entries, BigInt(kaspa.kaspaToSompi(amount)));
+    if (one) entries = one;
+  }
+  entries.sort((a, b) => BigInt(a.amount) > BigInt(b.amount) ? 1 : -1);
+
+  if (payload) {
+    const payloadKind = payload instanceof Uint8Array ? "Uint8Array" : typeof payload;
+    const payloadLength = payload instanceof Uint8Array ? payload.length : String(payload).length;
+    log("Payload:", payloadKind, payloadLength, "bytes/chars");
+  }
+  // iOS KaChatTransactionBuilder, after KIP-9: a wallet that holds a message's or handshake's
+  // nominal amount but not a fee on top spends everything it has into ONE output of (total - fee).
+  // A message is a self-spend and a handshake is recognised by payload, not by amount, so a
+  // little under the nominal figure serves just as well - and it is the only way an account
+  // funded by a 0.2 KAS handshake can ever answer it. Protocol sends only (self-spends and
+  // payload-carrying sends); a plain payment keeps the strict path and its "insufficient funds".
+  const protocolSend = to === sourceAddress || Boolean(payload);
+  if (protocolSend && entries.length <= 80) {
+    const amountSompi = BigInt(kaspa.kaspaToSompi(amount));
+    const prioritySompi = BigInt(kaspa.kaspaToSompi(fee));
+    const totalSompi = entries.reduce((sum, e) => sum + BigInt(e.amount || 0), 0n);
+    if (totalSompi >= amountSompi / 2n) {
+      const draft = kaspa.createTransaction(entries, [{ address: to, amount: totalSompi - (totalSompi / 20n) }], 0n, payload || undefined);
+      const floorFee = BigInt(kaspa.calculateTransactionFee(NETWORK_ID, draft, 1) ?? 0n);
+      const totalFee = floorFee + prioritySompi;
+      if (totalSompi < amountSompi + totalFee && totalSompi > totalFee) {
+        const reduced = totalSompi - totalFee;
+        log(`Balance holds the amount but not the fee; sending ${reduced} sompi as one output (total minus fee).`);
+        const tx = kaspa.createTransaction(entries, [{ address: to, amount: reduced }], 0n, payload || undefined);
+        const signed = kaspa.signTransaction(tx, [signingKeyArg(privateKey)], true);
+        const submitReduced = (activeRpc) => activeRpc.submitTransaction({ transaction: signed, allowOrphan: false });
+        const response = withRpc
+          ? await withRpc(submitReduced, { retries: 1, label: "Transaction broadcast" })
+          : await submitReduced(rpc);
+        const txid = response?.transactionId || signed.id;
+        log("Broadcast txid:", txid);
+        return { result: { summary: { reduced: true, amountSompi: reduced, feeSompi: totalFee } }, txids: [txid] };
+      }
+    }
+  }
+
+  // Change goes where the caller says (a fresh spending address when the primary spends, see
+  // ui/app.js freshChangeForSpendingIndex) and otherwise back to the source.
+  const changeTo = changeAddress ? validateMainnetAddress(changeAddress) : sourceAddress;
+  log("Creating transaction from", sourceAddress, "to", to, "amount", amount, "KAS", changeTo !== sourceAddress ? `(change to ${changeTo})` : "");
+  const result = await kaspa.createTransactions({
+    entries,
+    outputs: [{ address: to, amount: kaspa.kaspaToSompi(amount) }],
+    priorityFee: kaspa.kaspaToSompi(fee),
+    changeAddress: changeTo,
+    networkId: NETWORK_ID,
+    ...(payload ? { payload } : {}),
+  });
+  log("Transaction summary:", result.summary);
+
+  const txids = [];
+  const signer = signingKeyArg(privateKey);
+  for (const pending of result.transactions) {
+    try {
+      await pending.sign([signer]);
+    } catch (error) {
+      log("Signing failed:", describeKey(privateKey), String(error));
+      throw error;
+    }
+    const submitSignedTransaction = (activeRpc) => pending.submit(activeRpc);
+    const txid = withRpc
+      ? await withRpc(submitSignedTransaction, { retries: 1, label: "Transaction broadcast" })
+      : await submitSignedTransaction(rpc);
+    txids.push(txid);
+    log("Broadcast txid:", txid);
+  }
+  return { result, txids };
+}
+
+
+// Builds (but never signs or submits) a representative transaction to read
+// its real, SDK-calculated network fee back out of the generator summary —
+// used for the composer's "Show Fee Estimate" preference. payloadBytes is an
+// estimate of the real Kasia COMM payload's byte length for the draft text,
+// since mass (and therefore fee) scales with payload size.
+// Builds the representative tx and returns { feeSompi, massGrams } from the generator summary.
+async function estimateOnchainFeeDetail({ kaspa, rpc, withRpc = null, sourceAddress, amountKas = "0.2", payloadBytes = 0, selectedOutpoints = null, singleInput = false }) {
+  const fetchUtxos = (activeRpc) => activeRpc.getUtxosByAddresses([sourceAddress]);
+  let { entries } = withRpc
+    ? await withRpc(fetchUtxos, { retries: 1, label: "Fee estimate UTXO refresh" })
+    : await fetchUtxos(rpc);
+  if (!entries || entries.length === 0) return null;
+  // Coins a scheduled post already spends are off the table for the estimate, as for the send.
+  entries = excludeReservedUtxos(entries);
+  if (entries.length === 0) return null;
+  // Coin control: estimate against exactly the chosen UTXOs (matches iOS passing manualUtxos to
+  // its fee estimate) so the fee reflects those inputs' mass, not an automatic selection.
+  if (selectedOutpoints && selectedOutpoints.length) {
+    const wanted = new Set(selectedOutpoints);
+    entries = entries.filter((entry) => {
+      const outpoint = entry.outpoint || {};
+      return wanted.has(`${outpoint.transactionId}:${outpoint.index}`);
+    });
+    if (entries.length === 0) return null;
+  }
+  if (singleInput && !selectedOutpoints?.length) {
+    const one = singleInputFor(entries, BigInt(kaspa.kaspaToSompi(amountKas)));
+    if (one) entries = one;
+  }
+  entries.sort((a, b) => BigInt(a.amount) > BigInt(b.amount) ? 1 : -1);
+
+  const result = await kaspa.createTransactions({
+    entries,
+    outputs: [{ address: sourceAddress, amount: kaspa.kaspaToSompi(amountKas) }],
+    priorityFee: kaspa.kaspaToSompi("0"),
+    changeAddress: sourceAddress,
+    networkId: NETWORK_ID,
+    payload: new Uint8Array(Math.max(0, payloadBytes)),
+  });
+  const feesSompi = result.summary?.fees;
+  if (feesSompi == null) return null;
+  const massGrams = result.summary?.mass;
+  return { feeSompi: BigInt(feesSompi), massGrams: massGrams != null ? BigInt(massGrams) : 0n };
+}
+
+export async function estimateOnchainFee(opts) {
+  const detail = await estimateOnchainFeeDetail(opts);
+  return detail ? sompiToKaspaDisplay(opts.kaspa, detail.feeSompi) : null;
+}
+
+// Fee-rate policy matching iOS's KaspaFeePolicy.minimumRelayFeePerGramSompi (100 sompi per gram).
+// The WASM SDK's own `summary.fees` uses the ~1 sompi/gram network floor, which is ~100x lower
+// than what iOS/kassigner charge, so a fee estimate needs to apply this policy explicitly.
+const POLICY_SOMPI_PER_GRAM = 100n;
+
+// Estimate for the Send screen: returns the SDK's own base fee AND the policy fee (mass * 100),
+// both as KAS strings. The UI shows the policy fee (like iOS) and pays the difference as a
+// priority tip on top of the SDK's automatic base.
+export async function estimateSendFeeDetail(opts) {
+  const detail = await estimateOnchainFeeDetail(opts);
+  if (!detail) return null;
+  const policySompi = detail.massGrams * POLICY_SOMPI_PER_GRAM;
+  const effectiveSompi = policySompi > detail.feeSompi ? policySompi : detail.feeSompi;
+  return {
+    sdkFeeKas: sompiToKaspaDisplay(opts.kaspa, detail.feeSompi),
+    policyFeeKas: sompiToKaspaDisplay(opts.kaspa, effectiveSompi),
+  };
+}
+
+export async function sendPayloadTransaction({
+  kaspa,
+  rpc,
+  withRpc = null,
+  privateKey,
+  sourceAddress,
+  destinationAddress,
+  amountKas = "0.0001",
+  feeKas = "0",
+  payload,
+  changeAddress = null,
+  singleInput = false,
+  log = () => {},
+}) {
+  if (!payload) throw new Error("Payload is required for a message transaction.");
+  return sendKaspa({
+    kaspa,
+    rpc,
+    withRpc,
+    privateKey,
+    sourceAddress,
+    destinationAddress,
+    amountKas,
+    feeKas,
+    payload,
+    changeAddress,
+    singleInput,
+    log,
+  });
+}

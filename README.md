@@ -1,24 +1,24 @@
 # KaChat Wallet (browser extension)
 
 A Kaspa wallet for Chrome, Brave, Edge and other Chromium browsers (Firefox build to follow),
-built on the desktop app's wallet engine. It is the wallet half of KaChat - the Profile tab of
+built on the desktop app's wallet engine (copied into `shared/`, see `shared/README.md`). It is the wallet half of KaChat - the Profile tab of
 the iOS app - without chats. The same recovery phrase shows the same addresses as KaChat on
 iOS, Android and desktop.
 
 ## Build and load
 
 ```
-npm install              # once, from the repo root
-npm run ext:build        # builds extension/dist
+npm install              # once
+npm run build            # builds dist/
 ```
 
 Then in the browser:
 
 1. Open `chrome://extensions` (Brave: `brave://extensions`, Edge: `edge://extensions`).
 2. Turn on **Developer mode**.
-3. **Load unpacked** and pick the `extension/dist` folder.
+3. **Load unpacked** and pick the `dist` folder.
 
-While working on it, `npm run ext:watch` rebuilds on every save; press the reload arrow on the
+While working on it, `npm run watch` rebuilds on every save; press the reload arrow on the
 extension's card to pick up the new build.
 
 ## How it is put together
@@ -78,7 +78,7 @@ wallet unavailable. The address a site sees is the chosen account's chatting add
 ## Store packages
 
 ```
-npm run ext:package      # ext:build, then extension/dist-firefox and extension/packages/*.zip
+npm run package          # build, then dist-firefox/ and packages/*.zip
 ```
 
 Upload notes and review answers for each store are in `STORE_LISTING.md`.

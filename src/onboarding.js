@@ -16,7 +16,7 @@ import { getLocal, setLocal, removeLocal } from "./browser.js";
 import {
   app, esc, render, $, toast, noteActivity, resetActivityPing, ICONS, navHeader, showSheet,
 } from "./ui.js";
-import { isBip39Word, bip39Matches } from "../../ui/bip39-english.js";
+import { isBip39Word, bip39Matches } from "../shared/ui/bip39-english.js";
 import { removeConnectionsFor } from "./approve.js";
 
 let goHome = () => {};

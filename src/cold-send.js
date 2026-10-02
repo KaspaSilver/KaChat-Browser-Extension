@@ -26,7 +26,7 @@ import {
   fetchQuotedFeeRateSompiPerGram, previewAutomaticSelection, estimateMaxAmount, compoundInputs,
   buildUnsignedTransaction, unsignedToKsptBytes, chunkQrFrames, QrFrameAccumulator, looksLikeKspt,
   decodeKspt, broadcastSigned,
-} from "../../ui/kspt.js";
+} from "../shared/ui/kspt.js";
 
 const TIERS = [["normal", "Normal", 1n], ["fast", "Fast", 2n], ["priority", "Priority", 5n]];
 

@@ -1,5 +1,5 @@
 // The wallet as the popup sees it: Kaspa WASM, the account's addresses, the node connection,
-// balances and the KAS price. Built on the desktop app's engine (../../engine), so an address
+// balances and the KAS price. Built on the desktop app's engine (shared/engine, copied from KaChat-Desktop), so an address
 // derived here is byte-for-byte the one KaChat on iOS, Android and desktop derives from the same
 // recovery phrase:
 //   main address      m/44'/111111'/0'/0/{identityIndex}  (or the account's legacy family)
@@ -7,22 +7,22 @@
 // The main address is what KaChat calls the chatting address - your identity, where KNS domains
 // live. Spending addresses are the fresh-address chain KaChat receives payments on.
 
-import { loadKaspaModule } from "../../engine/wasm-loader.js";
+import { loadKaspaModule } from "../shared/engine/wasm-loader.js";
 import {
   generateMnemonicPhrase,
   importMnemonicWithFamily,
   deriveSpendingWallet,
   spendingDerivationPath,
   importPrivateKey,
-} from "../../engine/wallet.js";
-import { createRpc, probeRpc, disconnectRpc, getNodeRegistrySnapshot, PUBLIC_NODE_SEEDS } from "../../engine/rpc.js";
-import { getEndpoint } from "../../engine/endpoints.js";
-import { getBalance, sendKaspa, sendMaxKaspa, sweepAllToSelf, estimateSendFeeDetail } from "../../engine/transactions.js";
-import { calculateMass, calculateFee, fetchQuotedFeeRateSompiPerGram } from "../../ui/kspt.js";
+} from "../shared/engine/wallet.js";
+import { createRpc, probeRpc, disconnectRpc, getNodeRegistrySnapshot, PUBLIC_NODE_SEEDS } from "../shared/engine/rpc.js";
+import { getEndpoint } from "../shared/engine/endpoints.js";
+import { getBalance, sendKaspa, sendMaxKaspa, sweepAllToSelf, estimateSendFeeDetail } from "../shared/engine/transactions.js";
+import { calculateMass, calculateFee, fetchQuotedFeeRateSompiPerGram } from "../shared/ui/kspt.js";
 import { looksLikeName, resolveEverywhere, primaryResolution, notFoundMessage, ownsAnyName, ownedNamesOfMany } from "./names.js";
-import { fetchKasPrice, peekKasPrice } from "../../engine/prices.js";
-import { getAddressInfo, fetchAddressInfo, peekAddressInfo, clearKnsCache } from "../../engine/kns.js";
-import { transferDomain as knsTransferDomain, setKnsPrimaryDomain } from "../../engine/kns-write.js";
+import { fetchKasPrice, peekKasPrice } from "../shared/engine/prices.js";
+import { getAddressInfo, fetchAddressInfo, peekAddressInfo, clearKnsCache } from "../shared/engine/kns.js";
+import { transferDomain as knsTransferDomain, setKnsPrimaryDomain } from "../shared/engine/kns-write.js";
 import { getLocal, setLocal } from "./browser.js";
 import { IS_TESTNET, NETWORK_ID, ADDRESS_PREFIX, netKey, MAINNET_REST, TESTNET_REST, MAINNET_KNS, TESTNET_KNS } from "./net.js";
 import { activeAccountSecrets, accountSecretsById } from "./vault.js";

@@ -1,0 +1,17 @@
+{
+  "name": "kachat-extension",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "watch": "vite build --watch",
+    "package": "npm run build && node tools/ext-package.mjs",
+    "sync-shared": "node tools/sync-shared.mjs"
+  },
+  "dependencies": {
+    "jsqr": "^1.4.0",
+    "qrcode": "^1.5.4",
+    "vite": "^8.1.4"
+  }
+}

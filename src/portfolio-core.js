@@ -16,9 +16,9 @@ import {
   fetchKasPrice, peekKasPrice, fetchKasPriceHistory, peekKasPriceHistory, fetchKasMarketStats,
   baseDaysFor, cutPoints, yearToDateDays, CHART_PAIRS, fetchMarketPairHistory, dividePoints,
   resolveDailyPrices, resolveDailyPriceSingle, peekDailyPrices, utcDayKey, PRICE_REQUEST_SPACING_MS,
-} from "../../engine/prices.js";
-import { fetchNetworkStats, peekNetworkStats } from "../../engine/network-stats.js";
-import { getEndpoint } from "../../engine/endpoints.js";
+} from "../shared/engine/prices.js";
+import { fetchNetworkStats, peekNetworkStats } from "../shared/engine/network-stats.js";
+import { getEndpoint } from "../shared/engine/endpoints.js";
 
 export { yearToDateDays, CHART_PAIRS, utcDayKey };
 

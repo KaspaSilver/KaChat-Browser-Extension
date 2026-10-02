@@ -1,13 +1,13 @@
 import { defineConfig } from "vite";
 import { fileURLToPath } from "node:url";
 
-// Builds the KaChat Wallet browser extension into extension/dist - a folder that loads as-is
+// Builds the KaChat Wallet browser extension into dist - a folder that loads as-is
 // with "Load unpacked" in chrome://extensions (Chrome, Brave, Edge, Opera, Arc).
 //
-//   npm run ext:build      one build
-//   npm run ext:watch      rebuild on every save (then press reload on the extension card)
+//   npm run build      one build
+//   npm run watch      rebuild on every save (then press reload on the extension card)
 //
-// Shares ../engine and ../kaspa with the desktop app. public/ (manifest.json, icons) is copied
+// shared/ holds the desktop app's engine and the Kaspa WASM (see shared/README.md). public/ (manifest.json, icons) is copied
 // verbatim to the root of dist.
 const here = (path) => fileURLToPath(new URL(path, import.meta.url));
 

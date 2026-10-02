@@ -2,7 +2,7 @@
 // navigation header, SF-Symbol-like icons, and the address QR screen.
 
 import { tellBackground, getLocal, setLocal } from "./browser.js";
-import { drawKaspaQr } from "../../engine/qr.js";
+import { drawKaspaQr } from "../shared/engine/qr.js";
 import { formatKas } from "./wallet.js";
 import { IS_TESTNET, kasLabel } from "./net.js";
 

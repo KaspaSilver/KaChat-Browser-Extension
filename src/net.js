@@ -7,8 +7,8 @@
 //   worker has no localStorage and must know which network a website is talking to
 //   testnet endpoint defaults, used until engine/endpoints.js answers per network itself
 
-export * from "../../engine/network.js";
-import { IS_TESTNET, NETWORK, preferredNetwork, setPreferredNetwork } from "../../engine/network.js";
+export * from "../shared/engine/network.js";
+import { IS_TESTNET, NETWORK, preferredNetwork, setPreferredNetwork } from "../shared/engine/network.js";
 import { getLocal, setLocal } from "./browser.js";
 
 export const NETWORK_MIRROR_KEY = "kachat.network";

@@ -1,0 +1,409 @@
+import { NETWORK_ID } from "./utils.js";
+import { IS_TESTNET } from "./network.js";
+import { getEndpoint } from "./endpoints.js";
+
+// One node list per network (iOS 8f98312): a mainnet node answering a kaspatest: address would
+// report the mainnet chain's coins.
+const NODE_REGISTRY_KEY = IS_TESTNET ? "kachat.browser.node-registry.testnet.v1" : "kachat.browser.node-registry.v1";
+/// KaChat's own node, kept only as a name the UI can show. Nothing connects to it on its own:
+/// the hosted mode is the public-node scan, and a user who wants this node types it in as a
+/// custom node like any other.
+export const DEFAULT_NODE = "wss://node.kachat.duckdns.org";
+
+const DIRECT_CONNECT_TIMEOUT_MS = 8000;
+const MAX_FAILOVER_EVENTS = 24;
+
+const CONNECTION_ERROR_PATTERNS = [
+  /websocket is not connected/i,
+  /websocket.*closed/i,
+  /not connected/i,
+  /connection.*closed/i,
+  /connection.*lost/i,
+  /network error/i,
+  /broken pipe/i,
+  /timed out/i,
+  /timeout/i,
+];
+
+function now() { return Date.now(); }
+
+// The WASM RPC client can reject with a bare string or a JsValue that has no `.message`, which
+// surfaced in the UI as "Could not connect: undefined". Always return a real Error with a usable
+// message so both the log and the Node Connection dialog show something actionable.
+function normalizeRpcError(error, source) {
+  if (error instanceof Error && error.message) return error;
+  let msg = "";
+  if (typeof error === "string") msg = error;
+  else if (error?.message) msg = String(error.message);
+  else if (error != null) { try { msg = String(error); } catch { msg = ""; } }
+  if (!msg || msg === "[object Object]" || msg === "undefined") {
+    try { const j = JSON.stringify(error); if (j && j !== "{}") msg = j; } catch { /* ignore */ }
+  }
+  return new Error(msg || `${source} failed — the node client returned no error detail (often a blocked wss:// connection or an unreachable resolver).`);
+}
+
+function emptyRegistry() {
+  return {
+    version: 2,
+    lastGoodEndpoint: "",
+    updatedAt: 0,
+    endpoints: {},
+    failovers: [],
+    successfulFailovers: 0,
+    failedFailovers: 0,
+  };
+}
+
+function loadRegistry() {
+  if (typeof localStorage === "undefined") return emptyRegistry();
+  try {
+    const parsed = JSON.parse(localStorage.getItem(NODE_REGISTRY_KEY) || "null");
+    if (!parsed || typeof parsed !== "object") return emptyRegistry();
+    return {
+      version: 2,
+      lastGoodEndpoint: typeof parsed.lastGoodEndpoint === "string" ? parsed.lastGoodEndpoint : "",
+      updatedAt: Number(parsed.updatedAt || 0),
+      endpoints: parsed.endpoints && typeof parsed.endpoints === "object" ? parsed.endpoints : {},
+      failovers: Array.isArray(parsed.failovers) ? parsed.failovers.slice(0, MAX_FAILOVER_EVENTS) : [],
+      successfulFailovers: Number(parsed.successfulFailovers || 0),
+      failedFailovers: Number(parsed.failedFailovers || 0),
+    };
+  } catch {
+    return emptyRegistry();
+  }
+}
+
+function saveRegistry(registry) {
+  if (typeof localStorage === "undefined") return;
+  try { localStorage.setItem(NODE_REGISTRY_KEY, JSON.stringify(registry)); } catch {}
+}
+
+function endpointRecord(registry, endpoint) {
+  return registry.endpoints[endpoint] || {
+    endpoint,
+    successes: 0,
+    failures: 0,
+    averageLatencyMs: 0,
+    lastLatencyMs: 0,
+    lastSuccessAt: 0,
+    lastFailureAt: 0,
+    lastError: "",
+  };
+}
+
+function recordSuccess(endpoint, latencyMs, { setLastGood = true } = {}) {
+  if (!endpoint) return;
+  const registry = loadRegistry();
+  const record = endpointRecord(registry, endpoint);
+  const previousSuccesses = Number(record.successes || 0);
+  const nextSuccesses = previousSuccesses + 1;
+  const previousAverage = Number(record.averageLatencyMs || 0);
+  record.successes = nextSuccesses;
+  record.lastLatencyMs = Math.max(0, Math.round(latencyMs || 0));
+  record.averageLatencyMs = Math.round(((previousAverage * previousSuccesses) + record.lastLatencyMs) / nextSuccesses);
+  record.lastSuccessAt = now();
+  record.lastError = "";
+  registry.endpoints[endpoint] = record;
+  if (setLastGood) registry.lastGoodEndpoint = endpoint;
+  registry.updatedAt = now();
+  saveRegistry(registry);
+}
+
+function recordFailure(endpoint, error) {
+  if (!endpoint) return;
+  const registry = loadRegistry();
+  const record = endpointRecord(registry, endpoint);
+  record.failures = Number(record.failures || 0) + 1;
+  record.lastFailureAt = now();
+  record.lastError = String(error?.message || error || "Connection failed").slice(0, 240);
+  registry.endpoints[endpoint] = record;
+  registry.updatedAt = now();
+  saveRegistry(registry);
+}
+
+export function recordFailover({ from = "", to = "", success = false, error = "" } = {}) {
+  const registry = loadRegistry();
+  registry.failovers.unshift({ from, to, success: Boolean(success), error: String(error || "").slice(0, 240), at: now() });
+  registry.failovers = registry.failovers.slice(0, MAX_FAILOVER_EVENTS);
+  if (success) registry.successfulFailovers += 1;
+  else registry.failedFailovers += 1;
+  if (success && to) registry.lastGoodEndpoint = to;
+  registry.updatedAt = now();
+  saveRegistry(registry);
+}
+
+function withTimeout(promise, timeoutMs, label) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} timed out after ${Math.round(timeoutMs / 1000)} seconds.`)), timeoutMs);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
+/// Every connection names its endpoint - ours, the user's, or one the public resolver handed out
+/// a moment earlier. (Constructing a Resolver once broke the built site because the minifier
+/// renamed the class; esbuild keeps class names now, so it is safe again.)
+function makeRpc(kaspa, { endpoint = "" } = {}) {
+  const { RpcClient, Encoding } = kaspa;
+  if (!endpoint) throw new Error("No node endpoint to connect to.");
+  return new RpcClient({ url: endpoint, encoding: Encoding?.Borsh, networkId: NETWORK_ID });
+}
+
+async function connectCandidate(kaspa, {
+  endpoint = "",
+  timeoutMs,
+  log = () => {},
+  role = "primary",
+  excludedEndpoints = [],
+  singleShot = false,
+} = {}) {
+  const rpc = makeRpc(kaspa, { endpoint });
+  const source = endpoint ? `${role} endpoint` : `Rusty Kaspa resolver for ${role}`;
+  const startedAt = globalThis.performance?.now?.() ?? now();
+  log(`Connecting ${role} through ${source}${endpoint ? `: ${endpoint}` : ""}...`);
+  // Single-shot (ConnectStrategy.Fallback) makes connect() reject on the first failed
+  // attempt instead of retrying the socket in a tight loop. Used for a strict custom
+  // node so a down node fails fast and quietly rather than spamming reconnect attempts.
+  const connectArgs = singleShot
+    ? { blockAsyncConnect: true, strategy: kaspa.ConnectStrategy?.Fallback ?? 1, timeoutDuration: timeoutMs }
+    : undefined;
+  try {
+    await withTimeout(rpc.connect(connectArgs), timeoutMs, source);
+    const info = await withTimeout(rpc.getServerInfo(), 6000, `${role} RPC server verification`);
+    if (info?.isSynced === false) throw new Error(`Connected ${role} node is not synced.`);
+    const activeEndpoint = rpc.url || endpoint || "resolver-selected RPC";
+    if (excludedEndpoints.includes(activeEndpoint)) {
+      throw new Error(`${role} resolved to an endpoint already in use.`);
+    }
+    const latencyMs = (globalThis.performance?.now?.() ?? now()) - startedAt;
+    recordSuccess(activeEndpoint, latencyMs, { setLastGood: role === "primary" });
+    log(`${role === "primary" ? "Primary" : "Standby"} connected:`, activeEndpoint);
+    return rpc;
+  } catch (error) {
+    const failedEndpoint = endpoint || rpc.url || `${role}-resolver`;
+    if (!String(error?.message || "").includes("already in use")) recordFailure(failedEndpoint, error);
+    try { await rpc.disconnect(); } catch {}
+    throw normalizeRpcError(error, source);
+  }
+}
+
+export function isRpcConnectionError(error) {
+  const message = String(error?.message || error || "");
+  return CONNECTION_ERROR_PATTERNS.some((pattern) => pattern.test(message));
+}
+
+export function clearNodeRegistry() {
+  if (typeof localStorage === "undefined") return;
+  try { localStorage.removeItem(NODE_REGISTRY_KEY); } catch {}
+}
+
+// Compare two wRPC URLs ignoring a trailing slash and host casing.
+function sameEndpoint(a, b) {
+  const norm = (u) => String(u || "").trim().replace(/\/+$/, "").toLowerCase();
+  return norm(a) && norm(a) === norm(b);
+}
+
+// Purge a specific endpoint from the registry (its scored record AND the last-good pointer).
+// Used when the user leaves a custom node for Automatic: without this, Automatic mode would
+// immediately reconnect to that same node via `lastGoodEndpoint` or the standby pool. Returns
+// true if anything was removed.
+export function forgetEndpoint(endpoint) {
+  const target = String(endpoint || "").trim();
+  if (!target) return false;
+  const registry = loadRegistry();
+  let changed = false;
+  for (const key of Object.keys(registry.endpoints || {})) {
+    if (sameEndpoint(key, target)) { delete registry.endpoints[key]; changed = true; }
+  }
+  if (sameEndpoint(registry.lastGoodEndpoint, target)) { registry.lastGoodEndpoint = ""; changed = true; }
+  if (changed) { registry.updatedAt = now(); saveRegistry(registry); }
+  return changed;
+}
+
+export function getNodeRegistrySnapshot() {
+  const registry = loadRegistry();
+  const endpoints = Object.values(registry.endpoints || {}).sort((a, b) => {
+    const aScore = Number(a.successes || 0) * 3 - Number(a.failures || 0) * 2;
+    const bScore = Number(b.successes || 0) * 3 - Number(b.failures || 0) * 2;
+    return bScore - aScore || Number(b.lastSuccessAt || 0) - Number(a.lastSuccessAt || 0);
+  });
+  return {
+    ...registry,
+    endpoints,
+    endpointCount: endpoints.length,
+    totalSuccesses: endpoints.reduce((sum, item) => sum + Number(item.successes || 0), 0),
+    totalFailures: endpoints.reduce((sum, item) => sum + Number(item.failures || 0), 0),
+  };
+}
+
+/// Automatic scan (what kaspa-ng's web build does): ask the Kaspa public node resolver for a
+/// node and connect to it, up to a few times since each answer may be a different node. Only
+/// TLS endpoints are usable from a page served over https, so ws:// answers are skipped there.
+const RESOLVER_ATTEMPTS = 6;
+// The SDK's resolver asks several seed servers in turn; a slow path abroad can take longer than
+// ten seconds before it answers at all, and abandoning it early just restarted the wait.
+const RESOLVER_TIMEOUT_MS = 20000;
+// Nodes the public resolver hands out, kept as a direct fallback for when the RESOLVER itself
+// cannot be reached from where the reader is (its seed servers blocked or unreachable) even
+// though the nodes can. Same public pool, no house node; refreshed from the resolver's own
+// answers whenever it works.
+const MAINNET_NODE_SEEDS = [
+  "wss://wrpc.kasia.fyi",
+  "wss://isla.kaspa.red/kaspa/mainnet/wrpc/borsh",
+  "wss://kate.kaspa.red/kaspa/mainnet/wrpc/borsh",
+  "wss://emma.kaspa.stream/kaspa/mainnet/wrpc/borsh",
+  "wss://lola.kaspa.blue/kaspa/mainnet/wrpc/borsh",
+  "wss://vivi.kaspa.blue/kaspa/mainnet/wrpc/borsh",
+];
+// Testnet: the same public pool's testnet-10 endpoints (the resolver is asked first either way).
+export const PUBLIC_NODE_SEEDS = IS_TESTNET
+  ? MAINNET_NODE_SEEDS.filter((u) => u.includes("/kaspa/mainnet/")).map((u) => u.replace("/kaspa/mainnet/", "/kaspa/testnet-10/"))
+  : MAINNET_NODE_SEEDS;
+const SEEN_NODES_KEY = IS_TESTNET ? "kachat-public-nodes-seen-testnet" : "kachat-public-nodes-seen";
+function rememberPublicNode(url) {
+  if (typeof localStorage === "undefined") return;
+  try {
+    const list = JSON.parse(localStorage.getItem(SEEN_NODES_KEY) || "[]");
+    const next = [url, ...list.filter((u) => u !== url)].slice(0, 12);
+    localStorage.setItem(SEEN_NODES_KEY, JSON.stringify(next));
+  } catch { /* storage is a nicety */ }
+}
+/** The most recent node that answered, or "". */
+function lastPublicNode() {
+  if (typeof localStorage === "undefined") return "";
+  try { return String(JSON.parse(localStorage.getItem(SEEN_NODES_KEY) || "[]")[0] || ""); } catch { return ""; }
+}
+const LAST_NODE_TIMEOUT_MS = 3500;
+function knownPublicNodes() {
+  let remembered = [];
+  if (typeof localStorage !== "undefined") {
+    try { remembered = JSON.parse(localStorage.getItem(SEEN_NODES_KEY) || "[]"); } catch { remembered = []; }
+  }
+  const all = [...remembered, ...PUBLIC_NODE_SEEDS].filter((u, i, arr) => u && arr.indexOf(u) === i);
+  // Shuffled, so a pool of readers does not all pile onto the first name in the list.
+  for (let i = all.length - 1; i > 0; i -= 1) { const j = Math.floor(Math.random() * (i + 1)); [all[i], all[j]] = [all[j], all[i]]; }
+  return all;
+}
+async function connectViaResolver(kaspa, { log = () => {}, excludedEndpoints = [] } = {}) {
+  if (typeof kaspa.Resolver !== "function") throw new Error("This build of the Kaspa SDK has no node resolver.");
+  const resolver = new kaspa.Resolver();
+  // An extension page is held to the same rule as an https page: only TLS (wss://) nodes, so the
+  // addresses the wallet asks about never cross the network in the clear.
+  const secure = typeof location !== "undefined"
+    && (location.protocol === "https:" || /^(chrome|moz|safari-web)-extension:$/.test(location.protocol));
+  const tried = new Set(excludedEndpoints.map((u) => String(u || "").toLowerCase()));
+  let lastError = null;
+  let resolverAnswered = false;
+  // The node that answered last time, tried first and briefly: a reload that finds it still
+  // healthy connects straight away instead of waiting on the resolver round trip. If it has
+  // gone, the resolver runs exactly as before.
+  const lastNode = lastPublicNode();
+  if (lastNode && !tried.has(lastNode.toLowerCase()) && (!secure || /^wss:\/\//i.test(lastNode))) {
+    tried.add(lastNode.toLowerCase());
+    try {
+      const rpc = await connectCandidate(kaspa, { endpoint: lastNode, timeoutMs: LAST_NODE_TIMEOUT_MS, log, role: "primary", singleShot: true });
+      rememberPublicNode(lastNode);
+      return rpc;
+    } catch (error) {
+      log(`Last node ${lastNode} did not answer quickly; asking the resolver.`);
+    }
+  }
+  for (let attempt = 1; attempt <= RESOLVER_ATTEMPTS; attempt += 1) {
+    let url = "";
+    try {
+      log(`Asking the public node resolver (attempt ${attempt} of ${RESOLVER_ATTEMPTS})...`);
+      url = String(await withTimeout(resolver.getUrl(kaspa.Encoding?.Borsh, NETWORK_ID), RESOLVER_TIMEOUT_MS, "Public node resolver") || "").trim();
+    } catch (error) {
+      lastError = normalizeRpcError(error, "Public node resolver");
+      log(`Public node resolver did not answer (attempt ${attempt}): ${lastError.message}`);
+      // Two silent attempts in a row: the resolver is the problem, not the nodes. Go direct.
+      if (!resolverAnswered && attempt >= 2) break;
+      continue;
+    }
+    if (!url) { lastError = new Error("The public node resolver returned no node."); continue; }
+    resolverAnswered = true;
+    if (secure && !/^wss:\/\//i.test(url)) { log(`Resolver offered ${url}, unusable from an https page; asking again.`); continue; }
+    if (tried.has(url.toLowerCase())) continue;
+    tried.add(url.toLowerCase());
+    try {
+      const rpc = await connectCandidate(kaspa, { endpoint: url, timeoutMs: DIRECT_CONNECT_TIMEOUT_MS, log, role: "primary", singleShot: true });
+      rememberPublicNode(url);
+      return rpc;
+    } catch (error) {
+      lastError = error;
+      log(`Scanned node ${url} failed: ${error?.message || error}`);
+    }
+  }
+  // The resolver could not be reached, or nothing it offered answered: try the public nodes
+  // the app already knows about, directly. Still the public pool - never a house node.
+  const direct = knownPublicNodes().filter((u) => !tried.has(u.toLowerCase()) && (!secure || /^wss:\/\//i.test(u)));
+  if (direct.length) log(`${resolverAnswered ? "No resolver node answered" : "The public node resolver is unreachable from here"}; trying ${direct.length} known public nodes directly...`);
+  for (const url of direct) {
+    tried.add(url.toLowerCase());
+    try {
+      const rpc = await connectCandidate(kaspa, { endpoint: url, timeoutMs: DIRECT_CONNECT_TIMEOUT_MS, log, role: "primary", singleShot: true });
+      rememberPublicNode(url);
+      return rpc;
+    } catch (error) {
+      lastError = error;
+      log(`Known public node ${url} failed: ${error?.message || error}`);
+    }
+  }
+  throw lastError || new Error("No public node could be reached.");
+}
+
+export async function createRpc(kaspa, log = () => {}) {
+  // A user-configured custom node (Node Connection > Custom) is authoritative and STRICT: connect
+  // only to it. If it is unreachable we throw rather than silently falling back, so the user always
+  // knows when their own node is down.
+  const trustedNode = getEndpoint("trustedNode");
+  if (trustedNode) {
+    return connectCandidate(kaspa, {
+      endpoint: trustedNode,
+      timeoutMs: DIRECT_CONNECT_TIMEOUT_MS,
+      log,
+      role: "primary",
+      singleShot: true,
+    });
+  }
+
+  // Automatic Scan is the hosted mode, and the only one: the Kaspa public node resolver picks
+  // the node, the way kaspa-ng's web build does, retrying a few answers before giving up. There
+  // is no house node behind it - if no public node answers, the error says exactly that and the
+  // heartbeat keeps scanning until one does.
+  return connectViaResolver(kaspa, { log });
+}
+
+/// There is no second node to warm any more.
+///
+/// A standby existed to keep a spare from the resolver pool connected, so a failing primary could
+/// be swapped out instantly. With exactly one node in play - ours, or the user's own - there is
+/// nothing to swap to: the reconnect loop retrying the one node IS the recovery. Kept as a stub
+/// rather than deleted so every caller does not have to learn that.
+export async function createStandbyRpc() {
+  return null;
+}
+
+export async function probeRpc(rpc) {
+  if (!rpc) return false;
+  try {
+    const info = await withTimeout(rpc.getServerInfo(), 5000, "RPC heartbeat");
+    return info?.isSynced !== false;
+  } catch {
+    return false;
+  }
+}
+
+export async function connectRpc(kaspa, existingRpc = null, log = () => {}) {
+  if (existingRpc && await probeRpc(existingRpc)) return existingRpc;
+  if (existingRpc) {
+    try { await existingRpc.disconnect(); } catch {}
+    log("RPC connection was stale; reconnecting...");
+  }
+  return createRpc(kaspa, log);
+}
+
+export async function disconnectRpc(rpc) {
+  if (!rpc) return;
+  try { await rpc.disconnect(); } catch {}
+}

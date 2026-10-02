@@ -12,8 +12,8 @@
 // A typed name is resolved on every live service at once; the answer is the ending typed, else
 // the first in .kachat, .kas, .k, .kaspa that resolves, and the rest are offered as "Other domains".
 
-import { normalizeDomainLabel, resolveDomain } from "../../engine/kns.js";
-import { getEndpoint } from "../../engine/endpoints.js";
+import { normalizeDomainLabel, resolveDomain } from "../shared/engine/kns.js";
+import { getEndpoint } from "../shared/engine/endpoints.js";
 import { dotkCanonical, kaspaNamesCanonical } from "./names-normalize.js";
 import { esc, ICONS } from "./ui.js";
 import { IS_TESTNET, MAINNET_KNS, TESTNET_KNS } from "./net.js";

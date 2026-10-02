@@ -19,7 +19,7 @@ import { ext, tellBackground } from "./browser.js";
 import {
   app, esc, render, $, toast, copyText, copySecret, settings, saveSettings, ICONS, navHeader, passwordGate,
 } from "./ui.js";
-import { ENDPOINT_DEFAULTS, getEndpoint, getEndpointOverride, setEndpoint } from "../../engine/endpoints.js";
+import { ENDPOINT_DEFAULTS, getEndpoint, getEndpointOverride, setEndpoint } from "../shared/engine/endpoints.js";
 import { connections, removeConnection } from "./approve.js";
 import { IS_TESTNET, TESTNET_REST, switchNetwork } from "./net.js";
 
