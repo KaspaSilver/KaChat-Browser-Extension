@@ -36,8 +36,9 @@ export function kachatWordmark(side) {
 }
 
 /** An iOS sheet with its own navigation bar: Cancel on the left or Done on the right. */
-export function openPanel({ title, leading = null, trailing = null, body, onMount = null, onClose = null, full = false }) {
-  document.querySelector(".panel-backdrop")?.remove();
+/** `stack`: open over the sheet already showing (a confirmation over an editor) instead of replacing it. */
+export function openPanel({ title, leading = null, trailing = null, body, onMount = null, onClose = null, full = false, stack = false }) {
+  if (!stack) document.querySelector(".panel-backdrop")?.remove();
   const backdrop = document.createElement("div");
   backdrop.className = "panel-backdrop";
   backdrop.innerHTML = `
@@ -56,7 +57,8 @@ export function openPanel({ title, leading = null, trailing = null, body, onMoun
     document.removeEventListener("keydown", onKey);
     onClose?.();
   };
-  const onKey = (event) => { if (event.key === "Escape") close(); };
+  // Escape closes the topmost sheet only.
+  const onKey = (event) => { if (event.key === "Escape" && [...document.querySelectorAll(".panel-backdrop")].pop() === backdrop) close(); };
   document.addEventListener("keydown", onKey);
   backdrop.addEventListener("click", (event) => {
     if (event.target === backdrop || event.target.closest("[data-close]")) close();

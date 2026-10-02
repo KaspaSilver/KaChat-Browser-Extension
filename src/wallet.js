@@ -17,7 +17,7 @@ import {
 } from "../shared/engine/wallet.js";
 import { createRpc, probeRpc, disconnectRpc, getNodeRegistrySnapshot, PUBLIC_NODE_SEEDS } from "../shared/engine/rpc.js";
 import { getEndpoint } from "../shared/engine/endpoints.js";
-import { getBalance, sendKaspa, sendMaxKaspa, sweepAllToSelf, estimateSendFeeDetail } from "../shared/engine/transactions.js";
+import { getBalance, sendKaspa, sendMaxKaspa, sweepAllToSelf, estimateSendFeeDetail, estimateOnchainFeeDetail } from "../shared/engine/transactions.js";
 import { calculateMass, calculateFee, fetchQuotedFeeRateSompiPerGram } from "../shared/ui/kspt.js";
 import { looksLikeName, resolveEverywhere, primaryResolution, notFoundMessage, ownsAnyName, ownedNamesOfMany } from "./names.js";
 import { fetchKasPrice, peekKasPrice } from "../shared/engine/prices.js";
@@ -1175,6 +1175,18 @@ export function namesNodeMethods() {
     async submitRpcTransaction(transaction) {
       const response = await withRpc((node) => node.submitTransaction({ transaction, allowOrphan: false }));
       return String(response?.transactionId ?? "");
+    },
+    /** The fee (BigInt sompi) of a 0.2 KAS self-transfer from the bound address carrying
+     *  `payloadBytes` of payload (optionally only from `selectedOutpoints`); null when unknown.
+     *  Quotes a .kachat profile record before it is saved (iOS profileFee). Called on the engine
+     *  object, so `this` holds the bound signer's kaspa and address. */
+    async estimatePayloadFeeSompi(payloadBytes = 0, selectedOutpoints = null) {
+      if (!this.kaspa || !this.address) return null;
+      const detail = await estimateOnchainFeeDetail({
+        kaspa: this.kaspa, rpc: await connection(), withRpc, sourceAddress: this.address,
+        amountKas: "0.2", payloadBytes, selectedOutpoints,
+      });
+      return detail ? detail.feeSompi : null;
     },
   };
   return methods;

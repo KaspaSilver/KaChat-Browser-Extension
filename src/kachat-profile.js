@@ -10,7 +10,7 @@
 import { esc, ICONS } from "./ui.js";
 import { openPanel } from "./kachat-ui.js";
 import { kachatLive, kachatNames, kachatSocial, ownKachatProfile } from "./kachat-names.js";
-import { confirmAlert, confirmPassword, showTxDone } from "./kachat-live.js";
+import { openProfileSaveSheet } from "./kachat-live.js";
 import { Profile, SocialKind, SocialPlatform, SocialSource } from "../shared/engine/kachat-names/registry-state.js";
 import { KachatNamesRegistry } from "../shared/engine/kachat-names/registry.js";
 
@@ -56,7 +56,6 @@ function showComingSoonEditor() {
 
 const KINDS = [SocialKind.avatar, SocialKind.banner, SocialKind.bio];
 const KIND_TITLES = { avatar: "Avatar", banner: "Banner", bio: "Bio" };
-const PRIVACY_SEEN_KEY = "kachat_profile_privacy_seen";
 const PERSON_TEXT = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="4" width="20" height="16" rx="2"/><circle cx="8" cy="11" r="2.2"/><path d="M4.8 17a3.6 3.6 0 0 1 6.4 0M14 9.5h5M14 13h5"/></svg>';
 const NO_PERSON = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="10" cy="8" r="4"/><path d="M2.5 21a7.5 7.5 0 0 1 12-6M19 14v4M19 21v.01"/></svg>';
 const NO_WIFI = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M2 8.5a15 15 0 0 1 16-2.5M5 12a10 10 0 0 1 9-2.6M8.5 15.5a5 5 0 0 1 4-1.2"/><path d="M20 10v6M20 19.5v.01"/></svg>';
@@ -81,7 +80,7 @@ function showLiveProfileEditor({ onSaved }) {
   const resolver = kachatSocial();
   const fields = {};
   for (const kind of KINDS) fields[kind] = { platform: "x", handle: "", lookup: "none", resolved: null, key: "", timer: null };
-  const state = { linktree: "", primary: "", activeNames: [], loaded: false, saving: false, savedTx: null, error: null };
+  const state = { linktree: "", primary: "", activeNames: [], loaded: false, error: null };
   let handle = null;
   let panel = null;
 
@@ -198,17 +197,14 @@ function showLiveProfileEditor({ onSaved }) {
       <div class="form-footer error-text" data-bad="${kind}" hidden>That doesn't look like a handle on this platform.</div>
     </div>`;
 
-  const saveFooter = () => {
-    if (state.savedTx) return `<span class="kl-green">Saved. Transaction ${esc(state.savedTx.slice(0, 16))}...</span>`;
-    if (state.error) return `<span class="error-text">${esc(state.error)}</span>`;
-    return "Saving writes your profile to the chain from your address to itself, for a network fee. Profiles are public.";
-  };
+  const saveFooter = () => (state.error
+    ? `<span class="error-text">${esc(state.error)}</span>`
+    : "Saving writes your profile to the chain from your address to itself, for a network fee. Profiles are public.");
 
   const paintSave = () => {
     if (!handle?.isOpen()) return;
     const button = panel.querySelector("#kp-save");
-    button.disabled = state.saving || !state.loaded || blocked();
-    button.innerHTML = state.saving ? '<span class="spinner small-spin"></span>' : "Save Profile";
+    button.disabled = !state.loaded || blocked();
     panel.querySelector("#kp-save-footer").innerHTML = saveFooter();
     const linkFooter = panel.querySelector("#kp-link-footer");
     linkFooter.className = `form-footer ${badLinktree() ? "error-text" : ""}`;
@@ -223,35 +219,13 @@ function showLiveProfileEditor({ onSaved }) {
     select.value = state.primary;
   };
 
-  async function save() {
-    let seen = false;
-    try { seen = localStorage.getItem(PRIVACY_SEEN_KEY) === "1"; } catch { /* first time */ }
-    const ok = await confirmAlert({
-      title: "Save your profile?",
-      message: seen
-        ? "It's written to the chain for a network fee."
-        : "Profiles are public and on chain: anyone can read them, and earlier versions stay readable after you change them. It's written for a network fee.",
-      confirmLabel: "Save", destructive: false,
-    });
-    if (!ok) return;
-    try { localStorage.setItem(PRIVACY_SEEN_KEY, "1"); } catch { /* shown again next time */ }
-    if (!(await confirmPassword())) return;
-    state.saving = true;
-    state.error = null;
-    paintSave();
-    try {
-      const rt = await kachatNames();
-      const tx = await rt.actions.saveProfile(profile());
-      state.savedTx = tx;
-      handle.setBar({ leading: "Done" });
-      onSaved();
-      showTxDone({ txId: tx, title: "Profile saved", onClose: () => handle.close() });
-    } catch (error) {
-      state.error = String(error?.message || error);
-    }
-    state.saving = false;
-    paintSave();
-  }
+  // Save confirms on the save sheet with the network fee (iOS 7e238e5); once it is sent the
+  // editor closes with it.
+  const save = () => openProfileSaveSheet({
+    title: "Save Profile", confirmTitle: "Save Profile", doneTitle: "Profile saved",
+    makeProfile: async () => profile(),
+    onSaved: () => { handle.close(); onSaved(); },
+  });
 
   handle = openPanel({
     title: "Edit .kachat Profile",

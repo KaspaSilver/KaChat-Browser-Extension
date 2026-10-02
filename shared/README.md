@@ -10,4 +10,4 @@ message.
 | `ui/` | `kspt.js` (KasSigner KSPT: unsigned transactions, animated QR frames, signed-transaction scan-back and broadcast) and the BIP39 English word list. |
 | `kaspa/` | The rusty-kaspa WASM SDK (`kaspa.js`, `kaspa_bg.wasm`, ISC licence), prebuilt. KaChat-Desktop's `npm run setup:wasm` rebuilds it from rusty-kaspa source. |
 
-Copied from KaChat-Desktop 0366296.
+Copied from KaChat-Desktop 05dcb52.

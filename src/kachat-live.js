@@ -17,7 +17,7 @@ import { kachatNames, kachatRegistry } from "./kachat-names.js";
 import { SYMBOLS, openPanel } from "./kachat-ui.js";
 import { Operation, Stage, isOpen, needsDriving, KachatNamesActions } from "../shared/engine/kachat-names/actions.js";
 import { KachatNamesRegistry } from "../shared/engine/kachat-names/registry.js";
-import { Status, Profile } from "../shared/engine/kachat-names/registry-state.js";
+import { Status, Profile, SocialKind, SocialPlatform, SocialSource } from "../shared/engine/kachat-names/registry-state.js";
 import { normalize, unhex32, p2pkScript, bytesEqual, yearMs } from "../shared/engine/kachat-names/codec.js";
 import { paramsPrice, paramsRenewPrice } from "../shared/engine/kachat-names/manifest.js";
 
@@ -1113,7 +1113,7 @@ function openReclaimSheet(info) {
  */
 export async function showLiveNameDetail({ info: initial, onBack }) {
   await runtime().catch(() => null);
-  const state = { info: initial, ownerLabel: null, offers: [], history: [], gone: false, primaryWorking: false, primaryMessage: null };
+  const state = { info: initial, ownerLabel: null, offers: [], history: [], gone: false };
   const here = () => app.dataset.screen === "kachat-name" && app.dataset.kachatName === state.info.name;
 
   const nameCard = () => {
@@ -1152,9 +1152,9 @@ export async function showLiveNameDetail({ info: initial, onBack }) {
           ${action("kl-renew", "Renew", SYMBOLS.renew, { prominent: !active })}
           ${action("kl-list", info.isListed ? "Change Price" : "List for Sale", SYMBOLS.tag, { disabled: !active })}
           ${action("kl-transfer", "Transfer", SYMBOLS.arrows)}
-          ${info.isListed ? action("kl-delist", "Delist", SYMBOLS.tagSlash) : action("kl-primary", "Set as Primary", SYMBOLS.primary, { disabled: !active || state.primaryWorking })}
+          ${info.isListed ? action("kl-delist", "Delist", SYMBOLS.tagSlash) : action("kl-primary", "Set as Primary", SYMBOLS.primary, { disabled: !active })}
         </div>
-        ${info.isListed ? `<div class="kl-pad">${action("kl-primary", "Set as Primary", SYMBOLS.primary, { disabled: !active || state.primaryWorking })}</div>` : ""}
+        ${info.isListed ? `<div class="kl-pad">${action("kl-primary", "Set as Primary", SYMBOLS.primary, { disabled: !active })}</div>` : ""}
         <div class="kl-pad"><button class="km-bordered with-icon danger-text kl-full" id="kl-release">${SYMBOLS.trash}<span>Release Name</span></button></div>`;
     }
     if (status === Status.lapsed) return `<div class="kl-pad">${action("kl-reclaim", "Reclaim", SYMBOLS.reclaim, { prominent: true })}</div>`;
@@ -1203,7 +1203,6 @@ export async function showLiveNameDetail({ info: initial, onBack }) {
         ${state.gone
           ? '<p class="muted small kl-pad">This name was released or reclaimed. It\'s free to claim again.</p>'
           : `${actionButtons()}
-             ${state.primaryMessage ? `<p class="muted small kl-pad">${esc(state.primaryMessage)}</p>` : ""}
              ${ownerCard()}
              ${offersSection()}`}
         ${historySection()}
@@ -1235,17 +1234,11 @@ export async function showLiveNameDetail({ info: initial, onBack }) {
     bindOfferRows(app, state.offers, info);
   };
 
-  async function setPrimary() {
-    const ok = await confirmAlert({
-      title: `Make ${state.info.display} your primary name?`,
-      message: "KaChat shows it as your name. It's saved in your profile record on chain, for a network fee.",
-      confirmLabel: "Set as Primary", destructive: false,
-    });
-    if (!ok || !(await confirmPassword())) return;
-    state.primaryWorking = true;
-    state.primaryMessage = null;
-    if (here()) paint();
-    try {
+  // Setting a primary name rewrites the profile record: confirmed on the save sheet with its fee
+  // (iOS 7e238e5).
+  const setPrimary = () => openProfileSaveSheet({
+    title: "Set as Primary", confirmTitle: "Set as Primary", doneTitle: "Primary name set",
+    async makeProfile() {
       const rt = await runtime();
       const address = rt.actions.myAddress;
       let profile = null;
@@ -1255,14 +1248,9 @@ export async function showLiveNameDetail({ info: initial, onBack }) {
       }
       profile = profile ?? new Profile();
       profile.primaryName = state.info.name;
-      const tx = await rt.actions.saveProfile(profile);
-      showTxDone({ txId: tx, title: "Primary name set" });
-    } catch (error) {
-      state.primaryMessage = errorText(error);
-    }
-    state.primaryWorking = false;
-    if (here()) paint();
-  }
+      return profile;
+    },
+  });
 
   const reload = async () => {
     const reg = registry();
@@ -1283,6 +1271,114 @@ export async function showLiveNameDetail({ info: initial, onBack }) {
   const unsubscribe = registry()?.onChange(() => { if (here()) reload(); }) ?? (() => {});
   paint();
   reload();
+}
+
+// --- Saving the profile record (iOS KachatProfileSaveSheet) --------------------------------
+
+const PRIVACY_SEEN_KEY = "kachat_profile_privacy_seen";
+
+/** "X · x.com/name", or "None". */
+function sourceText(link, kind) {
+  const s = link ? SocialSource.fromLink(link, kind) : null;
+  return s ? `${SocialPlatform.displayName(s.platform)} · ${SocialPlatform.prefix(s.platform)}${s.displayHandle}` : "None";
+}
+
+/**
+ * The confirmation every profile save shows - Edit .kachat Profile and Set as Primary: what will
+ * be saved, the network fee (quoted by building the record as the save does, nothing sent) and
+ * the chatting address's balance before and after; then the password, then the done sheet.
+ *   makeProfile(): the record to save, built when the sheet opens
+ *   onSaved(): after the done sheet closes
+ */
+export function openProfileSaveSheet({ title, confirmTitle, doneTitle, makeProfile, onSaved = () => {} }) {
+  const state = { profile: null, fee: null, quoteError: null, balance: null, sending: false, sendError: null, done: false };
+  let handle = null;
+  let privacySeen = false;
+  try { privacySeen = localStorage.getItem(PRIVACY_SEEN_KEY) === "1"; } catch { /* first time */ }
+
+  const bodyHtml = () => {
+    const p = state.profile;
+    const profileRows = p ? `
+      <div class="form-section">
+        <div class="form-header">Your Profile</div>
+        <div class="form-card">
+          ${labeledRow("Avatar", sourceText(p.avatar, SocialKind.avatar))}
+          ${labeledRow("Banner", sourceText(p.banner, SocialKind.banner))}
+          ${labeledRow("Bio", sourceText(p.bio, SocialKind.bio))}
+          ${labeledRow("Linktree", p.linktree ? p.linktree.replace("https://", "") : "None")}
+          ${labeledRow("Primary name", p.primaryName ? `${p.primaryName}.kachat` : "None")}
+        </div>
+      </div>` : "";
+    let cost = "";
+    if (state.fee != null) {
+      cost = labeledRow("Network fee", amount(state.fee));
+      if (state.balance != null) {
+        cost += labeledRow("Chatting address balance", amount(state.balance))
+          + labeledRow("Balance after", amount(state.balance > state.fee ? state.balance - state.fee : 0n), true);
+      }
+    } else if (!state.quoteError) {
+      cost = '<div class="form-row between"><span>Network fee</span><span class="spinner small-spin"></span></div>';
+    }
+    const foot = state.quoteError
+      ? `<span class="error-text">${esc(state.quoteError)}</span>`
+      : privacySeen
+        ? "Saved on chain from your chatting address to itself."
+        : "Profiles are public and on chain: anyone can read them, and earlier versions stay readable after you change them.";
+    return `
+      ${profileRows}
+      <div class="form-section">
+        ${cost ? `<div class="form-card">${cost}</div>` : ""}
+        <div class="form-footer">${foot}</div>
+      </div>
+      <div class="form-section">
+        <div class="form-card">
+          <button class="form-row km-form-button" id="kl-save-profile" ${state.fee == null || !state.profile || state.sending || state.done ? "disabled" : ""}>
+            ${state.sending ? '<span class="spinner small-spin"></span>' : esc(confirmTitle)}
+          </button>
+        </div>
+        ${state.sendError ? `<div class="form-footer error-text">${esc(state.sendError)}</div>` : ""}
+      </div>`;
+  };
+
+  const paint = () => {
+    if (!handle?.isOpen()) return;
+    const host = handle.panel.querySelector("[data-save]");
+    host.innerHTML = unitText(bodyHtml());
+    host.querySelector("#kl-save-profile")?.addEventListener("click", save);
+  };
+
+  async function save() {
+    if (!state.profile || state.fee == null || state.sending) return;
+    if (!(await confirmPassword())) return;
+    state.sending = true;
+    state.sendError = null;
+    paint();
+    try {
+      const tx = await (await runtime()).actions.saveProfile(state.profile);
+      try { localStorage.setItem(PRIVACY_SEEN_KEY, "1"); } catch { /* shown again next time */ }
+      state.done = true;
+      showTxDone({ txId: tx, title: doneTitle, onClose: () => { handle.close(); onSaved(); } });
+    } catch (error) {
+      state.sendError = errorText(error);
+    }
+    state.sending = false;
+    paint();
+  }
+
+  handle = openPanel({ title, leading: "Cancel", full: true, stack: true, body: "<div data-save></div>" });
+  paint();
+  (async () => {
+    try {
+      state.profile = await makeProfile();
+      paint();
+      state.fee = await (await runtime()).actions.profileFee(state.profile);
+    } catch (error) {
+      state.quoteError = errorText(error);
+    }
+    paint();
+  })();
+  chattingBalance().then((balance) => { state.balance = balance; paint(); });
+  return handle;
 }
 
 // --- Your Domains > .kachat (iOS KachatLiveDomainsTab) -------------------------------------
