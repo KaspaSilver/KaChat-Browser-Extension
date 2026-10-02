@@ -15,11 +15,13 @@ import { getEndpoint } from "../shared/engine/endpoints.js";
 import { KachatNamesService } from "../shared/engine/kachat-names/service.js";
 import { KachatNamesRegistry } from "../shared/engine/kachat-names/registry.js";
 import { KachatNamesActions } from "../shared/engine/kachat-names/actions.js";
+import { KachatSocialImageResolver } from "../shared/engine/kachat-names/social-image-resolver.js";
 import { chattingSigner, namesNodeMethods } from "./wallet.js";
 
 const localStorageAdapter = {
   get(key) { try { return localStorage.getItem(key); } catch { return null; } },
   set(key, value) { try { localStorage.setItem(key, value); } catch { /* storage full: the next refresh re-walks */ } },
+  remove(key) { try { localStorage.removeItem(key); } catch { /* nothing to drop */ } },
 };
 
 /** Whether .kachat names are live here (testnet-10). */
@@ -94,6 +96,62 @@ export async function kachatLabelOf(address) {
   try {
     await reg.refreshIfStale({ maxAge: 300 });
     return (await reg.identity(address))?.label || null;
+  } catch {
+    return null;
+  }
+}
+
+// --- Social profiles (iOS KachatSocialImageResolver) ---------------------------------------
+//
+// A .kachat profile's avatar, banner and bio come from social profile links, looked up on this
+// device (shared/engine/kachat-names/social-image-resolver.js). The wallet reads the platforms'
+// pages directly: its website-connect content scripts already give it access to https sites, so
+// nothing more is asked for. An extension can't pick a User-Agent, so the resolver's "crawler"
+// hint is not honored: pages answer as they do to a browser (Facebook's profile pictures, which
+// it serves only to its own crawler, may not show).
+
+async function fetchText(url, { accept, timeoutMs = 8000, maxBytes = 3_000_000, signal } = {}) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const onAbort = () => controller.abort();
+  signal?.addEventListener?.("abort", onAbort);
+  try {
+    const response = await fetch(url, {
+      headers: accept ? { Accept: accept } : {},
+      credentials: "omit",
+      referrerPolicy: "no-referrer",
+      cache: "no-store",
+      signal: controller.signal,
+    });
+    let text = await response.text();
+    if (text.length > maxBytes) text = text.slice(0, maxBytes);
+    return { status: response.status, contentType: response.headers.get("content-type") || "", text };
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener?.("abort", onAbort);
+  }
+}
+
+let socialResolver = null;
+
+/** The one resolver of the wallet (its 24 h answers are kept in localStorage). */
+export function kachatSocial() {
+  if (!socialResolver) {
+    socialResolver = new KachatSocialImageResolver({ fetchText, storage: localStorageAdapter });
+  }
+  return socialResolver;
+}
+
+/** This wallet's own profile record (the one it last wrote, else the registry's), or null. */
+export async function ownKachatProfile(address) {
+  const reg = kachatRegistry();
+  if (!reg || !address) return null;
+  try {
+    const own = (await reg.ownProfile(address))?.profile;
+    if (own) return own;
+    return (await reg.identity(address))?.profile ?? null;
   } catch {
     return null;
   }

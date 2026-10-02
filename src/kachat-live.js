@@ -12,6 +12,7 @@
 import { app, esc, render, $, toast, ICONS, navHeader, unitText, showSheet } from "./ui.js";
 import { KAS_UNIT } from "./net.js";
 import * as vault from "./vault.js";
+import * as wallet from "./wallet.js";
 import { kachatNames, kachatRegistry } from "./kachat-names.js";
 import { SYMBOLS, openPanel } from "./kachat-ui.js";
 import { Operation, Stage, isOpen, needsDriving, KachatNamesActions } from "../shared/engine/kachat-names/actions.js";
@@ -170,7 +171,7 @@ function eventRowHtml(event, showName = false) {
 // --- Password confirmation (iOS DeviceAuth) ------------------------------------------------
 
 /** Asks for the wallet password; resolves true once it is right, false when cancelled. */
-function confirmPassword(reason = AUTH_REASON) {
+export function confirmPassword(reason = AUTH_REASON) {
   return new Promise((resolve) => {
     document.querySelector(".kl-auth")?.remove();
     const backdrop = document.createElement("div");
@@ -205,7 +206,7 @@ function confirmPassword(reason = AUTH_REASON) {
 }
 
 /** An iOS alert with a destructive confirm button; resolves true on confirm. */
-function confirmAlert({ title, message, confirmLabel, cancelLabel = "Cancel", destructive = true }) {
+export function confirmAlert({ title, message, confirmLabel, cancelLabel = "Cancel", destructive = true }) {
   return new Promise((resolve) => {
     const backdrop = document.createElement("div");
     backdrop.className = "alert-backdrop";
@@ -230,6 +231,39 @@ function confirmAlert({ title, message, confirmLabel, cancelLabel = "Cancel", de
     document.body.appendChild(backdrop);
     backdrop.querySelector("[data-ok]").focus();
   });
+}
+
+// --- A finished transaction (iOS KachatTxDone / KachatTxDoneSheet) --------------------------
+
+/**
+ * The half sheet every finished name transaction shows: what happened, the transaction id (tap
+ * to copy) and View in Explorer - the explorer picked in Settings, testnet-10's on testnet.
+ * `onClose` runs when it goes away (the action sheet under it closes with it, as on iOS).
+ */
+export function showTxDone({ txId, title = "Transaction sent", onClose = () => {} }) {
+  document.querySelector(".kl-done-backdrop")?.remove();
+  const backdrop = document.createElement("div");
+  backdrop.className = "sheet-backdrop kl-done-backdrop";
+  backdrop.innerHTML = `
+    <div class="sheet kl-done" role="dialog" aria-modal="true" aria-label="${esc(title)}">
+      <div class="sheet-grabber"></div>
+      <span class="kl-green kl-done-icon">${SYMBOLS.sent}</span>
+      <div class="kl-done-title">${esc(title)}</div>
+      <p class="muted small center-text">It shows here once the network accepts it, usually within seconds.</p>
+      <button class="kl-txid" id="kl-copy-tx" title="Copy">
+        <span class="mono tiny ellipsis">${esc(txId)}</span><span class="kl-copy-icon">${ICONS.copy || ""}</span>
+      </button>
+      <a class="km-prominent kl-full kl-explorer" href="${esc(wallet.explorerTxUrl(txId))}" target="_blank" rel="noopener noreferrer">View in Explorer</a>
+      <button class="bar-text strong" data-done>Done</button>
+    </div>`;
+  const close = () => { backdrop.remove(); document.removeEventListener("keydown", onKey); onClose(); };
+  const onKey = (event) => { if (event.key === "Escape") close(); };
+  document.addEventListener("keydown", onKey);
+  backdrop.addEventListener("click", (event) => { if (event.target === backdrop || event.target.closest("[data-done]")) close(); });
+  backdrop.querySelector("#kl-copy-tx").onclick = async () => {
+    try { await navigator.clipboard.writeText(txId); toast("Transaction ID copied"); } catch { /* clipboard refused */ }
+  };
+  document.body.appendChild(backdrop);
 }
 
 // --- The runtime ---------------------------------------------------------------------------
@@ -285,6 +319,7 @@ export const hub = {
     if (!this._started) {
       this._started = true;
       rt.actions.subscribe(({ pending, virtualDaa }) => {
+        notifyFinished(pending);
         this.pending = pending;
         this.virtualDaa = virtualDaa;
         this.changed();
@@ -293,6 +328,7 @@ export const hub = {
     }
     rt.actions.resume();
     this.pending = rt.actions.pending;
+    for (const r of this.pending) if (!seenStages.has(r.id)) seenStages.set(r.id, r.stage);
     this.virtualDaa = rt.actions.virtualDaa;
     this.changed();
     await rt.registry.refresh();
@@ -449,7 +485,12 @@ export function registrationCardsHtml() {
     const message = cardErrors.get(r.id) || (r.stage === Stage.failed ? r.lastError : null);
     const working = cardWorking.has(r.id);
     let buttons = "";
-    if (r.stage === Stage.registered) buttons = `<button class="km-bordered small-button" data-reg-done="${esc(r.id)}">Done</button>`;
+    if (r.stage === Stage.registered || r.stage === Stage.cancelled) {
+      buttons = `<div class="kl-buttons">
+        ${finishedTx(r) ? `<button class="km-prominent small-button" data-reg-view="${esc(r.id)}">View Transaction</button>` : ""}
+        <button class="km-bordered small-button" data-reg-done="${esc(r.id)}">Done</button>
+      </div>`;
+    }
     else if (r.stage === Stage.taken) buttons = `<button class="km-bordered small-button danger-text" data-reg-cancel="${esc(r.id)}" ${working ? "disabled" : ""}>Cancel Commit</button>`;
     else if (r.stage === Stage.failed) {
       buttons = `<div class="kl-buttons">
@@ -468,8 +509,29 @@ export function registrationCardsHtml() {
   }).join("");
 }
 
+/** The finished registration (or cancelled commit) as the done sheet shows it, or null. */
+function finishedTx(r) {
+  if (r.stage === Stage.registered && r.registerTxId) return { txId: r.registerTxId, title: "Name registered" };
+  if (r.stage === Stage.cancelled && r.cancelTxId) return { txId: r.cancelTxId, title: "Commit cancelled" };
+  return null;
+}
+
+// The stage each registration was last seen in: the done sheet pops up the moment one lands.
+const seenStages = new Map();
+function notifyFinished(pending) {
+  for (const r of pending) {
+    const before = seenStages.get(r.id);
+    seenStages.set(r.id, r.stage);
+    if (before && before !== r.stage) {
+      const done = finishedTx(r);
+      if (done && app.dataset.screen === "kachat-market") showTxDone(done);
+    }
+  }
+}
+
 export function bindRegistrationCards(container) {
   const find = (id) => hub.pending.find((r) => r.id === id);
+  for (const b of container.querySelectorAll("[data-reg-view]")) b.onclick = () => { const r = find(b.dataset.regView); const done = r && finishedTx(r); if (done) showTxDone(done); };
   for (const b of container.querySelectorAll("[data-reg-done]")) b.onclick = async () => (await runtime()).actions.dismiss(b.dataset.regDone);
   for (const b of container.querySelectorAll("[data-reg-retry]")) b.onclick = async () => (await runtime()).actions.retry(b.dataset.regRetry);
   for (const b of container.querySelectorAll("[data-reg-cancel]")) {
@@ -600,14 +662,14 @@ function offerMenu(offer, refundable) {
 function openOfferAction(kind, offer, name = null) {
   const offerRow = { title: "Offer", value: amount(offer.amount) };
   if (kind === "withdraw") {
-    return openTxSheet({ title: "Withdraw Offer", confirmTitle: "Withdraw", rows: [offerRow], operation: () => Operation.withdraw(offer) });
+    return openTxSheet({ title: "Withdraw Offer", confirmTitle: "Withdraw", doneTitle: "Offer withdrawn", rows: [offerRow], operation: () => Operation.withdraw(offer) });
   }
   if (kind === "refund") {
-    return openTxSheet({ title: "Refund Offer", confirmTitle: "Refund", rows: [offerRow], operation: () => Operation.refund(offer) });
+    return openTxSheet({ title: "Refund Offer", confirmTitle: "Refund", doneTitle: "Offer refunded", rows: [offerRow], operation: () => Operation.refund(offer) });
   }
   const buyer = addressOf(offer.buyer);
   return openTxSheet({
-    title: "Accept Offer", confirmTitle: "Accept and Transfer",
+    title: "Accept Offer", confirmTitle: "Accept and Transfer", doneTitle: "Offer accepted",
     warning: "The name goes to the buyer and the offer's amount comes to you, in one transaction. This can't be undone.",
     rows: [{ title: "Name", value: name.display }, offerRow, { title: "Buyer", value: buyer ? shortAddress(buyer) : "" }],
     operation: () => Operation.accept(offer, name),
@@ -636,8 +698,8 @@ const labeledRow = (title, value, bold = false) =>
  *   operation(): the Operation for the current inputs, or null
  *   inputsHtml / bindInputs(panel, changed): the sheet's own fields; `changed()` rebuilds
  */
-function openTxSheet({ title, confirmTitle, warning = null, footer = null, rows = [], operation, inputsHtml = "", bindInputs = null, onDone = () => {} }) {
-  const state = { plan: null, planError: null, building: false, sending: false, txId: null, sendError: null, token: 0 };
+function openTxSheet({ title, confirmTitle, doneTitle = "Transaction sent", warning = null, footer = null, rows = [], operation, inputsHtml = "", bindInputs = null, onDone = () => {} }) {
+  const state = { plan: null, planError: null, building: false, sending: false, txId: null, sendError: null, token: 0, balance: null };
   let handle = null;
   const rowsNow = () => (typeof rows === "function" ? rows() : rows);
   const footerNow = () => (typeof footer === "function" ? footer() : footer);
@@ -648,7 +710,7 @@ function openTxSheet({ title, confirmTitle, warning = null, footer = null, rows 
     if (p) {
       costs = `${p.priceFee > 0n ? labeledRow("Price (to miners)", amount(p.priceFee)) : ""}
         ${labeledRow("Network fee", amount(p.networkFee))}
-        ${myKey ? labeledRow("Your balance", signed(balanceChange(p, myKey)), true) : ""}`;
+        ${myKey ? balanceRows(balanceChange(p, myKey)) : ""}`;
     } else if (state.building) {
       costs = '<div class="form-row between"><span>Network fee</span><span class="spinner small-spin"></span></div>';
     }
@@ -674,6 +736,12 @@ function openTxSheet({ title, confirmTitle, warning = null, footer = null, rows 
         ${state.sendError ? `<div class="form-footer error-text">${esc(state.sendError)}</div>` : ""}
       </div>`;
   };
+
+  // Names always spend from, and pay back to, the chatting address: show its real balance and
+  // what it will be once this is sent (iOS 8ecc38c).
+  const balanceRows = (change) => (state.balance != null
+    ? labeledRow("Chatting address balance", amount(state.balance)) + labeledRow("Balance after", amount(state.balance + change > 0n ? state.balance + change : 0n), true)
+    : labeledRow("Balance change", signed(change), true));
 
   const paint = () => {
     if (!handle?.isOpen()) return;
@@ -719,6 +787,7 @@ function openTxSheet({ title, confirmTitle, warning = null, footer = null, rows 
       state.txId = id;
       handle.setBar({ trailing: "Done" });
       onDone(id);
+      showTxDone({ txId: id, title: doneTitle, onClose: () => handle.close() });
     } catch (error) {
       state.sendError = errorText(error);
     }
@@ -732,7 +801,19 @@ function openTxSheet({ title, confirmTitle, warning = null, footer = null, rows 
   });
   bindInputs?.(handle.panel, rebuild);
   rebuild();
+  chattingBalance().then((balance) => { state.balance = balance; paint(); });
   return handle;
+}
+
+/** The chatting address's balance (sompi), read from a node; null when it can't be read. */
+async function chattingBalance() {
+  try {
+    const rt = await runtime();
+    const utxos = await rt.engine.getUtxosWithCovenants([rt.actions.myAddress]);
+    return utxos.reduce((sum, u) => sum + u.amount, 0n);
+  } catch {
+    return null;
+  }
 }
 
 /** A segmented control (iOS .pickerStyle(.segmented)). */
@@ -751,7 +832,7 @@ function bindSegmented(panel, name, onPick) {
   }
 }
 
-const yearsText = (y) => (Number(y) === 1 ? "1 Year" : `${y} Years`);
+const yearsText = (y) => (Number(y) === 1 ? "1 year" : `${y} years`);
 const maxYears = () => Number(registry()?.manifest?.params.maxYears ?? 2n);
 const amountField = (id) => `
   <div class="form-card"><div class="form-row">
@@ -868,7 +949,7 @@ function openClaimSheet(target) {
 function openBuySheet(info) {
   const soon = info.expiresAt - 30n * 86_400_000n < BigInt(Date.now());
   openTxSheet({
-    title: "Buy Name", confirmTitle: "Confirm Purchase",
+    title: "Buy Name", confirmTitle: "Confirm Purchase", doneTitle: "Name bought",
     footer: soon ? "Less than 30 days are left before this name expires. You'd have to renew it soon." : "The payment reaches the seller and the name reaches you in the same transaction - both happen, or neither does.",
     rows: [{ title: "Name", value: info.display }, { title: "Price (to the seller)", value: amount(info.price) }, { title: "Expires", value: day(info.expiresAt) }],
     operation: () => Operation.buy(info),
@@ -880,7 +961,7 @@ function openOfferSheet(name, info) {
   const refundAfter = () => (state.virtualDaa != null ? state.virtualDaa + BigInt(state.days) * 86_400n * DAA_PER_SECOND : null);
   const belowListing = () => Boolean(info?.isListed && state.amount != null && info.price < state.amount);
   openTxSheet({
-    title: "Make an Offer", confirmTitle: "Send Offer",
+    title: "Make an Offer", confirmTitle: "Send Offer", doneTitle: "Offer sent",
     footer: () => (belowListing() ? "This name is listed for less than your offer. Anyone could buy the listing with your offer, so consider buying it instead." : null),
     rows: () => [
       { title: "Name", value: `${name}.kachat` },
@@ -913,7 +994,7 @@ function openRenewSheet(info) {
   const params = registry()?.manifest?.params;
   const perYear = params ? paramsRenewPrice(params, new TextEncoder().encode(info.name).length) : 0n;
   openTxSheet({
-    title: "Renew", confirmTitle: "Renew",
+    title: "Renew", confirmTitle: "Renew", doneTitle: "Renewed",
     footer: "A renewal adds to the current expiry, even after it passed. The price goes to the miners.",
     rows: () => [
       { title: "Name", value: info.display },
@@ -931,7 +1012,7 @@ function openRenewSheet(info) {
 function openListSheet(info) {
   const state = { price: null };
   openTxSheet({
-    title: info.isListed ? "Change Price" : "List for Sale", confirmTitle: info.isListed ? "Change Price" : "List",
+    title: info.isListed ? "Change Price" : "List for Sale", confirmTitle: info.isListed ? "Change Price" : "List", doneTitle: info.isListed ? "Price changed" : "Listed for sale",
     footer: "Anyone can buy it at this price: the payment reaches you and the name reaches them in one transaction. Delist any time.",
     rows: info.isListed ? [{ title: "Listed at", value: amount(info.price) }] : [],
     operation: () => (state.price != null ? Operation.list(info, state.price) : null),
@@ -983,7 +1064,7 @@ function openTransferSheet(info) {
     state.resolving = false;
   };
   openTxSheet({
-    title: "Transfer", confirmTitle: "Transfer",
+    title: "Transfer", confirmTitle: "Transfer", doneTitle: "Name transferred",
     warning: "A transfer can't be undone. The new owner gets the name with its current expiry; your profile stays with your address.",
     rows: () => [{ title: "Name", value: info.display }, ...(state.resolved ? [{ title: "To", value: state.resolved.address }] : [])],
     operation: () => (state.resolved ? Operation.transfer(info, state.resolved.key) : null),
@@ -1016,7 +1097,7 @@ function openTransferSheet(info) {
 
 function openReclaimSheet(info) {
   openTxSheet({
-    title: "Reclaim", confirmTitle: "Reclaim",
+    title: "Reclaim", confirmTitle: "Reclaim", doneTitle: "Name reclaimed",
     footer: "The name's bond goes back to its last owner, you keep the freed registry deposit (less the fee) as a bounty, and the name is free. To own it, claim it afterwards.",
     rows: [{ title: "Name", value: info.display }, { title: "Bond to the last owner", value: amount(registry()?.manifest?.params.bond ?? 0n) }],
     operation: () => Operation.reclaim(info),
@@ -1140,12 +1221,12 @@ export async function showLiveNameDetail({ info: initial, onBack }) {
     on("kl-transfer", () => openTransferSheet(info));
     on("kl-reclaim", () => openReclaimSheet(info));
     on("kl-delist", () => openTxSheet({
-      title: "Delist", confirmTitle: "Delist",
+      title: "Delist", confirmTitle: "Delist", doneTitle: "Delisted",
       rows: [{ title: "Name", value: info.display }, { title: "Listed at", value: amount(info.price) }],
       operation: () => Operation.list(info, 0n),
     }));
     on("kl-release", () => openTxSheet({
-      title: "Release Name", confirmTitle: "Release",
+      title: "Release Name", confirmTitle: "Release", doneTitle: "Name released",
       warning: "Releasing gives the name up for good: it becomes free for anyone to register, and the time you paid for is lost. You get the bond and the registry deposit back.",
       rows: [{ title: "Name", value: info.display }],
       operation: () => Operation.release(info),
@@ -1175,7 +1256,7 @@ export async function showLiveNameDetail({ info: initial, onBack }) {
       profile = profile ?? new Profile();
       profile.primaryName = state.info.name;
       const tx = await rt.actions.saveProfile(profile);
-      state.primaryMessage = `Saved. Transaction ${tx.slice(0, 16)}...`;
+      showTxDone({ txId: tx, title: "Primary name set" });
     } catch (error) {
       state.primaryMessage = errorText(error);
     }

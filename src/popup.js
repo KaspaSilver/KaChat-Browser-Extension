@@ -14,7 +14,7 @@ import { cachedOwnedNames, ownedNames, otherNamesCount } from "./names.js";
 import { showWelcome, showUnlock, enterApp, setHandlers, setLoggedOut } from "./onboarding.js";
 import { showDomains } from "./domains.js";
 import { showKachatMarket, kachatWordmark } from "./market.js";
-import { kachatLive, kachatNames, kachatLabelOf, forgetKachatSigner } from "./kachat-names.js";
+import { kachatLive, kachatNames, kachatLabelOf, forgetKachatSigner, kachatSocial, ownKachatProfile } from "./kachat-names.js";
 import { showKachatProfileEditor } from "./kachat-profile.js";
 import { showSettings, showLicenses } from "./settings.js";
 import { showApproval } from "./approve.js";
@@ -145,6 +145,8 @@ function paintHome() {
   // short address - never the account name (your own label), and since 5.2 not your .kas name
   // either (that is managed in Your Domains).
   const kachatName = kachatLive && s.kachatLabel ? `${s.kachatLabel}.kachat` : null;
+  // On testnet the .kachat profile (avatar, banner and bio looked up from its social links).
+  const social = (kachatLive && s.kachatSocial) || {};
   const displayName = kachatName || shortIdentity(main);
   const domainCount = kns.known ? kns.domainCount + otherNamesCount(s.otherNames) : null;
   const created = s.account.createdAt ? new Date(s.account.createdAt).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : "—";
@@ -177,13 +179,19 @@ function paintHome() {
         </div>
 
         <div class="glass hero">
-          <div class="banner gradient"></div>
+          ${social.banner
+            ? `<div class="banner"><img src="${esc(social.banner)}" alt="" referrerpolicy="no-referrer" /></div>`
+            : '<div class="banner gradient"></div>'}
           <div class="hero-row">
-            <div class="avatar avatar-glyph">${ICONS.person}</div>
+            ${social.avatar
+              ? `<div class="avatar"><img src="${esc(social.avatar)}" alt="" referrerpolicy="no-referrer" /></div>`
+              : `<div class="avatar avatar-glyph">${ICONS.person}</div>`}
             <button class="hero-edit" id="edit-kachat-profile">Edit .kachat Profile</button>
           </div>
           <div class="hero-text">
             <div class="hero-name">${esc(displayName)}</div>
+            ${social.bio ? `<div class="hero-bio muted small">${esc(social.bio)}</div>` : ""}
+            ${social.linktree ? `<a class="hero-link" href="${esc(social.linktree)}" target="_blank" rel="noopener noreferrer">${ICONS.link || ""}<span>${esc(social.linktree.replace("https://", ""))}</span></a>` : ""}
           </div>
         </div>
 
@@ -397,6 +405,7 @@ async function refreshHome() {
           .then(() => kachatLabelOf(main))
           .then((label) => { if (s.addresses?.main === main && s.kachatLabel !== label) { s.kachatLabel = label; paintHomeIfShowing(s); } })
           .catch(() => {});
+        loadKachatSocial(s, main);
       }
       s.balances = await wallet.balances(s.addresses, s.spending.hidden);
       // The other tabs' toolbars show the chatting wallet's balance, as iOS does.
@@ -413,6 +422,28 @@ async function refreshHome() {
     refreshing = false;
     paintHomeIfShowing(s);
   }
+}
+
+/** Testnet: the hero's .kachat avatar, banner, bio and Linktree from the account's profile record,
+ *  each piece looked up from its social link (cached 24 h; repainted when a lookup lands). */
+async function loadKachatSocial(s, main) {
+  const profile = await ownKachatProfile(main);
+  if (s.addresses?.main !== main) return;
+  const resolver = kachatSocial();
+  const read = async () => {
+    const piece = async (kind) => (profile?.[kind] ? (await resolver.profile(profile[kind]))?.[kind] ?? null : null);
+    const next = { avatar: await piece("avatar"), banner: await piece("banner"), bio: await piece("bio"), linktree: profile?.linktree ?? null };
+    if (JSON.stringify(next) !== JSON.stringify(s.kachatSocial || {})) {
+      s.kachatSocial = next;
+      paintHomeIfShowing(s);
+    }
+  };
+  if (!s.kachatSocialUnsubscribe) {
+    s.kachatSocialUnsubscribe = resolver.onChange((link) => {
+      if (homeState === s && profile && [profile.avatar, profile.banner, profile.bio].includes(link)) read();
+    });
+  }
+  await read();
 }
 
 function paintHomeIfShowing(state) {

@@ -16,13 +16,16 @@ if (!existsSync(`${desktop}/engine/wallet.js`)) {
   process.exit(1);
 }
 let copied = 0;
-for (const dir of ["engine", "ui", "kaspa"]) {
-  // Only the files already here: the extension uses a subset of each folder. A new engine
-  // import needs its file copied in by hand once.
-  for (const name of readdirSync(`${root}shared/${dir}`)) {
-    copyFileSync(`${desktop}/${dir}/${name}`, `${root}shared/${dir}/${name}`);
+// Only the files already here: the extension uses a subset of each folder. A new engine import
+// needs its file copied in by hand once. Subfolders (engine/kachat-names) are walked too.
+function sync(dir) {
+  for (const entry of readdirSync(`${root}shared/${dir}`, { withFileTypes: true })) {
+    if (entry.name === "README.md") continue;
+    if (entry.isDirectory()) { sync(`${dir}/${entry.name}`); continue; }
+    copyFileSync(`${desktop}/${dir}/${entry.name}`, `${root}shared/${dir}/${entry.name}`);
     copied += 1;
   }
 }
+for (const dir of ["engine", "ui", "kaspa"]) sync(dir);
 const commit = execFileSync("git", ["rev-parse", "--short", "HEAD"], { cwd: desktop }).toString().trim();
 console.log(`copied ${copied} files from KaChat-Desktop ${commit}`);
