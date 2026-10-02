@@ -1,6 +1,8 @@
 // The Kaspa name services - a port of iOS NameServices.swift (NameServiceTLD, NameServicesClient):
 //
-//   .kachat  KaChat's own names. Not live yet; listed so the app already has its place.
+//   .kachat  KaChat's own names (Kaspa covenants). Live on testnet only, read through the shared
+//            registry (kachat-names.js: a names indexer, or the chain itself); mainnet waits for an
+//            audit and keeps it not live (iOS 25cc2c9).
 //   .kas     KNS (api.knsdomains.org) - the engine's KNS client.
 //   .k       dotk (api.dotk.name/v1). GET /addresses/{kaspa address} lists an owner's names;
 //            GET /names/{name} resolves one.
@@ -17,6 +19,10 @@ import { getEndpoint } from "../shared/engine/endpoints.js";
 import { dotkCanonical, kaspaNamesCanonical } from "./names-normalize.js";
 import { esc, ICONS } from "./ui.js";
 import { IS_TESTNET, MAINNET_KNS, TESTNET_KNS } from "./net.js";
+import { kachatRegistry } from "./kachat-names.js";
+import { normalize as kachatNormalize, isValid as kachatIsValid } from "../shared/engine/kachat-names/codec.js";
+import { Status } from "../shared/engine/kachat-names/registry-state.js";
+import { KachatNamesRegistry } from "../shared/engine/kachat-names/registry.js";
 
 // The KNS API for the running network (testnet reads /tn10, iOS knsBaseURL).
 function knsBase() {
@@ -27,7 +33,7 @@ function knsBase() {
 
 // Declaration order is the tab order: KaChat's own names first.
 export const NAME_SERVICES = [
-  { tld: "kachat", suffix: ".kachat", serviceName: "KaChat Names", site: null, siteName: null, api: null, live: false },
+  { tld: "kachat", suffix: ".kachat", serviceName: "KaChat Names", site: null, siteName: null, api: null, live: IS_TESTNET },
   { tld: "kas", suffix: ".kas", serviceName: "KNS", site: "https://app.knsdomains.org", siteName: "knsdomains.org", api: null, live: true },
   // Testnet-10: dotk has its own API; Kaspa Names publishes no testnet deployment (iOS
   // NameServiceTLD.apiBaseURL).
@@ -112,15 +118,34 @@ async function resolveKaspaNames(label) {
   return { tld: "kaspa", display, address: outcome.status === "found" ? outcome.body?.address || null : null, failed: outcome.status === "failed" };
 }
 
+/** .kachat (testnet only): the owner of an ACTIVE name - a name in grace or lapsed does not
+ *  resolve (KACHAT_NAMES.md section 4). Same rules as the registry: a-z, 0-9, hyphen. */
+async function resolveKachat(label) {
+  const registry = kachatRegistry();
+  if (!registry) return null;
+  const canonical = kachatNormalize(label);
+  if (!kachatIsValid(canonical)) return null;
+  const display = `${canonical}.kachat`;
+  try {
+    await registry.refreshIfStale();
+    const found = await registry.lookup(canonical);
+    const active = found.kind === "registered" && found.info.status(registry.graceMs) === Status.active;
+    return { tld: "kachat", display, address: active ? KachatNamesRegistry.addressOf(found.info.owner) : null, failed: false };
+  } catch (error) {
+    console.info("[KaChat Wallet] .kachat lookup failed:", error?.message || error);
+    return { tld: "kachat", display, address: null, failed: true };
+  }
+}
+
 /**
  * What `input` points to on every live service, in priority order:
  * [{ tld, display, address|null, failed }]. A service whose rules reject the label is left out;
- * .kachat is skipped until it is live.
+ * .kachat is skipped where it is not live (mainnet).
  */
 export async function resolveEverywhere(input) {
   const { label } = splitTypedName(input);
   if (!label) return [];
-  const results = (await Promise.all([resolveKas(label), resolveDotk(label), resolveKaspaNames(label)])).filter(Boolean);
+  const results = (await Promise.all([resolveKachat(label), resolveKas(label), resolveDotk(label), resolveKaspaNames(label)])).filter(Boolean);
   return RESOLUTION_ORDER.map((tld) => results.find((r) => r.tld === tld)).filter(Boolean);
 }
 
@@ -267,10 +292,24 @@ export async function ownedNamesOfMany(addresses, concurrency = 6) {
 }
 
 /**
- * Does `address` own a name on any service KaChat reads (.kas, .k, .kaspa)? Account discovery
+ * Does `address` own a name on any service KaChat reads (.kas, .k, .kaspa; .kachat on testnet)? Account discovery
  * asks this so an address whose only trace is a name is still found.
  */
 export async function ownsAnyName(address, kasOwns) {
   const [kas, others] = await Promise.all([kasOwns(address).catch(() => false), ownedNamesOf(address)]);
-  return Boolean(kas) || others.length > 0;
+  if (kas || others.length > 0) return true;
+  return ownsKachatName(address);
+}
+
+/** .kachat where it is live (testnet): any name, active or not, counts (iOS 25cc2c9). */
+async function ownsKachatName(address) {
+  const registry = kachatRegistry();
+  const key = registry ? KachatNamesRegistry.keyOf(String(address || "").toLowerCase()) : null;
+  if (!key) return false;
+  try {
+    await registry.refreshIfStale();
+    return (await registry.namesOf(key, { includeInactive: true })).length > 0;
+  } catch {
+    return false;
+  }
 }

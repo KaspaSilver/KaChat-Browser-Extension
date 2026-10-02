@@ -1,6 +1,7 @@
 // Your Domains - iOS KNSDomainsListView, KNSDomainDetailView and KNSDomainSendView.
 //
-//   list     an underline tab per name service, KaChat's own first: .kachat (coming), .kas
+//   list     an underline tab per name service, KaChat's own first: .kachat (live on testnet,
+//            kachat-live.js; coming on mainnet), .kas
 //            (KNS), .k (dotk), .kaspa (Kaspa Names). Each outside service's tab lists the
 //            chatting address's names as teal cards and pins "Get a <ending> domain at <site>",
 //            which opens that service's site - KaChat creates only its own .kachat names.
@@ -15,6 +16,8 @@ import { remember } from "./dock.js";
 import * as wallet from "./wallet.js";
 import { app, esc, render, $, toast, ICONS, navHeader } from "./ui.js";
 import * as names from "./names.js";
+import { kachatLive } from "./kachat-names.js";
+import { liveDomainsTab, showLiveNameDetail } from "./kachat-live.js";
 
 const BASE_FEE_SOMPI = 2_000_000n; // 0.02 KAS - iOS WithdrawFeeTier base for domain transfers
 const FEE_TIERS = [
@@ -77,7 +80,14 @@ export function showDomains({ address, onBack }) {
     return list.map((owned) => nameCardHtml(owned.display, owned.provisional ? "Settling" : null)).join("");
   };
 
-  const kachatTab = () => `
+  // Live on testnet (the testnet-10 registry); mainnet keeps "coming".
+  let liveTab = null;
+  const kachatTab = () => {
+    if (!kachatLive) return comingTab();
+    liveTab = liveDomainsTab({ address, repaint: () => { if (here() && selectedTab === "kachat") paint(); } });
+    return liveTab.html;
+  };
+  const comingTab = () => `
     <div class="kachat-coming">
       <span class="accent">${ICONS.atCircle}</span>
       <h3>.kachat names are coming</h3>
@@ -102,6 +112,7 @@ export function showDomains({ address, onBack }) {
     }
     const retry = $("#retry");
     if (retry) retry.onclick = loadOwned;
+    if (selectedTab === "kachat" && liveTab) liveTab.bind(app, { openName: (info) => showLiveNameDetail({ info, onBack: back }) });
     bindSwipe($("#domains-body"));
   };
 

@@ -14,6 +14,8 @@ import { cachedOwnedNames, ownedNames, otherNamesCount } from "./names.js";
 import { showWelcome, showUnlock, enterApp, setHandlers, setLoggedOut } from "./onboarding.js";
 import { showDomains } from "./domains.js";
 import { showKachatMarket, kachatWordmark } from "./market.js";
+import { kachatLive, kachatNames, kachatLabelOf, forgetKachatSigner } from "./kachat-names.js";
+import { showKachatProfileEditor } from "./kachat-profile.js";
 import { showSettings, showLicenses } from "./settings.js";
 import { showApproval } from "./approve.js";
 import * as dock from "./dock.js";
@@ -68,6 +70,7 @@ ext?.storage?.onChanged?.addListener((changes, area) => {
   }
   if (isApproval) return;
   if (area === "session" && changes["kachat.unlockKey"] && !changes["kachat.unlockKey"].newValue) {
+    forgetKachatSigner();
     wallet.disconnect();
     dock.enableDock(false);
     showUnlock();
@@ -137,10 +140,11 @@ function paintHome() {
   const primarySompi = s.balances ? (s.balances.spending[s.spending.activeIndex] ?? 0n) : null;
   const totalSpending = spendingTotal(s.balances);
   const kns = s.kns || {};
-  // What other people see you as (iOS profileHeroSection): your .kachat name once you have one,
-  // else your short address - never the account name (your own label), and since 5.2 not your
-  // .kas name either (that is managed in Your Domains).
-  const kachatName = null; // .kachat names are not live yet
+  // What other people see you as (iOS profileHeroSection): your .kachat name once you have one
+  // (live on testnet: your primary name while active, else your oldest active name), else your
+  // short address - never the account name (your own label), and since 5.2 not your .kas name
+  // either (that is managed in Your Domains).
+  const kachatName = kachatLive && s.kachatLabel ? `${s.kachatLabel}.kachat` : null;
   const displayName = kachatName || shortIdentity(main);
   const domainCount = kns.known ? kns.domainCount + otherNamesCount(s.otherNames) : null;
   const created = s.account.createdAt ? new Date(s.account.createdAt).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : "—";
@@ -176,6 +180,7 @@ function paintHome() {
           <div class="banner gradient"></div>
           <div class="hero-row">
             <div class="avatar avatar-glyph">${ICONS.person}</div>
+            <button class="hero-edit" id="edit-kachat-profile">Edit .kachat Profile</button>
           </div>
           <div class="hero-text">
             <div class="hero-name">${esc(displayName)}</div>
@@ -200,7 +205,7 @@ function paintHome() {
         </button>
         <button class="glass nav-row" id="kachat-names">
           <span class="nav-row-label">${kachatWordmark(22)}<span>Marketplace</span></span>
-          <span class="coming-pill">Coming soon</span>${ICONS.chevron}
+          ${kachatLive ? '<span class="kl-testnet">Testnet</span>' : '<span class="coming-pill">Coming soon</span>'}${ICONS.chevron}
         </button>
         <button class="glass nav-row" id="settings">
           <span class="nav-row-label">${ICONS.gear}<span>Settings</span></span>${ICONS.chevron}
@@ -296,6 +301,7 @@ function paintHome() {
   $("#manage-spending").onclick = () => showManageAddresses({ onBack: showHome });
   $("#domains").onclick = () => { if (main) showDomains({ address: main, onBack: showHome }); };
   $("#kachat-names").onclick = () => showKachatMarket({ onBack: showHome });
+  $("#edit-kachat-profile").onclick = () => showKachatProfileEditor({ onSaved: () => refreshHome() });
   $("#settings").onclick = () => showSettings({ onBack: showHome });
   $("#logout").onclick = () => showSheet({
     title: "Log Out",
@@ -319,12 +325,14 @@ async function logOut() {
   dock.enableDock(false);
   await setLoggedOut(true);
   homeState = null;
+  forgetKachatSigner();
   await wallet.disconnect();
   showWelcome();
 }
 
 async function lockWallet() {
   dock.enableDock(false);
+  forgetKachatSigner();
   await vault.lock();
   tellBackground({ type: "lock" });
   await wallet.disconnect();
@@ -381,6 +389,15 @@ async function refreshHome() {
       s.connection = "ok";
       dock.setStatus({ connection: "ok", nodeUrl: wallet.connectedNodeUrl() });
       paintHomeIfShowing(s);
+      // Testnet: the .kachat label for the hero, and registrations in flight resume (iOS resumes
+      // them when the app becomes active).
+      if (kachatLive) {
+        const main = s.addresses.main;
+        kachatNames()
+          .then(() => kachatLabelOf(main))
+          .then((label) => { if (s.addresses?.main === main && s.kachatLabel !== label) { s.kachatLabel = label; paintHomeIfShowing(s); } })
+          .catch(() => {});
+      }
       s.balances = await wallet.balances(s.addresses, s.spending.hidden);
       // The other tabs' toolbars show the chatting wallet's balance, as iOS does.
       dock.setStatus({ balanceText: wallet.formatKas(s.balances.main, 8) });

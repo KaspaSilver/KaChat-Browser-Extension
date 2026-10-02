@@ -1108,3 +1108,80 @@ export async function ksptEngine() {
 
 /** Bulk "was this ever used" for the cold account screen and its visibility list. */
 export { knownUsedState as usedStateKnown };
+
+// --- .kachat names (testnet) --------------------------------------------------------------
+
+/** A node UTXO entry as the plain object engine/kachat-names reads, with its covenant id (hex or
+ *  null) - KaChat-Desktop's KaspaEngine plainUtxo. */
+function plainUtxo(e) {
+  const inner = e?.entry ?? e?.utxoEntry ?? null;
+  const pick = (k) => e?.[k] ?? inner?.[k];
+  const outpoint = pick("outpoint") || {};
+  const spk = pick("scriptPublicKey");
+  let script = "";
+  let scriptVersion = 0;
+  if (spk && typeof spk === "object") {
+    script = String(spk.script ?? spk.scriptPublicKey ?? "");
+    scriptVersion = Number(spk.version ?? 0);
+  } else if (typeof spk === "string") {
+    // the SDK's string form is the 2-byte version (4 hex digits) followed by the script
+    scriptVersion = parseInt(spk.slice(0, 4), 16) || 0;
+    script = spk.slice(4);
+  }
+  const cov = inner?.covenantId ?? e?.covenantId ?? null;
+  const covenantId = cov == null ? null : String(typeof cov === "string" ? cov : cov.toString()).toLowerCase();
+  return {
+    outpoint: { transactionId: String(outpoint.transactionId ?? "").toLowerCase(), index: Number(outpoint.index ?? 0) },
+    amount: BigInt(pick("amount") ?? 0),
+    scriptPublicKey: script.toLowerCase(),
+    scriptVersion,
+    blockDaaScore: BigInt(pick("blockDaaScore") ?? 0),
+    isCoinbase: Boolean(pick("isCoinbase")),
+    covenantId: covenantId || null,
+  };
+}
+
+/**
+ * The node side of the engine object engine/kachat-names was written against on desktop
+ * (KaspaEngine.currentDagPoint, getUtxosWithCovenants, utxosForRegistry, submitRpcTransaction).
+ * No key: the signer is bound separately (chattingSigner).
+ */
+export function namesNodeMethods() {
+  const methods = {
+    log: (...parts) => console.info("[KaChat Wallet]", ...parts),
+    connect: () => connection(),
+    withRpc: (fn) => withRpc(fn),
+    async currentDagPoint() {
+      return withRpc(async (node) => {
+        const dag = await node.getBlockDagInfo();
+        let networkId = String(dag?.network ?? dag?.networkId ?? "");
+        if (!networkId) networkId = String((await node.getServerInfo())?.networkId ?? "");
+        return { networkId, virtualDaaScore: BigInt(dag?.virtualDaaScore ?? 0), pastMedianTime: BigInt(dag?.pastMedianTime ?? 0) };
+      });
+    },
+    async currentVirtualDaaScore() {
+      try { return (await methods.currentDagPoint()).virtualDaaScore; } catch { return null; }
+    },
+    async getUtxosWithCovenants(addresses) {
+      const list = [...new Set((addresses || []).map(String).filter(Boolean))];
+      const out = [];
+      for (let start = 0; start < list.length; start += 50) {
+        const response = await withRpc((node) => node.getUtxosByAddresses(list.slice(start, start + 50)));
+        for (const e of response?.entries || []) out.push(plainUtxo(e));
+      }
+      return out;
+    },
+    utxosForRegistry: (addresses) => methods.getUtxosWithCovenants(addresses),
+    async submitRpcTransaction(transaction) {
+      const response = await withRpc((node) => node.submitTransaction({ transaction, allowOrphan: false }));
+      return String(response?.transactionId ?? "");
+    },
+  };
+  return methods;
+}
+
+/** The active account's chatting address and its key - what .kachat names are owned and signed by. */
+export async function chattingSigner() {
+  const from = await sourceWallet({ kind: "main" });
+  return { address: from.address, privateKeyHex: from.privateKeyHex, kaspa: await kaspa() };
+}
