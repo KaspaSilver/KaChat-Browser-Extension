@@ -1,49 +1,19 @@
-// "Edit .kachat Profile" - iOS KaChatProfileEditorSheet, opened from the Profile hero.
-//
-// Mainnet: the "coming" editor - the layout of the profile editor with nothing in it yet,
-// because KaChat's own names are not live there.
-// Testnet: the live address profile editor (iOS KachatLiveProfileEditor, 5df42b4..0f44a07); it
-// writes the kchat:1:profile: record.
+// "Edit KaChat Profile" - iOS KaChatProfileEditorSheet, opened from the Profile hero: the live
+// address profile editor (iOS KachatLiveProfileEditor) on both networks. It writes the
+// kchat:1:profile: record, a self-send that needs no registry, so it saves on mainnet too; only
+// the primary name waits for mainnet's registry (iOS d36fc42).
 //
 // Left out on purpose: iOS's Setup Guide row (the wallet has no setup guides).
 
 import { esc, ICONS } from "./ui.js";
 import { openPanel } from "./kachat-ui.js";
-import { kachatLive, kachatNames, kachatSocial, ownKachatProfile } from "./kachat-names.js";
+import { kachatLaunched, kachatProfiles, kachatSocial, ownKachatProfile } from "./kachat-names.js";
 import { openProfileSaveSheet } from "./kachat-live.js";
 import { Profile, SocialKind, SocialPlatform, SocialSource } from "../shared/engine/kachat-names/registry-state.js";
 import { KachatNamesRegistry } from "../shared/engine/kachat-names/registry.js";
 
-// SF Symbols photo / photo.on.rectangle.
-const PHOTO = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="8.5" cy="10" r="1.6"/><path d="M21 16l-5-5-7 7"/></svg>';
-const PHOTO_STACK = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="7" width="16" height="12" rx="2"/><path d="M3 15V5a2 2 0 0 1 2-2h12"/><path d="M21 16l-4-4-6 6"/></svg>';
-
 export function showKachatProfileEditor({ onSaved = () => {} } = {}) {
-  if (kachatLive) return showLiveProfileEditor({ onSaved });
-  return showComingSoonEditor();
-}
-
-function showComingSoonEditor() {
-  const row = (label, icon = "") => `<div class="form-row muted">${icon}<span>${esc(label)}</span></div>`;
-  const fields = ["Bio", "X handle", "Website", "Telegram", "Discord user id", "Email", "GitHub", "Redirect URL"];
-  openPanel({
-    title: "Edit .kachat Profile",
-    trailing: "Done",
-    full: true,
-    body: `
-      <div class="form-section">
-        <div class="form-card"><div class="form-row kp-coming">
-          <span class="accent">${ICONS.atCircle}</span>
-          <span class="small">.kachat names are coming. Once you claim one, your avatar, banner, bio and links are set here - and they're what KaChat shows for you everywhere.</span>
-        </div></div>
-      </div>
-      <div class="form-section"><div class="form-header">Avatar</div><div class="form-card">${row("Choose Avatar", PHOTO)}</div></div>
-      <div class="form-section"><div class="form-header">Banner</div><div class="form-card">${row("Choose Banner", PHOTO_STACK)}</div></div>
-      <div class="form-section"><div class="form-header">Profile</div><div class="form-card">${fields.map((f) => row(f)).join("")}</div></div>
-      <div class="form-section"><div class="form-header">.kachat Name</div><div class="form-card">
-        <div class="form-row between"><span>Name</span><span class="muted">None yet</span></div>
-      </div></div>`,
-  });
+  return showLiveProfileEditor({ onSaved });
 }
 
 // --- The live editor (iOS KachatLiveProfileEditor, KachatSocialPreview, KachatSourceInput) ---
@@ -215,6 +185,7 @@ function showLiveProfileEditor({ onSaved }) {
 
   const paintPrimary = () => {
     const select = panel.querySelector("#kp-primary");
+    if (!select) return;
     select.innerHTML = `<option value="">None</option>${state.activeNames.map((n) => `<option value="${esc(n)}">${esc(n)}.kachat</option>`).join("")}`;
     select.value = state.primary;
   };
@@ -228,7 +199,7 @@ function showLiveProfileEditor({ onSaved }) {
   });
 
   handle = openPanel({
-    title: "Edit .kachat Profile",
+    title: "Edit KaChat Profile",
     leading: "Cancel",
     full: true,
     body: `
@@ -250,8 +221,12 @@ function showLiveProfileEditor({ onSaved }) {
       </div>
       <div class="form-section">
         <div class="form-header">.kachat Name</div>
-        <div class="form-card"><label class="form-row between"><span>Primary name</span><select class="kp-select" id="kp-primary"></select></label></div>
-        <div class="form-footer">KaChat shows you by your primary name while you own it and it's active; otherwise by your oldest active name, or your address.</div>
+        <div class="form-card">${kachatLaunched
+          ? '<label class="form-row between"><span>Primary name</span><select class="kp-select" id="kp-primary"></select></label>'
+          : '<div class="form-row between"><span>Primary name</span><span class="muted">Coming soon</span></div>'}</div>
+        <div class="form-footer">${kachatLaunched
+          ? "KaChat shows you by your primary name while you own it and it's active; otherwise by your oldest active name, or your address."
+          : ".kachat names aren't on mainnet yet. Your avatar, banner, bio and links save now; you can pick a primary name once names launch."}</div>
       </div>
       <div class="form-section">
         <div class="form-card"><button class="form-row km-form-button" id="kp-save" disabled>Save Profile</button></div>
@@ -280,16 +255,16 @@ function showLiveProfileEditor({ onSaved }) {
   const linktree = panel.querySelector("#kp-linktree");
   linktree.oninput = () => { state.linktree = linktree.value; paintSave(); };
   const primary = panel.querySelector("#kp-primary");
-  primary.onchange = () => { state.primary = primary.value; };
+  if (primary) primary.onchange = () => { state.primary = primary.value; };
   panel.querySelector("#kp-save").onclick = save;
   paintPrimary();
   paintSave();
 
   (async () => {
     try {
-      const rt = await kachatNames();
+      const rt = await kachatProfiles();
       const address = rt.actions.myAddress;
-      await rt.registry.refreshIfStale();
+      if (kachatLaunched) await rt.registry.refreshIfStale();
       const p = await ownKachatProfile(address);
       if (p) {
         for (const kind of KINDS) {
@@ -300,7 +275,7 @@ function showLiveProfileEditor({ onSaved }) {
         state.linktree = Profile.linktreeUsername(p.linktree);
         linktree.value = state.linktree;
       }
-      const key = KachatNamesRegistry.keyOf(address);
+      const key = kachatLaunched ? KachatNamesRegistry.keyOf(address) : null;
       if (key) state.activeNames = (await rt.registry.namesOf(key, { includeInactive: false })).map((n) => n.name);
       if (p?.primaryName && state.activeNames.includes(p.primaryName)) state.primary = p.primaryName;
     } catch (error) {

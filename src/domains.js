@@ -16,7 +16,8 @@ import { remember } from "./dock.js";
 import * as wallet from "./wallet.js";
 import { app, esc, render, $, toast, ICONS, navHeader } from "./ui.js";
 import * as names from "./names.js";
-import { kachatLive } from "./kachat-names.js";
+import { kachatRegistry } from "./kachat-names.js";
+import { showKachatMarket } from "./market.js";
 import { liveDomainsTab, showLiveNameDetail } from "./kachat-live.js";
 
 const BASE_FEE_SOMPI = 2_000_000n; // 0.02 KAS - iOS WithdrawFeeTier base for domain transfers
@@ -80,10 +81,9 @@ export function showDomains({ address, onBack }) {
     return list.map((owned) => nameCardHtml(owned.display, owned.provisional ? "Settling" : null)).join("");
   };
 
-  // Live on testnet (the testnet-10 registry); mainnet keeps "coming".
+  // The live tab on every network (iOS 7227d69) - empty on mainnet, where no registry runs.
   let liveTab = null;
   const kachatTab = () => {
-    if (!kachatLive) return comingTab();
     liveTab = liveDomainsTab({ address, repaint: () => { if (here() && selectedTab === "kachat") paint(); } });
     return liveTab.html;
   };
@@ -102,7 +102,9 @@ export function showDomains({ address, onBack }) {
         ${names.NAME_SERVICES.map((s) => `<button role="tab" data-tab="${s.tld}" aria-selected="${s.tld === selectedTab}">${esc(s.suffix)}</button>`).join("")}
       </div>
       <section class="screen domains" id="domains-body">${body}</section>
-      ${selectedTab === "kachat" ? "" : `<div class="get-domain-bar">${getNameButton(selectedTab)}</div>`}`, "domains");
+      ${selectedTab === "kachat"
+        ? (liveTab?.showsInscribe ? '<div class="get-domain-bar"><button class="get-domain" id="inscribe">Inscribe</button></div>' : "")
+        : `<div class="get-domain-bar">${getNameButton(selectedTab)}</div>`}`, "domains");
     remember(() => paint());
     $("#back").onclick = onBack;
     for (const tab of app.querySelectorAll("[data-tab]")) tab.onclick = () => switchTo(tab.dataset.tab);
@@ -113,6 +115,9 @@ export function showDomains({ address, onBack }) {
     const retry = $("#retry");
     if (retry) retry.onclick = loadOwned;
     if (selectedTab === "kachat" && liveTab) liveTab.bind(app, { openName: (info) => showLiveNameDetail({ info, onBack: back }) });
+    // Inscribe (iOS e4da63d): the .kachat marketplace; a new name shows here on the way back.
+    const inscribe = $("#inscribe");
+    if (inscribe) inscribe.onclick = () => showKachatMarket({ onBack: () => { kachatRegistry()?.refresh(); back(); } });
     bindSwipe($("#domains-body"));
   };
 

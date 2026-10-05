@@ -25,6 +25,8 @@ import {
 } from "./ui.js";
 import { showSend } from "./send.js";
 import { kachatWordmark } from "./market.js";
+import { addressNamesTab, showLiveNameDetail } from "./kachat-live.js";
+import { kachatRegistry } from "./kachat-names.js";
 import { showAddToPortfolio } from "./portfolio.js";
 
 // SF Symbols these screens use, drawn to match.
@@ -221,14 +223,16 @@ function loaders(state, address, repaintIfHere) {
 }
 
 // iOS KachatAddressDomainsList - the .kachat tab of every address screen (it replaced KNS
-// Domains in 5.2; .kas names are managed from Your Domains). Empty until .kachat names launch.
-function kachatTabHtml() {
-  return `
-    <div class="kachat-address-empty">
-      ${kachatWordmark(40)}
-      <div class="strong">No .kachat names on this address</div>
-      <p class="muted small">Names this address claims or buys show here once .kachat names launch.</p>
-    </div>`;
+// Domains in 5.2; .kas names are managed from Your Domains): this address's own .kachat names
+// (iOS 881ada6), empty where no registry runs (mainnet).
+function kachatTabHtml(state) {
+  state.kachatTab = addressNamesTab({ address: state.address, repaint: state.repaint });
+  return state.kachatTab.html;
+}
+
+/** After a render: the .kachat tab's cards open the name's detail, coming back to this screen. */
+function bindKachatTab(state, back) {
+  if (state.tab === "kachat") state.kachatTab?.bind(app, { openName: (info) => showLiveNameDetail({ info, onBack: back }) });
 }
 
 // iOS UnderlineTabBar with the plain titles History / UTXOs / .kachat.
@@ -243,7 +247,7 @@ function addressTabsHtml(current) {
 function addressTabContent(state, compoundFooter) {
   if (state.tab === "history") return `<div class="glass list">${historyHtml(state)}</div>`;
   if (state.tab === "utxos") return utxosHtml(state, compoundFooter);
-  return kachatTabHtml();
+  return kachatTabHtml(state);
 }
 
 // --- keys -------------------------------------------------------------------------------------
@@ -321,10 +325,11 @@ async function showPublicKey({ source, onBack }) {
  */
 export function showManageAddress(opts) {
   const source = { kind: "main" };
-  const state = { tab: "history", history: null, historyLoading: false, coins: null, coinsLoading: false, coinsError: "", labels: {} };
+  const state = { tab: "history", history: null, historyLoading: false, coins: null, coinsLoading: false, coinsError: "", labels: {}, address: opts.address };
   const back = () => paint();
   const here = () => app.dataset.screen === "manage-chat";
   const repaintIfHere = () => { if (here()) paint(); };
+  state.repaint = repaintIfHere;
   const { loadHistory, loadCoins } = loaders(state, opts.address, repaintIfHere);
   const balance = () => (state.coins ? state.coins.reduce((sum, c) => sum + c.amount, 0n) : null);
 
@@ -361,6 +366,7 @@ export function showManageAddress(opts) {
         <button class="ios-capsule with-icon" id="receive">${SF.qrcode}<span>Receive</span></button>
         <button class="ios-capsule with-icon" id="send" ${total === 0n ? "disabled" : ""}>${SF.sendFill}<span>Send</span></button>
       </div>`, "manage-chat");
+    bindKachatTab(state, back);
     remember(() => paint());
     const scroller = app.querySelector(".manage-scroll");
     if (scroller) scroller.scrollTop = scroll;
@@ -369,7 +375,7 @@ export function showManageAddress(opts) {
     $("#address-actions").onclick = addressActions;
     $("#receive").onclick = () => showQr({
       address: opts.address, balanceSompi: total, backLabel: "Close", onBack: back,
-      note: "This address is for chatting. Funding it with around 50 Kaspa is enough to send messages for a long time.",
+      note: "This address should be for chatting and domains only. 1 Kaspa is enough for about 500 interactions in the app. Domains cost from 35 to 4,000 Kaspa, depending on the name.",
     });
     $("#send").onclick = () => openSend(false);
     bindTabsContent(state, { address: opts.address, repaint: paint, reloadHistory: loadHistory, reloadCoins: loadCoins, onCompound: () => openSend(true) });
@@ -450,6 +456,11 @@ export function showManageAddresses({ onBack }) {
       }
     };
     await Promise.all(Array.from({ length: 4 }, worker));
+    // .kachat names count too, where the registry is live (iOS 881ada6 ownersOfNames).
+    try {
+      const owners = await kachatRegistry()?.ownersOfNames(visibleRows().map((r) => r.address));
+      for (const address of owners || []) domainOwners.set(address, true);
+    } catch { /* not tagged */ }
     if (here()) paint();
   };
 
@@ -639,6 +650,8 @@ function showSpendingAddress({ row, onBack }) {
   const back = () => paint();
   const here = () => app.dataset.screen === "manage-spending";
   const repaintIfHere = () => { if (here()) paint(); };
+  state.address = row.address;
+  state.repaint = repaintIfHere;
   const { loadHistory, loadCoins } = loaders(state, row.address, repaintIfHere);
   const openSend = (compound = false) => showSend({
     source, fromAddress: row.address, compound,
@@ -667,6 +680,7 @@ function showSpendingAddress({ row, onBack }) {
         <button class="ios-capsule with-icon" id="receive">${SF.qrcode}<span>Receive</span></button>
         <button class="ios-capsule with-icon" id="send" ${row.balanceSompi === 0n ? "disabled" : ""}>${SF.sendFill}<span>Send</span></button>
       </div>`, "manage-spending");
+    bindKachatTab(state, back);
     remember(() => paint());
     const scroller = app.querySelector(".manage-scroll");
     if (scroller) scroller.scrollTop = scroll;

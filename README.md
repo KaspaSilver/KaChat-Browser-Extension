@@ -27,6 +27,7 @@ extension's card to pick up the new build.
 |---|---|
 | `popup.html`, `src/popup.js` | Boot and the home screen (the iOS Profile tab). The same page opens as a full tab with `?view=tab` (the expand button), and as the website approval window with `?view=approve`. |
 | `src/onboarding.js` | The accounts screen (Saved Accounts), Create Account, Import Account (iOS source-wallet list, word grid, passphrase), unlock and reset. |
+| `src/send-pieces.js` | The pieces every Send Kaspa screen is built from (iOS SendKaspaComponents): recipient card, big amount with the KAS / currency switch and Max, pills, the fee card, slide to send. Send Kaspa and KasSigner's send use them; change these rather than one screen. |
 | `src/send.js`, `src/manage.js` | Send Kaspa (fees, Max, coin control, Sent sheet) and the Manage screens - 1:1 with iOS ChattingAddressManageView, ManageAddressesView and SpendingAddressTransactionHistoryView: history and UTXO tabs, Address Actions, keys, Generate / Discover / Address Visibility / Send All To Primary, per-address KNS domains, Change Chatting Address. |
 | `src/domains.js` | Your Domains: a tab per name service (.kachat, .kas, .k, .kaspa) with "Get a domain" links; .kas Set as Primary (signed KNS API call) and Send Domain (commit/reveal transfer). |
 | `src/dock.js` | The dock - iOS's tab bar, wallet-only: Storage, Portfolio, Profile. Screens named `cold:...` / `portfolio:...` (and the Profile tab's listed ones) keep it; each tab returns to where you left it. |

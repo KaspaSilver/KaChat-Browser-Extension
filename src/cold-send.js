@@ -21,6 +21,11 @@ import { otherDomainsHtml, bindOtherDomains, splitTypedName, looksLikeName } fro
 import { scanQr } from "./camera.js";
 import { showCoinControl } from "./send.js";
 import { SF, shortAddress } from "./cold-common.js";
+import { KAS_UNIT } from "./net.js";
+import {
+  recipientCardHtml, amountState, amountEntryHtml, fitAmountInput, pillHtml, feeControlsHtml,
+  slideButtonHtml, bindSlideButton, trimmedKas,
+} from "./send-pieces.js";
 import {
   KSPT_MAX_INPUTS, MIN_RELAY_FEE_PER_GRAM, REFERENCE_MASS_FOR_FEE_EDITOR, calculateMass, calculateFee,
   fetchQuotedFeeRateSompiPerGram, previewAutomaticSelection, estimateMaxAmount, compoundInputs,
@@ -67,6 +72,8 @@ export function showColdSend(opts) {
     txid: "",
     error: "",
   };
+  // The amount field (KAS or your currency) - iOS KaspaFiatAmountState.
+  const amountField = amountState();
   let engine = null;
   const getEngine = async () => (engine ||= await wallet.ksptEngine());
   let closed = false;
@@ -115,6 +122,7 @@ export function showColdSend(opts) {
     try {
       const max = await estimateMaxAmount({ engine: await getEngine(), fromAddress: from, feeRateOverride: feeRateOverride(), manualUtxoKeys: s.manualKeys });
       s.amountText = formatKas8(max);
+      amountField.setKas(s.amountText, s.price?.price || 0);
       s.maxMode = true;
     } catch { /* the amount stays as it was */ }
     s.estimatingMax = false;
@@ -298,10 +306,6 @@ export function showColdSend(opts) {
       : `<div class="status bad">${ICONS.xCircle}<span>Invalid address format</span></div>`;
   };
 
-  const fiatText = () => {
-    const amount = amountSompi();
-    return amount != null && s.price?.price ? `≈ ${wallet.formatFiat(amount, s.price)}` : "";
-  };
 
   function paintForm() {
     if (closed || (s.step !== "form" && s.step !== "building")) return;
@@ -310,86 +314,58 @@ export function showColdSend(opts) {
     const scroll = app.querySelector(".form")?.scrollTop || 0;
     const building = s.step === "building";
     const fee = effectiveFee();
-    const fiat = fiatText();
-    const status = recipientStatus();
+    const price = s.price?.price || 0;
+    const fiatFormat = (kas) => (price ? wallet.formatFiat(wallet.kasToSompi(kas.toFixed(8)), s.price) : "");
+    const currency = String(s.price?.currency || "usd").toUpperCase();
     render(`
       ${header()}
-      <section class="form cold-send-form">
-        <div class="form-section">
-          <div class="form-card">
-            <div class="form-row between"><span>From</span><span class="mono tiny muted">${esc(shortAddress(from))}</span></div>
-            <div class="form-row between"><span>Available</span><span class="muted">${esc(formatKas8(opts.availableSompi))} KAS</span></div>
-          </div>
+      <section class="form sk-form cold-send-form">
+        <div class="sk-pills">
+          ${pillHtml(`<span>From</span><span class="mono">${esc(shortAddress(from))}</span>`)}
+          ${pillHtml(`<span>Available</span><span>${esc(trimmedKas(opts.availableSompi))} KAS</span>`)}
         </div>
-
-        <div class="form-section">
-          <div class="form-header">${opts.compound ? "Consolidating This Address" : "Recipient Address"}</div>
-          <div class="form-card">
-            ${opts.compound
-              ? `<div class="form-row"><span class="accent cold-merge">${SF.merge}</span><span class="mono tiny ellipsis">${esc(from)}</span></div>`
-              : `<textarea id="recipient" class="mono recipient cold-recipient" rows="2" placeholder="kaspa:qr... or domain" spellcheck="false" autocapitalize="off" autocomplete="off">${esc(s.toInput)}</textarea>
-                 ${status || s.resolutions.length ? `<div class="form-row stack-tight">${status}${otherDomainsHtml({ resolutions: s.resolutions, selectedTld: s.resolved?.tld || splitTypedName(s.toInput).tld, open: s.othersOpen })}</div>` : ""}
-                 <div class="form-row between">
-                   <button class="link-button" id="paste">${SF.docOnClipboard}<span>Paste</span></button>
-                   <button class="link-button" id="scan-recipient">${SF.viewfinder}<span>Scan QR</span></button>
-                 </div>`}
-          </div>
-          ${opts.compound ? `<div class="form-footer">${s.compoundHasMore
-            ? `This address has more than ${KSPT_MAX_INPUTS} UTXOs. KasSigner can sign at most ${KSPT_MAX_INPUTS} inputs per transaction, so this merges the largest ${KSPT_MAX_INPUTS} into one. Run Compound again afterward to keep combining the rest.`
-            : "Merges all of this address's UTXOs into a single one, so future sends need fewer inputs."}</div>` : ""}
-        </div>
-
-        <div class="form-section">
-          <div class="form-header">Amount</div>
-          <div class="form-card">
-            <div class="form-row amount-row">
-              <img src="icons/kaspa-logo.png" alt="" class="amount-logo" />
-              <input id="amount" inputmode="decimal" placeholder="0.00" value="${esc(s.amountText)}" autocomplete="off" aria-label="Amount" />
-              <span class="muted tiny" id="fiat">${esc(fiat)}</span>
-              ${s.estimatingMax ? '<span class="spinner small-spin"></span>' : `<button class="link-button small" id="max" ${hasValidRecipient() ? "" : "disabled"}>Max</button>`}
-              <span class="muted">KAS</span>
-            </div>
-          </div>
-        </div>
-
-        ${opts.compound ? "" : `
-        <div class="form-section">
-          <div class="form-card">
-            <button class="form-row between nav-like" id="coins">
-              <span>Coin Control</span>
-              <span class="muted">${s.manualKeys ? `${s.manualKeys.length} UTXO${s.manualKeys.length === 1 ? "" : "s"} selected` : "Automatic"} ${ICONS.chevron}</span>
-            </button>
-          </div>
-          <div class="form-footer">Choose exactly which UTXOs to spend instead of selecting automatically.</div>
-        </div>`}
-
-        <div class="form-section">
-          <div class="form-card">
-            <div class="form-row">
-              <div class="segmented wide" role="radiogroup" aria-label="Fee">
-                ${TIERS.map(([id, label]) => `<button type="button" role="radio" data-tier="${id}" aria-checked="${s.tier === id}">${label}</button>`).join("")}
-              </div>
-            </div>
-            <div class="form-row between">
-              <span>Network Fee</span>
-              ${s.editingFee
-                ? `<span class="fee-edit"><input id="custom-fee" inputmode="decimal" placeholder="0.00" value="${esc(formatKas8(fee))}" aria-label="Network fee" /><button class="icon plain accent" id="fee-ok" aria-label="Use this fee">${ICONS.checkCircle}</button></span>`
-                : `<button class="link-button cold-fee" id="fee"><span class="underline-text">~${esc(formatKas8(fee))} KAS</span>${ICONS.pencilSmall}</button>`}
-            </div>
-          </div>
-          <div class="form-footer">If the network is busy, Fast or Priority pays a higher fee to help this confirm sooner. Tap the fee amount to set a custom fee.</div>
-        </div>
-
-        <div class="form-section">
-          <button class="cold-build ${canBuild() && !building ? "ready" : ""}" id="build" ${!canBuild() || building ? "disabled" : ""}>
-            ${building ? '<span class="spinner dark-spinner small-spin"></span>' : "Build Unsigned Transaction"}
-          </button>
-        </div>
+        ${recipientCardHtml({
+          input: s.toInput,
+          lockedAddress: opts.compound ? from : null,
+          status: {
+            resolving: s.resolving,
+            error: s.knsError,
+            resolvedAddress: s.resolved?.address || null,
+            resolvedName: s.resolved?.domain || null,
+            valid: s.validAddress === true,
+          },
+          extraHtml: s.resolutions.length
+            ? otherDomainsHtml({ resolutions: s.resolutions, selectedTld: s.resolved?.tld || splitTypedName(s.toInput).tld, open: s.othersOpen })
+            : "",
+        })}
+        ${opts.compound ? `<p class="muted tiny center-text">${s.compoundHasMore
+          ? `This address has more than ${KSPT_MAX_INPUTS} UTXOs. KasSigner can sign at most ${KSPT_MAX_INPUTS} inputs per transaction, so this merges the largest ${KSPT_MAX_INPUTS} into one. Run Compound again afterward to keep combining the rest.`
+          : "Merges all of this address's UTXOs into a single one, so future sends need fewer inputs."}</p>` : ""}
+        ${amountEntryHtml({
+          display: amountField.display,
+          unit: amountField.fiat ? currency : KAS_UNIT,
+          fiat: amountField.fiat,
+          conversion: amountField.conversion(price, fiatFormat),
+          currencyCode: currency,
+          canSwitch: price > 0,
+          maxEnabled: hasValidRecipient(),
+          estimatingMax: s.estimatingMax,
+        })}
+        ${feeControlsHtml({
+          tier: s.tier,
+          custom: s.customExtra != null,
+          editing: s.editingFee,
+          customText: formatKas8(fee),
+          feeText: `~${trimmedKas(fee)} ${KAS_UNIT}`,
+          showsCoinControl: !opts.compound,
+          coinSummary: s.manualKeys ? `${s.manualKeys.length} UTXO${s.manualKeys.length === 1 ? "" : "s"} selected` : "Automatic",
+        })}
+        ${slideButtonHtml({ title: "Build Unsigned Transaction", busy: building, enabled: canBuild(), requiresSlide: false })}
       </section>`, "cold-send");
     const form = app.querySelector(".form");
     if (form) form.scrollTop = scroll;
     bindCancel();
-    $("#build").onclick = build;
+    bindSlideButton(app, build);
 
     const recipient = $("#recipient");
     if (recipient) {
@@ -415,7 +391,7 @@ export function showColdSend(opts) {
         toast("Clipboard unavailable - paste with ⌘V instead.");
       }
     };
-    const scan = $("#scan-recipient");
+    const scan = $("#scan");
     if (scan) scan.onclick = async () => {
       const code = await scanQr({ title: "Scan QR Code", hint: "Point camera at a QR code" });
       if (!code || closed) return;
@@ -426,17 +402,22 @@ export function showColdSend(opts) {
 
     const amount = $("#amount");
     amount.oninput = () => {
-      s.amountText = amount.value.replace(/[^\d.]/g, "");
+      const cleaned = amount.value.replace(/[^\d.]/g, "");
+      if (cleaned !== amount.value) amount.value = cleaned;
+      fitAmountInput(amount);
+      s.amountText = amountField.onInput(cleaned, price);
       s.maxMode = false;
       schedulePreview();
       // In place: a repaint mid-typing is not needed for these.
-      const fiatEl = $("#fiat");
-      if (fiatEl) fiatEl.textContent = fiatText();
-      const buildButton = $("#build");
-      if (buildButton) { buildButton.disabled = !canBuild(); buildButton.classList.toggle("ready", canBuild()); }
-      const feeLabel = $("#fee .underline-text");
-      if (feeLabel) feeLabel.textContent = `~${formatKas8(effectiveFee())} KAS`;
+      const chip = $("#unit-switch span");
+      if (chip) chip.textContent = amountField.conversion(price, fiatFormat) || (amountField.fiat ? KAS_UNIT : currency);
+      const buildButton = $("#slide");
+      if (buildButton) { buildButton.disabled = !canBuild(); buildButton.classList.toggle("off", !canBuild()); }
+      const feeLabel = $("#fee");
+      if (feeLabel) feeLabel.firstChild.textContent = `~${trimmedKas(effectiveFee())} ${KAS_UNIT} `;
     };
+    const unitSwitch = $("#unit-switch");
+    if (unitSwitch) unitSwitch.onclick = () => { amountField.toggle(price); paintForm(); };
     const max = $("#max");
     if (max) max.onclick = setMax;
 
@@ -598,8 +579,7 @@ export function showColdSend(opts) {
   paintForm();
   settings().then((st) => wallet.price(st.currency || "usd")).then((price) => {
     s.price = price;
-    const fiatEl = $("#fiat");
-    if (fiatEl && !closed && s.step === "form") fiatEl.textContent = fiatText();
+    if (!closed && s.step === "form" && document.activeElement?.id !== "amount") paintForm();
   }).catch(() => {});
   (async () => {
     // Fetched once and used everywhere the fee is worked out (form, QR step, build).

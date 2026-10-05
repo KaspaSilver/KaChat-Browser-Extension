@@ -43,8 +43,8 @@ export const NAME_SERVICES = [
 
 export const service = (tld) => NAME_SERVICES.find((s) => s.tld === tld);
 
-/** The tab Your Domains opens on: .kachat once it is live, KNS until then. */
-export const DEFAULT_TAB = service("kachat").live ? "kachat" : "kas";
+/** The tab Your Domains opens on: .kachat - its UI is on everywhere, live or not (iOS 7227d69). */
+export const DEFAULT_TAB = "kachat";
 
 const RESOLUTION_ORDER = ["kachat", "kas", "k", "kaspa"];
 

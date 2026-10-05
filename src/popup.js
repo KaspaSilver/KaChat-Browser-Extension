@@ -145,8 +145,9 @@ function paintHome() {
   // short address - never the account name (your own label), and since 5.2 not your .kas name
   // either (that is managed in Your Domains).
   const kachatName = kachatLive && s.kachatLabel ? `${s.kachatLabel}.kachat` : null;
-  // On testnet the .kachat profile (avatar, banner and bio looked up from its social links).
-  const social = (kachatLive && s.kachatSocial) || {};
+  // The address profile (avatar, banner and bio looked up from its social links) - every network
+  // (iOS d36fc42); the .kachat label only where names are live.
+  const social = s.kachatSocial || {};
   const displayName = kachatName || shortIdentity(main);
   const domainCount = kns.known ? kns.domainCount + otherNamesCount(s.otherNames) : null;
   const created = s.account.createdAt ? new Date(s.account.createdAt).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : "—";
@@ -186,7 +187,7 @@ function paintHome() {
             ${social.avatar
               ? `<div class="avatar"><img src="${esc(social.avatar)}" alt="" referrerpolicy="no-referrer" /></div>`
               : `<div class="avatar avatar-glyph">${ICONS.person}</div>`}
-            <button class="hero-edit" id="edit-kachat-profile">Edit .kachat Profile</button>
+            <button class="hero-edit" id="edit-kachat-profile">Edit KaChat Profile</button>
           </div>
           <div class="hero-text">
             <div class="hero-name">${esc(displayName)}</div>
@@ -275,14 +276,14 @@ function paintHome() {
     showQr({
       address,
       balanceSompi,
-      note: "A fresh address, never used before. Kaspa sent here lands in this account and shows in your spending total. This address should be used for everything not related to chatting.",
+      note: "A fresh address, never used before. Kaspa sent here lands in this account and shows in your spending total. This address should be used for everything not related to chatting or domains.",
       onBack: showHome,
     });
   };
   if (main) $("#chatting-qr").onclick = () => showQr({
     address: main,
     balanceSompi: mainSompi,
-    note: "This address is for chatting. Funding it with around 50 Kaspa is enough to send messages for a long time.",
+    note: "This address should be for chatting and domains only. 1 Kaspa is enough for about 500 interactions in the app. Domains cost from 35 to 4,000 Kaspa, depending on the name.",
     onBack: paintHome,
   });
   for (const [kind, address] of [["chatting", main], ["spending", primary]]) {
@@ -405,8 +406,8 @@ async function refreshHome() {
           .then(() => kachatLabelOf(main))
           .then((label) => { if (s.addresses?.main === main && s.kachatLabel !== label) { s.kachatLabel = label; paintHomeIfShowing(s); } })
           .catch(() => {});
-        loadKachatSocial(s, main);
       }
+      loadKachatSocial(s, s.addresses.main);
       s.balances = await wallet.balances(s.addresses, s.spending.hidden);
       // The other tabs' toolbars show the chatting wallet's balance, as iOS does.
       dock.setStatus({ balanceText: wallet.formatKas(s.balances.main, 8) });

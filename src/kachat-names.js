@@ -3,8 +3,9 @@
 // a single service, registry and actions instance, so the .kachat screens, name resolution, Your
 // Domains and the profile hero all read the same registry and see the same registrations in flight.
 //
-// Testnet-10 only (net.js IS_TESTNET). On mainnet everything here answers null and the .kachat
-// screens keep their mockups and "Coming soon".
+// The .kachat UI is on for every network (iOS 7227d69: mainnet shows the same screens, empty,
+// under "Coming soon"); the registry is live only where it is launched - testnet-10 for now. On
+// mainnet the runtime answers null, so nothing reads or writes a registry there.
 //
 // The registry needs no key: it reads the chain walker (or a names indexer) and is shared by name
 // lookups. Actions sign with the active account's chatting address - the signer is bound when a
@@ -16,7 +17,8 @@ import { KachatNamesService } from "../shared/engine/kachat-names/service.js";
 import { KachatNamesRegistry } from "../shared/engine/kachat-names/registry.js";
 import { KachatNamesActions } from "../shared/engine/kachat-names/actions.js";
 import { KachatSocialImageResolver } from "../shared/engine/kachat-names/social-image-resolver.js";
-import { chattingSigner, namesNodeMethods } from "./wallet.js";
+import { chattingSigner, namesNodeMethods, cachedAddresses, privateKeyHex } from "./wallet.js";
+import { readAccounts } from "./vault.js";
 
 const localStorageAdapter = {
   get(key) { try { return localStorage.getItem(key); } catch { return null; } },
@@ -24,8 +26,12 @@ const localStorageAdapter = {
   remove(key) { try { localStorage.removeItem(key); } catch { /* nothing to drop */ } },
 };
 
-/** Whether .kachat names are live here (testnet-10). */
-export const kachatLive = IS_TESTNET;
+/** The .kachat UI and identity: every network (iOS KachatNamesService.isEnabled). */
+export const kachatUi = true;
+/** Whether this network has a live registry the wallet reads and transacts with (iOS isLaunched). */
+export const kachatLaunched = IS_TESTNET;
+/** The registry is live here - the same as `kachatLaunched`. */
+export const kachatLive = kachatLaunched;
 
 // The engine object the service and actions hold: the node methods, plus the signer once bound.
 // Made on first use (names.js -> here -> wallet.js -> names.js is an import cycle).
@@ -35,37 +41,83 @@ let registry = null;
 let actions = null;
 let boundAddress = null;
 
+// The wallet's other addresses for the actions (iOS 881ada6): a name on a spending address is
+// acted on with that address's key, one on a KasSigner address is shown read-only. Filled when the
+// signer is bound; spending keys are derived only for the action that needs one (prepareSigner).
+const walletState = { spending: [], kasSigner: [], keys: new Map() };
+const walletHooks = {
+  spendingAddresses: () => walletState.spending,
+  spendingPrivateKey: (index) => walletState.keys.get(index) ?? null,
+  kasSignerAddresses: () => walletState.kasSigner,
+};
+
+async function loadWalletAddresses() {
+  try {
+    const view = await readAccounts();
+    const cached = await cachedAddresses(view?.activeAccountId);
+    walletState.spending = Object.entries(cached?.spending || {}).map(([index, address]) => ({ index: Number(index), address }));
+  } catch { walletState.spending = []; }
+  try {
+    const { coldWatchAddresses } = await import("./cold.js");
+    walletState.kasSigner = await coldWatchAddresses();
+  } catch { walletState.kasSigner = []; }
+}
+
+/** Derives the spending key an action signs with when a spending address holds the name. */
+export async function prepareSigner(op) {
+  const payer = actions?.payerFor(op);
+  if (payer?.kind === "spending" && !walletState.keys.has(payer.index)) {
+    walletState.keys.set(payer.index, await privateKeyHex({ kind: "spending", index: payer.index }));
+  }
+}
+
+// One service, registry and actions on every network. Where the registry isn't launched (mainnet)
+// it is inert - `isEnabled` false: reads refuse before any request, refreshes do nothing - and only
+// the profile side runs (iOS d36fc42): your own saved record, else GET /profiles/{address} on the
+// chat indexer, and saving the kchat:1:profile: record.
 function base() {
-  if (!IS_TESTNET) return null;
   if (!service) {
     engine = { ...namesNodeMethods(), kaspa: null, rpc: null, address: null, privateKey: null, privateKeyHex: null };
     service = new KachatNamesService(engine);
     registry = new KachatNamesRegistry({
       manifest: () => service.loadManifest(),
-      isEnabled: () => KachatNamesService.isEnabled,
+      isEnabled: () => KachatNamesService.isLaunched,
       getUtxosByAddresses: (addresses) => engine.utxosForRegistry(addresses),
       restBase: () => getEndpoint("kaspaApi"),
       indexerBase: () => getEndpoint("kasiaIndexer"),
       storage: localStorageAdapter,
       log: (...parts) => console.info("[KaChat Wallet]", ...parts),
     });
-    actions = new KachatNamesActions({ engine, service, registry, storage: localStorageAdapter });
+    actions = new KachatNamesActions({ engine, service, registry, storage: localStorageAdapter, wallet: walletHooks });
   }
   return { service, registry, actions, engine };
 }
 
-/** The shared registry (no key needed), or null on mainnet. */
+/** The shared registry (no key needed) where it is launched, or null (mainnet). */
 export function kachatRegistry() {
-  return base()?.registry ?? null;
+  return IS_TESTNET ? base().registry : null;
 }
 
 /**
  * The runtime with the active account's chatting address bound as the signer:
- * `{ service, registry, actions, engine }`, or null on mainnet. The wallet must be unlocked.
+ * `{ service, registry, actions, engine }`, or null where the registry isn't launched (mainnet).
+ * The wallet must be unlocked.
  */
 export async function kachatNames() {
+  if (!IS_TESTNET) return null;
+  return bind();
+}
+
+/**
+ * The same runtime on every network, for address profiles (iOS d36fc42): `actions.profileFee`,
+ * `actions.saveProfile`, `registry.ownProfile`, `registry.identity` (profile-only on mainnet).
+ */
+export async function kachatProfiles() {
+  return bind();
+}
+
+async function bind() {
   const runtime = base();
-  if (!runtime) return null;
   const signer = await chattingSigner();
   const address = signer.address.toLowerCase();
   engine.kaspa = signer.kaspa;
@@ -74,6 +126,8 @@ export async function kachatNames() {
   engine.privateKeyHex = signer.privateKeyHex;
   if (boundAddress !== address) {
     boundAddress = address;
+    walletState.keys.clear();
+    if (IS_TESTNET) await loadWalletAddresses();
     // Another account: its own registrations in flight (the driver keys them by wallet address).
     actions.resume();
   }
@@ -82,6 +136,9 @@ export async function kachatNames() {
 
 /** Drops the bound key (wallet locked, account removed). The registry and its cache stay. */
 export function forgetKachatSigner() {
+  walletState.keys.clear();
+  walletState.spending = [];
+  walletState.kasSigner = [];
   if (!engine) return;
   engine.address = null;
   engine.privateKey = null;
@@ -146,8 +203,8 @@ export function kachatSocial() {
 
 /** This wallet's own profile record (the one it last wrote, else the registry's), or null. */
 export async function ownKachatProfile(address) {
-  const reg = kachatRegistry();
-  if (!reg || !address) return null;
+  const reg = base().registry;
+  if (!address) return null;
   try {
     const own = (await reg.ownProfile(address))?.profile;
     if (own) return own;

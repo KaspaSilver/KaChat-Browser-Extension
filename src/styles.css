@@ -887,3 +887,47 @@ html:has(#app[data-screen="qr"]), body:has(#app[data-screen="qr"]) { background:
 .fit-banner { width: 100%; height: var(--placeholder, 140px); position: relative; }
 .fit-banner.loaded { height: auto; }
 .fit-banner img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; display: block; }
+
+/* --- Send Kaspa pieces (send-pieces.js, iOS SendKaspaComponents) ------------------------- */
+.sk-form { gap: 18px; padding: 12px 20px 24px; }
+.sk-card { background: var(--panel); border: .8px solid rgba(255,255,255,.12); border-radius: 20px; padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+.sk-label { color: var(--muted); font-size: 12px; font-weight: 650; }
+.sk-field-row { display: flex; align-items: center; gap: 12px; }
+.sk-recipient { flex: 1; min-width: 0; background: transparent; border: 0; padding: 0; font-size: 14px; box-shadow: none; }
+.sk-recipient:focus-visible { outline: none; }
+.sk-locked { display: flex; align-items: center; gap: 8px; color: var(--kaspa); }
+.sk-locked .mono { color: var(--text); }
+.sk-resolution { display: flex; align-items: center; gap: 12px; padding: 12px; border-radius: 12px; background: rgba(255,255,255,.05); }
+.sk-resolution .tx-meta { gap: 2px; min-width: 0; }
+.sk-avatar { width: 44px; height: 44px; flex: none; border-radius: 50%; background: color-mix(in srgb, var(--kaspa) 20%, var(--bg)); color: var(--kaspa); display: inline-flex; align-items: center; justify-content: center; }
+.sk-status { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+.sk-status svg { width: 14px; height: 14px; flex: none; }
+.sk-status.good { color: #30d158; }
+.sk-status.bad { color: #ff453a; }
+.sk-amount { display: flex; flex-direction: column; align-items: center; gap: 10px; padding-top: 8px; }
+.sk-amount-row { display: flex; align-items: baseline; justify-content: center; gap: 8px; cursor: text; max-width: 100%; }
+.sk-amount-input { font-size: var(--size, 46px); font-weight: 800; text-align: center; background: transparent; border: 0; padding: 0; box-shadow: none; min-width: 1ch; max-width: 80vw; font-family: ui-rounded, -apple-system, system-ui, sans-serif; }
+.sk-amount-input:focus-visible { outline: none; }
+.sk-amount-unit { font-size: calc(var(--size, 46px) * .55); font-weight: 650; color: var(--muted); font-family: ui-rounded, -apple-system, system-ui, sans-serif; }
+.sk-amount-actions { display: flex; gap: 10px; }
+.sk-chip { display: inline-flex; align-items: center; gap: 6px; padding: 7px 12px; border-radius: 14px; background: var(--panel); border: .8px solid rgba(255,255,255,.12); color: var(--text); font-size: 12px; font-weight: 400; }
+.sk-chip.accent { color: var(--kaspa); font-weight: 650; padding: 7px 14px; }
+.sk-chip:disabled { opacity: .5; }
+.sk-pills { display: flex; justify-content: center; gap: 8px; flex-wrap: wrap; }
+.sk-pills:empty { display: none; }
+.sk-pill { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 14px; background: var(--panel); border: .8px solid rgba(255,255,255,.12); color: var(--muted); font-size: 12px; font-weight: 400; white-space: nowrap; max-width: 100%; overflow: hidden; }
+button.sk-pill:disabled { opacity: 1; background: var(--panel) !important; color: var(--muted) !important; }
+.sk-fee-row { display: flex; align-items: center; justify-content: space-between; font-size: 15px; }
+.sk-divider { height: .5px; background: rgba(255,255,255,.12); }
+.sk-coin-row { display: flex; justify-content: space-between; align-items: center; background: transparent; color: var(--text); font-weight: 400; font-size: 15px; padding: 0; }
+.sk-coin-row .muted { display: inline-flex; align-items: center; gap: 4px; }
+.sk-slide { position: relative; height: 56px; border-radius: 999px; background: var(--kaspa); overflow: hidden; user-select: none; touch-action: none; display: flex; align-items: center; justify-content: center; }
+.sk-slide.off { background: color-mix(in srgb, var(--kaspa) 40%, transparent); }
+.sk-slide-fill { position: absolute; left: 0; top: 0; bottom: 0; width: 56px; border-radius: 999px; background: rgba(255,255,255,.25); }
+.sk-slide-label { position: relative; color: #000; font-weight: 700; font-size: 16px; pointer-events: none; display: inline-flex; align-items: center; }
+.sk-knob { position: absolute; left: 4px; top: 4px; width: 48px; height: 48px; border-radius: 50%; background: #fff; color: var(--kaspa); display: flex; align-items: center; justify-content: center; box-shadow: 0 2px 4px rgba(0,0,0,.15); cursor: grab; touch-action: none; }
+.sk-slide.off .sk-knob { cursor: default; }
+.sk-tap { width: 100%; border: 0; padding: 0; color: #000; }
+.sk-tap:disabled { background: color-mix(in srgb, var(--kaspa) 40%, transparent) !important; opacity: 1; }
+.spinner.dark { border-color: rgba(0,0,0,.25); border-top-color: #000; }
+.bar-spacer { visibility: hidden; }

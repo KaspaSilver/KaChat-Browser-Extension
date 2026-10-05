@@ -1,21 +1,23 @@
-// Send Kaspa - iOS WithdrawKaspaView, section for section:
-//   Recipient Address (a kaspa: address, or a name on any service - .kachat, .kas, .k, .kaspa -
-//     resolved as you type, with "Other domains" to pick another service's answer; Paste)
-//   Amount (with the currency value beside it, Max, Available)
-//   Coin Control (Automatic, or exactly which coins to spend)
-//   Fee (Normal / Fast / Priority, the network fee - tap it to set your own)
-// Send sits in the navigation bar, as on iOS, and a sent transaction ends on the Sent sheet.
+// Send Kaspa - iOS WithdrawKaspaView / SpendingAddressWithdrawView, built from the shared Send
+// Kaspa pieces (send-pieces.js, iOS 4d0324f / afaad34 / e994235):
+//   the recipient card (a kaspa: address, or a name on any service - .kachat, .kas, .k, .kaspa -
+//     resolved as you type, with "Other domains"; Paste and Scan QR)
+//   the big amount (KAS or your currency, Max), the Available pill - on a spending address it
+//     opens Send From to pay from another one
+//   the fee card (network fee - tap to set your own -, Normal / Fast / Priority, Coin Control)
+//   Slide to Send. A sent transaction ends on the Sent sheet.
 // The same screen is Compound UTXOs: the recipient locked to the address itself, amount Max.
 
 import * as wallet from "./wallet.js";
-import { app, esc, render, $, toast, copyText, settings, ICONS, formatKas8 } from "./ui.js";
+import * as vault from "./vault.js";
+import { app, esc, render, $, toast, copyText, settings, showSheet, ICONS, formatKas8 } from "./ui.js";
 import { otherDomainsHtml, bindOtherDomains, splitTypedName } from "./names.js";
-
-const FEE_TIERS = [
-  { id: "normal", label: "Normal", multiplier: 1 },
-  { id: "fast", label: "Fast", multiplier: 2 },
-  { id: "priority", label: "Priority", multiplier: 5 },
-];
+import { scanQr } from "./camera.js";
+import { KAS_UNIT } from "./net.js";
+import {
+  FEE_TIERS, recipientCardHtml, amountState, amountEntryHtml, fitAmountInput, pillHtml, feeControlsHtml,
+  coinSummary, slideButtonHtml, bindSlideButton, trimmedKas, CHEVRON_DOWN,
+} from "./send-pieces.js";
 
 /**
  * @param {object} opts
@@ -49,8 +51,13 @@ export function showSend(opts) {
     price: null,
     sending: false,
     error: "",
+    currency: "usd",
+    sourceLabel: null,
   };
   const view = { screen: "form" };
+  // The amount field (KAS or your currency) - iOS KaspaFiatAmountState.
+  const amountField = amountState();
+  amountField.display = state.amountText;
 
   // --- derived --------------------------------------------------------------------------
   const spendableSompi = () => {
@@ -85,7 +92,14 @@ export function showSend(opts) {
       state.error = `Couldn't load this address's coins: ${error.message}`;
     }
     const currency = (await settings()).currency || "usd";
+    state.currency = currency;
     wallet.price(currency).then((p) => { state.price = p; paint(); }).catch(() => {});
+    if (opts.source?.kind === "spending" && !state.sourceLabel) {
+      vault.readAccounts()
+        .then((view) => wallet.spendingState(view.activeAccountId))
+        .then((st) => { state.sourceLabel = wallet.labelFor(st, opts.source.index); paint(); })
+        .catch(() => {});
+    }
     if (opts.compound) await fillMax(); else await estimate();
     paint();
   };
@@ -134,11 +148,11 @@ export function showSend(opts) {
     const fee = wallet.kasToSompi(totalFeeKas().toFixed(8));
     if (available <= fee) {
       state.error = "Balance too low after network fees.";
-      state.amountText = "";
+      setAmountKas("");
       state.maxMode = false;
       return;
     }
-    state.amountText = wallet.sompiToKasText(available - fee);
+    setAmountKas(wallet.sompiToKasText(available - fee));
     state.maxMode = true;
     state.error = "";
   };
@@ -211,96 +225,75 @@ export function showSend(opts) {
     }
   };
 
-  // --- rendering -------------------------------------------------------------------------
+  // --- rendering (iOS SendKaspaComponents) ----------------------------------------------
+  const fiatText = (kas) => (state.price?.price ? wallet.formatFiat(wallet.kasToSompi(kas.toFixed(8)), state.price) : "");
+  const feeText = () => {
+    const fee = totalFeeKas();
+    return fee == null ? null : `${fee.toFixed(8).replace(/0+$/, "").replace(/\.$/, "")} ${KAS_UNIT}`;
+  };
+  const recipientStatus = () => ({
+    resolving: state.resolving,
+    error: state.recipientError,
+    resolvedAddress: state.recipient?.domain ? state.recipient.address : null,
+    resolvedName: state.recipient?.domain || null,
+    valid: Boolean(state.recipient && !state.recipient.domain),
+  });
+
   const paint = () => {
     if (view.screen !== "form") return;
     const focusedId = document.activeElement?.id;
     const caret = document.activeElement?.selectionStart;
     const available = spendableSompi();
-    const fee = totalFeeKas();
-    const amount = amountSompi();
-    const fiat = amount != null && state.price?.price ? wallet.formatFiat(amount, state.price) : "";
-    const recipientStatus = (() => {
-      if (opts.compound || !state.recipientInput.trim()) return "";
-      if (state.resolving) return `<div class="status muted"><span class="spinner small-spin"></span> Looking up domain...</div>`;
-      if (state.recipientError) return `<div class="status bad">${ICONS.xCircle}<span>${esc(state.recipientError)}</span></div>`;
-      if (state.recipient?.domain) return `<div class="status good">${ICONS.checkFill}<span>Resolved: ${esc(state.recipient.domain)}</span></div><div class="mono tiny muted break">${esc(state.recipient.address)}</div>`;
-      if (state.recipient) return `<div class="status good">${ICONS.checkFill}<span>Valid address</span></div>`;
-      return "";
-    })();
+    const price = state.price?.price || 0;
+    const spendingSource = opts.source?.kind === "spending";
+    const availableText = available != null ? `Available: ${trimmedKas(available)} KAS` : "";
+    const pill = available == null ? "" : spendingSource
+      ? pillHtml(`<span>${esc(availableText)}</span><span>·</span><span>${esc(state.sourceLabel || `Address #${opts.source.index}`)}</span>${opts.compound ? "" : CHEVRON_DOWN}`, { id: "send-from", disabled: Boolean(opts.compound) })
+      : pillHtml(esc(availableText));
     render(`
       <header class="navbar form-bar">
         <button class="bar-text" id="cancel">Cancel</button>
         <div class="nav-title ellipsis">${esc(opts.compound ? "Compound UTXOs" : opts.navTitle || "Send Kaspa")}</div>
-        ${state.sending ? '<span class="bar-text"><span class="spinner small-spin"></span></span>' : `<button class="bar-text strong" id="send" ${canSend() ? "" : "disabled"}>Send</button>`}
+        <span class="bar-text bar-spacer" aria-hidden="true">Cancel</span>
       </header>
-      <section class="form">
+      <section class="form sk-form">
         ${opts.title ? `<p class="muted small center-text">${esc(opts.title)}</p>` : ""}
-        <div class="form-section">
-          <div class="form-header">${opts.compound ? "Consolidating This Address" : "Recipient Address"}</div>
-          <div class="form-card">
-            ${opts.compound
-              ? `<div class="form-row">${ICONS.merge}<span class="mono small ellipsis">${esc(opts.fromAddress)}</span></div>`
-              : `<textarea id="recipient" class="mono recipient" rows="2" placeholder="kaspa:qr... or domain" spellcheck="false" autocapitalize="off">${esc(state.recipientInput)}</textarea>
-                 ${recipientStatus || state.resolutions.length ? `<div class="form-row stack-tight">${recipientStatus}${otherDomainsHtml({ resolutions: state.resolutions, selectedTld: state.recipient?.tld || splitTypedName(state.recipientInput).tld, open: state.othersOpen })}</div>` : ""}
-                 <div class="form-row between"><button class="link-button" id="paste">${ICONS.clipboard}<span>Paste</span></button></div>`}
-          </div>
-          ${opts.compound ? "" : '<div class="form-footer">Enter a Kaspa address (kaspa:...) or a domain.</div>'}
-        </div>
-
-        <div class="form-section">
-          <div class="form-header">Amount</div>
-          <div class="form-card">
-            <div class="form-row amount-row">
-              <img src="icons/kaspa-logo.png" alt="" class="amount-logo" />
-              <input id="amount" inputmode="decimal" placeholder="0.00" value="${esc(state.amountText)}" autocomplete="off" ${opts.compound ? "readonly" : ""} />
-              ${fiat ? `<span class="muted tiny">${esc(fiat)}</span>` : ""}
-              ${opts.compound ? "" : `<button class="link-button small" id="max" ${state.recipient ? "" : "disabled"}>Max</button>`}
-              <span class="muted">KAS</span>
-            </div>
-          </div>
-          ${available != null ? `<div class="form-footer">Available: ${esc(wallet.formatKas(available, 8))} KAS</div>` : ""}
-        </div>
-
-        ${opts.compound ? "" : `
-        <div class="form-section">
-          <div class="form-card">
-            <button class="form-row between nav-like" id="coins">
-              <span>Coin Control</span>
-              <span class="muted">${state.selected ? `${state.selected.size} UTXO${state.selected.size === 1 ? "" : "s"} selected` : "Automatic"} ${ICONS.chevron}</span>
-            </button>
-          </div>
-          <div class="form-footer">Choose exactly which UTXOs to spend instead of selecting automatically.</div>
-        </div>`}
-
-        <div class="form-section">
-          <div class="form-header">Fee</div>
-          <div class="form-card">
-            <div class="form-row">
-              <div class="segmented wide" role="radiogroup" aria-label="Fee">
-                ${FEE_TIERS.map((t) => `<button type="button" role="radio" data-tier="${t.id}" aria-checked="${state.customFeeKas == null && state.tier === t.id}">${t.label}</button>`).join("")}
-              </div>
-            </div>
-            <div class="form-row between">
-              <span>Network Fee</span>
-              ${state.editingFee
-                ? `<span class="fee-edit"><input id="custom-fee" inputmode="decimal" value="${fee != null ? esc(fee.toFixed(8).replace(/0+$/, "").replace(/\.$/, "")) : ""}" /><button class="icon plain" id="fee-ok" aria-label="Use this fee">${ICONS.checkCircle}</button></span>`
-                : state.estimating
-                  ? '<span class="spinner small-spin"></span>'
-                  : fee != null
-                    ? `<button class="link-button underline" id="fee">${esc(fee.toFixed(8).replace(/0+$/, "").replace(/\.$/, ""))} KAS ${ICONS.pencilSmall}</button>`
-                    : '<span class="muted">—</span>'}
-            </div>
-          </div>
-          <div class="form-footer">${esc(opts.feeFooter || "If the network is busy, Fast or Priority pays a higher fee to help this confirm sooner. Tap the fee amount to set a custom fee.")}</div>
-        </div>
-
-        ${state.error ? `<div class="form-section"><div class="form-card"><div class="form-row error-text">${esc(state.error)}</div></div></div>` : ""}
+        ${recipientCardHtml({
+          input: state.recipientInput,
+          lockedAddress: opts.compound ? opts.fromAddress : null,
+          status: recipientStatus(),
+          extraHtml: state.resolutions.length
+            ? otherDomainsHtml({ resolutions: state.resolutions, selectedTld: state.recipient?.tld || splitTypedName(state.recipientInput).tld, open: state.othersOpen })
+            : "",
+        })}
+        ${amountEntryHtml({
+          display: amountField.display,
+          unit: amountField.fiat ? state.currency.toUpperCase() : KAS_UNIT,
+          fiat: amountField.fiat,
+          conversion: amountField.conversion(price, fiatText),
+          currencyCode: state.currency.toUpperCase(),
+          canSwitch: price > 0 && !opts.compound,
+          maxEnabled: Boolean(state.recipient),
+          estimatingMax: state.estimating && state.maxMode,
+          readOnly: Boolean(opts.compound),
+        })}
+        <div class="sk-pills">${pill}</div>
+        ${feeControlsHtml({
+          tier: state.tier,
+          custom: state.customFeeKas != null,
+          editing: state.editingFee,
+          customText: totalFeeKas() != null ? totalFeeKas().toFixed(8).replace(/0+$/, "").replace(/\.$/, "") : "",
+          estimating: state.estimating,
+          feeText: feeText(),
+          showsCoinControl: !opts.compound,
+          coinSummary: coinSummary(state.selected),
+        })}
+        ${state.error ? `<p class="error-text small center-text">${esc(state.error)}</p>` : ""}
+        ${slideButtonHtml({ title: opts.compound ? "Slide to Consolidate" : "Slide to Send", busy: state.sending, enabled: canSend() })}
       </section>`, "send");
 
     $("#cancel").onclick = opts.onClose;
-    const sendButton = $("#send");
-    if (sendButton) sendButton.onclick = doSend;
+    bindSlideButton(app, doSend);
     const recipient = $("#recipient");
     if (recipient) {
       recipient.oninput = () => {
@@ -329,17 +322,33 @@ export function showSend(opts) {
         toast("Clipboard unavailable - paste with ⌘V instead.");
       }
     };
+    const scan = $("#scan");
+    if (scan) scan.onclick = async () => {
+      const code = await scanQr({ title: "Scan QR Code", hint: "Point camera at a Kaspa address QR code" });
+      if (!code) return;
+      // A payment URI's address, without its ?amount=... query.
+      state.recipientInput = String(code).trim().split("?")[0];
+      resolveRecipient();
+    };
     const amountInput = $("#amount");
     amountInput.oninput = () => {
       const cleaned = amountInput.value.replace(/[^\d.]/g, "");
-      state.amountText = cleaned;
+      if (cleaned !== amountInput.value) amountInput.value = cleaned;
+      fitAmountInput(amountInput);
+      state.amountText = amountField.onInput(cleaned, price);
       state.maxMode = false;
       state.error = "";
+      const chip = $("#unit-switch span");
+      if (chip) chip.textContent = amountField.conversion(price, fiatText) || (amountField.fiat ? KAS_UNIT : state.currency.toUpperCase());
       scheduleEstimate();
       refreshSendEnabled();
     };
+    const unitSwitch = $("#unit-switch");
+    if (unitSwitch) unitSwitch.onclick = () => { amountField.toggle(price); paint(); };
     const max = $("#max");
     if (max) max.onclick = async () => { await fillMax(); paint(); };
+    const sendFrom = $("#send-from");
+    if (sendFrom && !opts.compound) sendFrom.onclick = showSendFrom;
     const coins = $("#coins");
     if (coins) coins.onclick = () => {
       view.screen = "coins";
@@ -376,9 +385,9 @@ export function showSend(opts) {
         if (Number.isFinite(value) && value > 0) {
           state.customFeeKas = value;
           if (state.maxMode) {
-            const available = spendableSompi();
+            const avail = spendableSompi();
             const feeSompi = wallet.kasToSompi(value.toFixed(8));
-            if (available > feeSompi) state.amountText = wallet.sompiToKasText(available - feeSompi);
+            if (avail > feeSompi) setAmountKas(wallet.sompiToKasText(avail - feeSompi));
           }
         }
         paint();
@@ -399,10 +408,57 @@ export function showSend(opts) {
   };
   let recipientTimer = null;
 
-  // Enables/disables Send without a full repaint while typing the amount.
+  // Enables/disables the slide button without a full repaint while typing the amount.
   const refreshSendEnabled = () => {
-    const button = $("#send");
-    if (button) button.disabled = !canSend();
+    const track = $("#slide");
+    if (!track || state.sending) return;
+    const enabled = canSend();
+    if (enabled === !track.classList.contains("off")) return;
+    const holder = document.createElement("div");
+    holder.innerHTML = slideButtonHtml({ title: opts.compound ? "Slide to Consolidate" : "Slide to Send", enabled });
+    track.replaceWith(holder.firstElementChild);
+    bindSlideButton(app, doSend);
+  };
+
+  // Send From (iOS e994235, SpendingSourcePicker): every visible spending address (plus hidden
+  // ones holding Kaspa), funded first; picking one switches this send to it without changing the
+  // primary.
+  const showSendFrom = async () => {
+    const sheet = showSheet({ title: "Send From", headerHtml: '<div class="center-text"><span class="spinner small-spin"></span></div>', rows: [] });
+    let list;
+    try { list = await wallet.spendingList(); } catch { sheet.close(); return; }
+    const rows = list.rows
+      .filter((r) => !r.hidden || r.balanceSompi > 0n || r.index === opts.source.index)
+      .sort((a, b) => (a.balanceSompi > 0n ? 0 : 1) - (b.balanceSompi > 0n ? 0 : 1) || a.index - b.index);
+    sheet.update({
+      headerHtml: "",
+      rows: rows.map((r) => ({
+        label: `${r.label}${r.primary ? " · Primary" : ""}${r.index === opts.source.index ? " ✓" : ""}`,
+        subtitle: `${r.address.slice(0, 14)}...${r.address.slice(-6)} · ${trimmedKas(r.balanceSompi)} KAS`,
+        onClick: () => switchSource(r),
+      })),
+    });
+  };
+  const switchSource = (row) => {
+    if (row.index === opts.source.index) return;
+    opts.source = { kind: "spending", index: row.index };
+    opts.fromAddress = row.address;
+    opts.navTitle = `Send Kaspa from Address #${row.index}`;
+    state.sourceLabel = row.label;
+    // Fee estimate, Max and coin control follow the new address (coin control resets).
+    state.coins = null;
+    state.selected = null;
+    state.customFeeKas = null;
+    state.maxMode = false;
+    state.base = null;
+    state.error = "";
+    paint();
+    load();
+  };
+
+  const setAmountKas = (kasText) => {
+    state.amountText = kasText;
+    amountField.setKas(kasText, state.price?.price || 0);
   };
 
   paint();

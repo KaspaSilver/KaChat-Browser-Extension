@@ -13,7 +13,7 @@
 
 import { app, esc, render, $, ICONS, navHeader } from "./ui.js";
 import { SYMBOLS, kachatWordmark, openPanel } from "./kachat-ui.js";
-import { kachatLive } from "./kachat-names.js";
+import { kachatLive, kachatLaunched } from "./kachat-names.js";
 import * as live from "./kachat-live.js";
 
 export { kachatWordmark };
@@ -133,7 +133,10 @@ export function showKachatMarket({ onBack }) {
 
   // Mainnet (or before the testnet registry is ready): the mockups.
   const mockPage = () => (page === "market" ? marketPage() : page === "myNames" ? myNamesPage() : activityPage());
-  const pageHtml = () => (isLive() ? live.livePageHtml(page) : mockPage());
+  // Live, or not launched here (mainnet): the same pages - empty on mainnet (iOS 7227d69). The
+  // placeholder pages remain only for a testnet registry that is setting up.
+  const livePages = () => isLive() || !kachatLaunched;
+  const pageHtml = () => (livePages() ? live.livePageHtml(page) : mockPage());
   const heroStatus = () => {
     if (isLive()) return live.testnetBadge();
     // The bundled manifest is for the previous registry: a calm "Setting up", no error (iOS d2e0673).
@@ -147,10 +150,10 @@ export function showKachatMarket({ onBack }) {
   };
   const bindParts = () => {
     for (const listing of app.querySelectorAll("[data-listing]")) listing.onclick = () => showListing({ onBack: back });
+    if (livePages()) live.bindLivePage($("#km-page"), nav);
     if (!isLive()) return;
     live.bindSearchResult($("#search-result"), nav);
     live.bindRegistrationCards($("#km-regs"));
-    live.bindLivePage($("#km-page"), nav);
   };
   const paintSearch = () => {
     $("#search-result").innerHTML = searchResult();
@@ -173,6 +176,10 @@ export function showKachatMarket({ onBack }) {
   if (kachatLive) {
     live.hub.onChange = paintParts;
     live.hub.start();
+  } else {
+    // Not launched here: the live pages show empty, under "Coming soon".
+    live.hub.loaded = true;
+    paintParts();
   }
 }
 

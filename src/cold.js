@@ -30,6 +30,8 @@ import {
 } from "./ui.js";
 import { scanQr } from "./camera.js";
 import { kachatWordmark } from "./market.js";
+import { addressNamesTab, showLiveNameDetail } from "./kachat-live.js";
+import { kachatRegistry } from "./kachat-names.js";
 import { showAddToPortfolio } from "./portfolio.js";
 import { showColdSend } from "./cold-send.js";
 import { SF, txDate, feeText, portfolioKas, middle, shortAddress, fieldSheet } from "./cold-common.js";
@@ -65,6 +67,19 @@ async function loadAccounts() {
   const accounts = Array.isArray(raw) ? raw.map(normalize).filter(Boolean) : [];
   store = { key, accounts };
   return accounts;
+}
+
+/** Every watched KasSigner address (0...maxAddressIndex of each account), for the .kachat names
+ *  that may sit on them: `[{ account: label, index, address }]` (iOS kasSignerAddresses). */
+export async function coldWatchAddresses() {
+  const out = [];
+  for (const account of await loadAccounts()) {
+    try {
+      const addresses = await wallet.kpubAddresses(account.kpub, 0, account.maxAddressIndex + 1);
+      addresses.forEach((address, index) => out.push({ account: account.label, index, address }));
+    } catch { /* an unreadable kpub holds nothing we can show */ }
+  }
+  return out;
 }
 
 async function saveAccounts(accounts) {
@@ -549,6 +564,13 @@ function showAccount({ accountId, onBack }) {
       }
     };
     await Promise.all(Array.from({ length: 4 }, worker));
+    // .kachat names count too, where the registry is live (iOS 881ada6 ownersOfNames).
+    try {
+      const owners = await kachatRegistry()?.ownersOfNames(state.entries.filter((e) => !e.hidden).map((e) => e.address));
+      for (const address of owners || []) {
+        if (!domainOwners.get(address)) { domainOwners.set(address, true); changed = true; }
+      }
+    } catch { /* not tagged */ }
     if (changed && token === state.loadToken) repaintIfHere();
   }
 
@@ -1009,12 +1031,12 @@ function showAddress({ accountId, entry, onBack }) {
     return `${compound}<div class="glass list">${body}</div>`;
   };
 
-  const kachatHtml = () => `
-    <div class="cold-kachat">
-      ${kachatWordmark(40)}
-      <div class="strong cold-kachat-title">No .kachat names on this address</div>
-      <p class="muted small">Names this address claims or buys show here once .kachat names launch.</p>
-    </div>`;
+  // This KasSigner address's own .kachat names (iOS 881ada6) - read-only on the detail screen.
+  let kachatTab = null;
+  const kachatHtml = () => {
+    kachatTab = addressNamesTab({ address, repaint: repaintIfHere });
+    return kachatTab.html;
+  };
 
   function paint() {
     const total = balance();
@@ -1037,6 +1059,7 @@ function showAddress({ accountId, entry, onBack }) {
         <button class="ios-capsule with-icon" id="receive">${SF.qrcodeSmall}<span>Receive</span></button>
         <button class="ios-capsule with-icon cold-bold" id="send" ${total === 0n ? "disabled" : ""}>${SF.sendFill}<span>Send</span></button>
       </div>`, "cold:address");
+    if (state.tab === "kachat") kachatTab?.bind(app, { openName: (info) => showLiveNameDetail({ info, onBack: back }) });
     app.dataset.coldAddress = address;
     dock.remember(() => paint());
     const scroller = app.querySelector(".manage-scroll");
