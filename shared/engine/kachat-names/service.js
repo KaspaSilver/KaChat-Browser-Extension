@@ -33,7 +33,7 @@ import {
   p2pkScript, profilePayload,
 } from "./codec.js";
 import { makeOutpoint, makeUtxo, makeUtxoEntry, txIdHex } from "./transaction.js";
-import { decodeManifest, verifyManifest } from "./manifest.js";
+import { decodeManifest, verifyManifest, ManifestSource } from "./manifest.js";
 import { Builder, makeEnv, planSignedBy } from "./builder.js";
 import { addressPrefix, addressOf, keyOf, p2shAddress } from "./registry-state.js";
 
@@ -60,8 +60,8 @@ export class ServiceError extends Error {
   static submitMismatch(expected, got) {
     return new ServiceError("submitMismatch", `The node accepted ${got}, expected ${expected}`, { expected, got });
   }
-  /** The manifest is for registry v1; this app builds for v2 and waits for its genesis. Not a
-   *  failure to show as one: the screens say the registry is being set up. */
+  /** The manifest is an earlier registry's (v1 or v2); this app builds for v3 and waits for its
+   *  genesis. Not a failure to show as one: the screens say the registry is being set up. */
   static registryUpgrading() { return new ServiceError("registryUpgrading", registryUpgradingMessage); }
 }
 
@@ -69,7 +69,7 @@ export class ServiceError extends Error {
 export const registryUpgradingMessage =
   "The .kachat registry on Testnet is being upgraded. Names open here again once the new registry is live.";
 
-/** Whether `error` means the registry is being upgraded (a v1 manifest), not a failure (Swift
+/** Whether `error` means the registry is being upgraded (an earlier registry's manifest), not a failure (Swift
  *  `KachatNamesService.isRegistryUpgrading`): a `ServiceError` with code "registryUpgrading" or
  *  the core's `Failure.outdatedRegistry()`. */
 export function isRegistryUpgrading(error) {
@@ -262,13 +262,14 @@ export class KachatNamesService {
     this.manifest = null;
     /** Where the manifest came from: "bundle" or the indexer URL. */
     this.manifestSource = null;
-    /** The manifest describes the previous registry (v1): names wait for the v2 genesis manifest.
+    /** The manifest describes an earlier registry (v1 or v2): names wait for the v3 genesis manifest.
      *  The screens show "Setting up" instead of an error. Changes are announced to `onChange`. */
     this.registryUpgrading = false;
     /** Why the bundled manifest was refused. The bundle can't change while the app runs, so it is
      *  not read and verified again on every call (until `resetManifest`). */
     this._bundleFailure = null;
     this._listeners = new Set();
+    this._submitListeners = new Set();
   }
 
   // MARK: Observing (Swift @Published registryUpgrading)
@@ -277,6 +278,16 @@ export class KachatNamesService {
   onChange(listener) {
     this._listeners.add(listener);
     return () => this._listeners.delete(listener);
+  }
+
+  /** Optional: `listener(txId)` after every transaction `submit` sends and the node accepts (each
+   *  registry operation and a registration's commit; not the profile record, a plain self-send).
+   *  The app uses it to keep name transactions out of its payment chats (iOS 32fdaa4); nothing
+   *  here depends on anyone listening. Returns an unsubscribe function. */
+  onSubmitted(listener) {
+    if (typeof listener !== "function") return () => {};
+    this._submitListeners.add(listener);
+    return () => this._submitListeners.delete(listener);
   }
 
   _setRegistryUpgrading(value) {
@@ -319,9 +330,11 @@ export class KachatNamesService {
   // MARK: Manifest
 
   /** The verified registry manifest: kachat-names-testnet-10.json bundled with the app, else the
-   *  indexer's `GET /names/manifest`. Cached once verified. A registry v1 manifest throws
-   *  `ServiceError.registryUpgrading()` (code "registryUpgrading") and sets `registryUpgrading`;
-   *  a refused bundled manifest is remembered and thrown again without re-reading it. */
+   *  indexer's `GET /names/manifest`. Cached once verified. An indexer-served manifest is trusted
+   *  only when every template is pinned in the app (`verifyManifest(m, { source: "indexer" })`).
+   *  An earlier registry's manifest (not registry v3) throws `ServiceError.registryUpgrading()`
+   *  (code "registryUpgrading") and sets `registryUpgrading`; a refused bundled manifest is
+   *  remembered and thrown again without re-reading it. */
   async loadManifest({ allowDryRun = false } = {}) {
     this.requireTestnet();
     if (this.manifest && (allowDryRun || !this.manifest.isDryRun)) return this.manifest;
@@ -330,14 +343,15 @@ export class KachatNamesService {
     let m;
     try {
       m = decodeManifest(data);
-      verifyManifest(m);
+      // an indexer-served manifest is trusted only when every template is pinned in the app
+      verifyManifest(m, { source: source === "bundle" ? ManifestSource.bundle : ManifestSource.indexer });
     } catch (error) {
-      // A registry v1 manifest is expected, not an error: say "being upgraded", once, and stop
-      // re-reading the bundle.
+      // An earlier registry's manifest (the bundled one until the v3 genesis) is expected, not an
+      // error: say "being upgraded", once, and stop re-reading the bundle.
       const upgrading = isRegistryUpgrading(error);
       const refused = upgrading ? ServiceError.registryUpgrading() : error;
       if (upgrading) {
-        if (!this.registryUpgrading) this._log(`[KachatNames] the ${source} manifest is registry v1; .kachat waits for the v2 genesis manifest`);
+        if (!this.registryUpgrading) this._log(`[KachatNames] the ${source} manifest is an earlier registry; .kachat waits for the v3 genesis manifest`);
         this._setRegistryUpgrading(true);
       }
       if (source === "bundle") this._bundleFailure = refused;
@@ -429,6 +443,14 @@ export class KachatNamesService {
     return u;
   }
 
+  /** `liveUtxo` for a price shard, which must also carry the price covenant id (registry v3). */
+  async livePriceUtxo({ script, outpoint }) {
+    const m = await this.loadManifest();
+    const u = await this.liveUtxo({ script, outpoint });
+    if (!bytesEqual(u.entry.covenantId, m.priceCovenantId)) throw ServiceError.notOnChain("a price shard");
+    return u;
+  }
+
   // MARK: Salts, signing, conversion
 
   static newSalt() { return newSalt(); }
@@ -452,6 +474,9 @@ export class KachatNamesService {
     const txId = String(await this.engine.submitRpcTransaction(wasmTx) ?? "").toLowerCase();
     this.engine.log?.(`[KachatNames] submitted ${txId}`);
     if (txId !== expected) throw ServiceError.submitMismatch(expected, txId);
+    for (const l of [...this._submitListeners]) {
+      try { l(txId); } catch (e) { this._log("[KachatNames] submit listener failed:", e?.message ?? e); }
+    }
     return txId;
   }
 

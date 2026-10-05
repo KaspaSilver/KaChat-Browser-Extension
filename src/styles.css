@@ -948,3 +948,5 @@ button.sk-pill:disabled { opacity: 1; background: var(--panel) !important; color
 .tile:disabled { opacity: .4; }
 .tile-title { line-height: 1.2; }
 .kl-owner-copy { display: inline-flex; align-items: center; gap: 4px; background: transparent; padding: 0; color: var(--muted); font-weight: 400; }
+.kl-dim { opacity: .6; }
+.kl-clickable { cursor: pointer; }

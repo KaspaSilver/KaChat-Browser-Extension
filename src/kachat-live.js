@@ -18,8 +18,7 @@ import { SYMBOLS, openPanel, kachatWordmark, showTileSheet } from "./kachat-ui.j
 import { Operation, Stage, isOpen, needsDriving, KachatNamesActions } from "../shared/engine/kachat-names/actions.js";
 import { KachatNamesRegistry } from "../shared/engine/kachat-names/registry.js";
 import { Status, Profile, SocialKind, SocialPlatform, SocialSource } from "../shared/engine/kachat-names/registry-state.js";
-import { normalize, unhex32, p2pkScript, bytesEqual, yearMs } from "../shared/engine/kachat-names/codec.js";
-import { paramsPrice, paramsRenewPrice } from "../shared/engine/kachat-names/manifest.js";
+import { normalize, unhex32, p2pkScript, bytesEqual, yearMs, tier } from "../shared/engine/kachat-names/codec.js";
 import { isRegistryUpgrading, registryUpgradingMessage } from "../shared/engine/kachat-names/service.js";
 
 // --- Amounts (iOS KaspaUnit.amount / signed / parseSompi) ----------------------------------
@@ -69,7 +68,13 @@ const AUTH_REASON = "Confirm this .kachat transaction";
 const DAA_PER_SECOND = 10n;
 
 const dateOf = (ms) => new Date(Number(ms));
-const day = (ms) => dateOf(ms).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+/** "Oct 12, 2027" - with the time when it is within two days (testnet's 10-minute periods). */
+const day = (ms) => {
+  const near = Math.abs(Number(ms) - Date.now()) < 2 * 86_400_000;
+  return dateOf(ms).toLocaleString(undefined, near
+    ? { year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }
+    : { year: "numeric", month: "short", day: "numeric" });
+};
 
 /** "2 hours ago", "yesterday" (iOS .relative(presentation: .named)). */
 function relative(ms) {
@@ -85,6 +90,33 @@ function relative(ms) {
 const registry = () => kachatRegistry();
 /** The registry parameters, once the manifest is verified. */
 const params = () => registry()?.manifest?.params ?? null;
+
+// --- The period clock (registry v3, iOS 49c0baa): a year on mainnet, 10 minutes on testnet ---
+
+const periodMs = () => params()?.periodMs ?? yearMs;
+/** Whether a period is a year (mainnet), not a short test clock. */
+const yearlyPeriods = () => periodMs() === yearMs;
+/** A length of time: "10 min", "1h 30m", "10 days". */
+function duration(ms) {
+  const minutes = Math.round(Number(ms) / 60000);
+  if (minutes >= 1440) { const d = Math.round(minutes / 1440); return `${d} day${d === 1 ? "" : "s"}`; }
+  if (minutes >= 60) { const h = Math.floor(minutes / 60), m = minutes % 60; return m ? `${h}h ${m}m` : `${h}h`; }
+  return `${minutes} min`;
+}
+/** `count` periods: "1 year" / "2 years", or on a short clock "10 min" / "20 min". */
+function periods(count) {
+  const n = BigInt(count);
+  if (yearlyPeriods()) return n === 1n ? "1 year" : `${n} years`;
+  return duration(n * periodMs());
+}
+/** The price per period for `name`, from the price record (every shard holds the same prices):
+ *  the last prices read, else the genesis prices. */
+function namePrice(name) {
+  const prices = registry()?.cachedPrices;
+  return prices?.length === 5 ? prices[tier(new TextEncoder().encode(name).length)] : null;
+}
+/** "Price per year", or on a short clock "Price per 10 min". */
+const pricePerPeriodTitle = () => (yearlyPeriods() ? "Price per year" : `Price per ${periods(1)}`);
 const graceMs = () => registry()?.graceMs ?? 0n;
 const statusOf = (info) => info.status(graceMs());
 const shortAddress = (a) => KachatNamesRegistry.shortAddress(a);
@@ -111,6 +143,8 @@ function party(s) {
 }
 
 let myKey = null; // the bound signer's x-only key, set when the runtime is fetched
+let lastActions = null; // the actions of the last runtime fetched (offer states)
+const runtimeActions = () => lastActions;
 const isMine = (key) => Boolean(myKey && key && bytesEqual(myKey, key));
 
 const EVENT_ICONS = {
@@ -120,7 +154,7 @@ const EVENT_ICONS = {
 const EVENT_TITLES = {
   register: "Registered", transfer: "Transferred", list: "Listed", delist: "Delisted", sale: "Sold",
   offer_accepted: "Offer accepted", offer_accept: "Offer accepted", renew: "Renewed", extend: "Extended", release: "Released",
-  reclaim: "Reclaimed", offer: "Offer made", offer_withdraw: "Offer withdrawn", offer_refund: "Offer refunded",
+  reclaim: "Reclaimed", offer: "Offer made", offer_withdraw: "Offer withdrawn", offer_refund: "Offer refunded", offer_decline: "Offer declined",
 };
 
 /** Why a typed name is not a name. */
@@ -288,6 +322,7 @@ export function showTxDone({ txId, title = "Transaction sent", onClose = () => {
 async function runtime() {
   const rt = await kachatNames();
   myKey = rt?.actions.myKey ?? null;
+  lastActions = rt?.actions ?? null;
   return rt;
 }
 
@@ -365,12 +400,21 @@ export const hub = {
     if (!this.isLive) return;
     const reg = registry();
     try {
+      // The prices can change at any time (registry v3): read them with the rest.
+      await reg.currentPrices().catch(() => null);
       this.listings = await reg.listings();
       this.lapsed = await reg.lapsed();
       if (myKey) {
         this.mine = await reg.namesOf(myKey, { includeInactive: true });
         this.myOffers = await reg.myOffers(myKey);
-        if (this.myOffers.length) await (await runtime()).actions.refreshVirtualDaa();
+        if (this.myOffers.length) {
+          const actions = (await runtime()).actions;
+          await actions.refreshVirtualDaa();
+          // Your own expired offers come back to you on their own, and so do the ones whose name
+          // changed hands since you made them (iOS ba07975).
+          await actions.returnExpiredOffers(this.myOffers);
+          await actions.withdrawDeclinedOffers(this.myOffers);
+        }
       } else {
         this.mine = [];
         this.myOffers = [];
@@ -408,10 +452,7 @@ export const hub = {
     }, 350);
   },
 
-  pricePerYear(name) {
-    const params = registry()?.manifest?.params;
-    return params ? paramsPrice(params, new TextEncoder().encode(name).length) : null;
-  },
+  pricePerYear(name) { return namePrice(name); },
 };
 
 // --- Hub: search result (iOS KachatLiveSearchResult) ---------------------------------------
@@ -443,7 +484,7 @@ export function searchResultHtml(typed) {
   if (s.kind === "free" && s.name === name) {
     const price = hub.pricePerYear(name);
     body = `
-      <span class="tx-meta">${title(`${name}.kachat`)}${price != null ? `<span class="tiny kl-green">Available · ${esc(amount(price))} a year</span>` : ""}</span>
+      <span class="tx-meta">${title(`${name}.kachat`)}${price != null ? `<span class="tiny kl-green">Available · ${esc(amount(price))} ${yearlyPeriods() ? "a year" : `per ${esc(periods(1))}`}</span>` : ""}</span>
       <button class="km-prominent small-button" id="claim" ${s.gap ? "" : "disabled"}>Claim</button>`;
   } else if (s.kind === "invalid" && s.name === name) {
     body = `<span class="tx-meta">${title(`${name}.kachat`)}<span class="muted tiny">${esc(invalidReason(name) || "Not a valid name.")}</span></span>`;
@@ -601,7 +642,7 @@ export function livePageHtml(page) {
           <div class="km-title">No .kachat names yet</div>
           <p class="muted small">Search for a name above and claim it.</p>
         </div>`}
-      ${sectionHeader("My Offers", "Offers you made. Withdraw one any time; once it passes its refund time anyone can return it to you.")}
+      ${sectionHeader("My Offers", "Offers you made. Withdraw one any time; once it expires it comes back to you on its own.")}
       ${hub.myOffers.length
         ? `<div class="km-card km-list">${hub.myOffers.map((o) => offerRowHtml(o, { isBuyer: true, isOwner: false })).join("")}</div>`
         : emptyCard(hub.loaded ? "No open offers." : null)}
@@ -633,20 +674,49 @@ export function bindLivePage(container, nav) {
 
 // --- Offers (iOS KachatOfferAction / KachatOfferRow) ---------------------------------------
 
-function offerRowHtml(offer, { isBuyer, isOwner }) {
-  const refundable = hub.virtualDaa != null && offer.refundable(hub.virtualDaa);
+/** "Expires in 2d 4h", from the DAA score the offer becomes refundable at (10 per second). */
+function offerExpiresIn(offer) {
+  const daa = hub.virtualDaa ?? runtimeActions()?.virtualDaa;
+  if (daa == null || offer.refundable(daa)) return null;
+  const seconds = Number(offer.refundAfter - daa) / Number(DAA_PER_SECOND);
+  const m = Math.max(1, Math.round(seconds / 60));
+  const text = m >= 1440 ? `${Math.floor(m / 1440)}d ${Math.floor((m % 1440) / 60)}h` : m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${m}m`;
+  return `Expires in ${text}`;
+}
+
+/** iOS KachatOfferRow (ba07975): the owner accepts with a click on the row or Accept, or declines
+ *  from the menu; an expired offer goes back to its buyer on its own; one made to an earlier owner
+ *  is declined and pulled back by the buyer's app. */
+function offerRowHtml(offer, { isBuyer, isOwner, declined = false }) {
+  const actions = runtimeActions();
+  const daa = hub.virtualDaa ?? actions?.virtualDaa;
+  const refundable = daa != null && offer.refundable(daa);
+  const returning = Boolean(actions?.returningOffers?.has(offer.id));
+  const withdrawing = Boolean(actions?.withdrawingOffers?.has(offer.id));
+  const acceptable = isOwner && !refundable && !declined;
   const who = isBuyer ? "Your offer" : (addressOf(offer.buyer) ? shortAddress(addressOf(offer.buyer)) : "");
+  let state = "";
+  if (declined || withdrawing) {
+    state = `<span class="tiny kl-orange">${isBuyer ? "Declined - the name changed hands, returning to you" : "Declined - made to an earlier owner"}</span>`;
+  } else if (refundable) {
+    state = `<span class="tiny kl-orange">${returning || isOwner ? (isBuyer ? "Expired - returning to you" : "Expired - returning to the buyer") : "Expired - refundable now"}</span>`;
+  } else {
+    const left = offerExpiresIn(offer);
+    if (left) state = `<span class="muted tiny">${esc(left)}</span>`;
+  }
   let trailing = "";
   if (isBuyer) trailing = `<button class="icon plain accent" data-offer-menu="${esc(offer.id)}" aria-label="Offer actions">${SYMBOLS.ellipsisCircle}</button>`;
-  else if (isOwner) trailing = `<button class="km-prominent small-button" data-offer-accept="${esc(offer.id)}">Accept</button>`;
-  else if (refundable) trailing = `<button class="km-bordered small-button" data-offer-refund="${esc(offer.id)}">Refund</button>`;
+  else if (acceptable) {
+    trailing = `<button class="icon plain accent" data-offer-owner-menu="${esc(offer.id)}" aria-label="Offer actions">${SYMBOLS.ellipsisCircle}</button>
+      <button class="km-prominent small-button" data-offer-accept="${esc(offer.id)}">Accept</button>`;
+  } else if (refundable && !returning) trailing = `<button class="km-bordered small-button" data-offer-refund="${esc(offer.id)}">Refund</button>`;
   return `
-    <div class="km-row">
+    <div class="km-row kl-offer ${refundable || declined || withdrawing ? "kl-dim" : ""} ${acceptable ? "kl-clickable" : ""}" ${acceptable ? `data-offer-row="${esc(offer.id)}"` : ""}>
       <span class="accent km-icon">${SYMBOLS.hand}</span>
       <span class="tx-meta">
         ${offer.name ? `<span class="strong small">${esc(offer.name)}.kachat</span>` : ""}
         <span class="muted tiny">${esc(who)}</span>
-        ${refundable ? '<span class="tiny kl-orange">Refundable now</span>' : ""}
+        ${state}
       </span>
       <span class="strong small">${esc(amount(offer.amount))}</span>
       ${trailing}
@@ -663,7 +733,27 @@ function bindOfferRows(container, offers, name) {
       offerMenu(offer, refundable);
     };
   }
-  for (const b of container.querySelectorAll("[data-offer-accept]")) b.onclick = () => { const o = find(b.dataset.offerAccept); if (o && name) openOfferAction("accept", o, name); };
+  for (const b of container.querySelectorAll("[data-offer-accept]")) b.onclick = (event) => { event.stopPropagation(); const o = find(b.dataset.offerAccept); if (o && name) openOfferAction("accept", o, name); };
+  // A click anywhere on an acceptable row opens the accept flow (the buttons inside keep their own).
+  for (const row of container.querySelectorAll("[data-offer-row]")) {
+    row.onclick = (event) => {
+      if (event.target.closest("button")) return;
+      const o = find(row.dataset.offerRow);
+      if (o && name) openOfferAction("accept", o, name);
+    };
+  }
+  for (const b of container.querySelectorAll("[data-offer-owner-menu]")) {
+    b.onclick = (event) => {
+      event.stopPropagation();
+      const o = find(b.dataset.offerOwnerMenu);
+      if (!o) return;
+      showSheet({
+        title: o.name ? `${o.name}.kachat` : "Offer",
+        subtitle: amount(o.amount),
+        rows: [{ label: "Decline", subtitle: "Sends the offer back to the buyer.", icon: SYMBOLS.release, danger: true, onClick: () => openOfferAction("decline", o) }],
+      });
+    };
+  }
   for (const b of container.querySelectorAll("[data-offer-refund]")) b.onclick = () => { const o = find(b.dataset.offerRefund); if (o) openOfferAction("refund", o); };
 }
 
@@ -686,6 +776,15 @@ function openOfferAction(kind, offer, name = null) {
   }
   if (kind === "refund") {
     return openTxSheet({ title: "Refund Offer", confirmTitle: "Refund", doneTitle: "Offer refunded", rows: [offerRow], operation: () => Operation.refund(offer) });
+  }
+  if (kind === "decline") {
+    const buyerAddress = addressOf(offer.buyer);
+    return openTxSheet({
+      title: "Decline Offer", confirmTitle: "Decline", doneTitle: "Offer declined",
+      footer: "The offer goes back to the buyer. Its network fee comes out of the offer, so declining costs you nothing.",
+      rows: [offerRow, { title: "Buyer", value: buyerAddress ? shortAddress(buyerAddress) : "" }],
+      operation: () => Operation.decline(offer),
+    });
   }
   const buyer = addressOf(offer.buyer);
   return openTxSheet({
@@ -854,7 +953,8 @@ function bindSegmented(panel, name, onPick) {
   }
 }
 
-const yearsText = (y) => (Number(y) === 1 ? "1 year" : `${y} years`);
+/** "1 year" / "2 years", or on a short clock (testnet) "10 min" / "20 min". */
+const yearsText = (y) => periods(y);
 const maxYears = () => Number(registry()?.manifest?.params.maxYears ?? 2n);
 const amountField = (id) => `
   <div class="form-card"><div class="form-row">
@@ -900,7 +1000,9 @@ function openClaimSheet(target) {
         <div class="form-card">
           ${step(1, "A hidden commit goes on chain first. Nobody can see which name it is for.")}
           ${step(2, "About a minute later KaChat Wallet registers the name by itself. Keep it open; if you close it, it continues next time.")}
-          ${step(3, "The name is yours for the years you paid, at most 2 ahead. A 1-year name can be extended to 2 years; from 10 days before it expires you can renew it.")}
+          ${step(3, yearlyPeriods()
+            ? "The name is yours for the years you paid, at most 2 ahead. A 1-year name can be extended to 2 years; from 10 days before it expires you can renew it."
+            : `The name is yours for the time you paid, at most ${periods(maxYears())} ahead. From ${duration(params()?.renewWindowMs ?? 0n)} before it expires you can renew it.`)}
         </div>
       </div>
       <div class="form-section">
@@ -978,29 +1080,30 @@ function openBuySheet(info) {
   });
 }
 
+/** Make an Offer (iOS KachatLiveOfferSheet, v3): made to the name's current owner, up to 7 days. */
 function openOfferSheet(name, info) {
   const state = { amount: null, days: 3, virtualDaa: null };
   const refundAfter = () => (state.virtualDaa != null ? state.virtualDaa + BigInt(state.days) * 86_400n * DAA_PER_SECOND : null);
-  const belowListing = () => Boolean(info?.isListed && state.amount != null && info.price < state.amount);
+  const belowListing = () => Boolean(info.isListed && state.amount != null && info.price < state.amount);
   openTxSheet({
     title: "Make an Offer", confirmTitle: "Send Offer", doneTitle: "Offer sent",
-    footer: () => (belowListing() ? "This name is listed for less than your offer. Anyone could buy the listing with your offer, so consider buying it instead." : null),
+    footer: () => (belowListing() ? "This name is listed for less than your offer. Consider buying it instead." : null),
     rows: () => [
       { title: "Name", value: `${name}.kachat` },
-      ...(info?.isListed ? [{ title: "Listed at", value: amount(info.price) }] : []),
-      ...(info ? [{ title: "Expires", value: day(info.expiresAt) }] : []),
+      ...(info.isListed ? [{ title: "Listed at", value: amount(info.price) }] : []),
+      { title: "Expires", value: day(info.expiresAt) },
       ...(state.amount != null ? [{ title: "Offer", value: amount(state.amount) }] : []),
     ],
-    operation: () => (state.amount != null && refundAfter() != null ? Operation.offer(name, state.amount, refundAfter(), info) : null),
+    operation: () => (state.amount != null && refundAfter() != null ? Operation.offer(info, state.amount, refundAfter()) : null),
     inputsHtml: `
       <div class="form-section">
         <div class="form-header">Your offer</div>
         ${amountField("kl-offer-amount")}
-        <div class="form-footer">${unitText("Your KAS stays locked on chain until the owner accepts, you withdraw the offer, or it expires - then anyone can send it back to you.")}</div>
+        <div class="form-footer">${unitText("Your KAS stays locked on chain until the owner accepts or declines, you withdraw the offer, or it expires - then anyone can send it back to you.")}</div>
       </div>
       <div class="form-section">
         <div class="form-header">Refundable after</div>
-        <div class="form-card"><div class="form-row">${segmented("days", [[1, "1 Day"], [3, "3 Days"], [7, "7 Days"], [30, "30 Days"]], 3)}</div></div>
+        <div class="form-card"><div class="form-row">${segmented("days", [[1, "1 Day"], [3, "3 Days"], [7, "7 Days"]], 3)}</div></div>
       </div>`,
     bindInputs(panel, changed) {
       const input = panel.querySelector("#kl-offer-amount");
@@ -1013,15 +1116,14 @@ function openOfferSheet(name, info) {
 
 function openRenewSheet(info) {
   const state = { years: 1n };
-  const params = registry()?.manifest?.params;
-  const perYear = params ? paramsRenewPrice(params, new TextEncoder().encode(info.name).length) : 0n;
+  const perYear = namePrice(info.name) ?? 0n;
   openTxSheet({
     title: "Renew", confirmTitle: "Renew", doneTitle: "Renewed",
     footer: "A renewal starts the next period at the current expiry, so no time is lost or gained, even after it passed. The price goes to the miners.",
     rows: () => [
       { title: "Name", value: info.display },
-      { title: "Price per year", value: amount(perYear) },
-      { title: "New period", value: `${day(info.expiresAt)} – ${day(info.expiresAt + state.years * yearMs)}` },
+      { title: pricePerPeriodTitle(), value: amount(perYear) },
+      { title: "New period", value: `${day(info.expiresAt)} – ${day(info.expiresAt + state.years * periodMs())}` },
     ],
     operation: () => Operation.renew(info, state.years),
     inputsHtml: `<div class="form-section"><div class="form-card"><div class="form-row">${segmented("years", Array.from({ length: Math.max(1, maxYears()) }, (_, i) => [i + 1, yearsText(i + 1)]), 1)}</div></div></div>`,
@@ -1034,7 +1136,7 @@ function openRenewSheet(info) {
 /** Whether extending by `years` fills the period to exactly maxYears. */
 function fillsPeriod(info, years, p) {
   if (info.periodStart == null) return false;
-  return info.expiresAt + BigInt(years) * yearMs === info.periodStart + BigInt(p.maxYears) * yearMs;
+  return info.expiresAt + BigInt(years) * p.periodMs === info.periodStart + BigInt(p.maxYears) * p.periodMs;
 }
 
 /** Registry v2 extend (iOS KachatExtendSheet): years added to the current paid period
@@ -1042,17 +1144,19 @@ function fillsPeriod(info, years, p) {
 function openExtendSheet(info) {
   const p = params();
   const available = p ? (info.extendableYears(p) > 1n ? info.extendableYears(p) : 1n) : 1n;
-  const perYear = p ? paramsRenewPrice(p, new TextEncoder().encode(info.name).length) : 0n;
+  const perYear = namePrice(info.name) ?? 0n;
   const state = { years: 1n };
-  const title = () => (p && fillsPeriod(info, state.years, p) ? `Extend to ${p.maxYears} years` : "Extend");
+  const title = () => (p && fillsPeriod(info, state.years, p) ? (yearlyPeriods() ? `Extend to ${p.maxYears} years` : `Extend to ${periods(p.maxYears)}`) : "Extend");
   const handle = openTxSheet({
     title: title(), confirmTitle: "Extend", doneTitle: "Extended",
-    footer: "Extending adds years to the current paid period, which holds at most 2 years. The price goes to the miners.",
+    footer: yearlyPeriods()
+      ? "Extending adds years to the current paid period, which holds at most 2 years. The price goes to the miners."
+      : `Extending adds time to the current paid period, which holds at most ${periods(maxYears())}. The price goes to the miners.`,
     rows: () => [
       { title: "Name", value: info.display },
-      { title: "Price per year", value: amount(perYear) },
+      { title: pricePerPeriodTitle(), value: amount(perYear) },
       { title: "Expires", value: day(info.expiresAt) },
-      { title: "New expiry", value: day(info.expiresAt + state.years * yearMs) },
+      { title: "New expiry", value: day(info.expiresAt + state.years * periodMs()) },
     ],
     operation: () => Operation.extend(info, state.years < available ? state.years : available),
     inputsHtml: available > 1n
@@ -1241,7 +1345,12 @@ export async function showLiveNameDetail({ info: initial, onBack }) {
     if (p) {
       const extendable = info.extendableYears(p);
       if (extendable > 0n) {
-        tiles.push({ title: fillsPeriod(info, extendable, p) ? `Extend to ${p.maxYears} years` : "Extend", subtitle: "Pays for more years now, up to the 2-year limit.", icon: SYMBOLS.calendarPlus, onClick: () => openExtendSheet(info) });
+        const fills = fillsPeriod(info, extendable, p);
+        tiles.push({
+          title: !fills ? "Extend" : yearlyPeriods() ? `Extend to ${p.maxYears} years` : `Extend to ${periods(p.maxYears)}`,
+          subtitle: yearlyPeriods() ? "Pays for more years now, up to the 2-year limit." : `Pays for more time now, up to the ${periods(p.maxYears)} limit.`,
+          icon: SYMBOLS.calendarPlus, onClick: () => openExtendSheet(info),
+        });
       }
       if (info.renewOpen(p)) tiles.push({ title: "Renew", subtitle: "Starts a new paid period from the expiry date.", icon: SYMBOLS.renew, onClick: () => openRenewSheet(info) });
     }
@@ -1281,9 +1390,9 @@ export async function showLiveNameDetail({ info: initial, onBack }) {
     const owner = canActAsOwner();
     const indexer = registry()?.source?.kind === "indexer";
     return `
-      ${sectionHeader("Offers", owner ? "Accept one to sell the name for it." : null)}
+      ${sectionHeader("Offers", owner ? "Tap an offer to accept it. Expired offers go back to their buyers." : null)}
       ${state.offers.length
-        ? `<div class="km-card km-list">${state.offers.map((o) => offerRowHtml(o, { isBuyer: isMine(o.buyer), isOwner: owner && indexer })).join("")}</div>`
+        ? `<div class="km-card km-list">${state.offers.map((o) => offerRowHtml(o, { isBuyer: isMine(o.buyer), isOwner: owner && indexer, declined: o.isDeclined(state.info.owner) })).join("")}</div>`
         : '<div class="km-card km-empty-card muted small">No open offers.</div>'}
       ${registry()?.source?.kind === "chain" ? '<p class="muted small kl-pad">Offers from others appear once a names indexer is connected.</p>' : ""}`;
   };
@@ -1374,7 +1483,14 @@ export async function showLiveNameDetail({ info: initial, onBack }) {
     }
     state.offers = await reg.offersFor(state.info.name).catch(() => []);
     state.history = await reg.history(state.info.name).catch(() => []);
-    if (state.offers.length) await (await runtime()).actions.refreshVirtualDaa().catch(() => {});
+    if (state.offers.length) {
+      const actions = (await runtime()).actions;
+      await actions.refreshVirtualDaa().catch(() => {});
+      // Expired offers don't stay on the name: the owner's app (and the buyer's) send them back;
+      // your offers made to an earlier owner are pulled back (iOS ba07975).
+      await actions.returnExpiredOffers(canActAsOwner() ? state.offers : state.offers.filter((o) => isMine(o.buyer))).catch(() => {});
+      await actions.withdrawDeclinedOffers(state.offers).catch(() => {});
+    }
     if (here()) paint();
   };
 
