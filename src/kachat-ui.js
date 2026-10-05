@@ -16,6 +16,7 @@ export const SYMBOLS = {
   lock: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>',
   bubbles: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M3 5.5A2.5 2.5 0 0 1 5.5 3h8A2.5 2.5 0 0 1 16 5.5v5a2.5 2.5 0 0 1-2.5 2.5H8l-3.5 3V13A2.5 2.5 0 0 1 3 10.5z"/><path d="M19 8.5a2 2 0 0 1 2 2v5a2 2 0 0 1-1.5 2V21l-3.2-2.5H11a2 2 0 0 1-2-2"/></svg>',
   // the live screens (testnet)
+  sliders: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></svg>',
   calendar: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>',
   calendarPlus: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M21 12V7a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h7"/><path d="M3 10h18M8 3v4M16 3v4M18 15v6M15 18h6"/></svg>',
   calendarClock: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M21 11V7a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h6"/><path d="M3 10h18M8 3v4M16 3v4"/><circle cx="17.5" cy="17.5" r="4"/><path d="M17.5 15.8v1.9l1.2.8"/></svg>',
@@ -81,4 +82,40 @@ export function openPanel({ title, leading = null, trailing = null, body, onMoun
       bar.lastElementChild.outerHTML = nextTrailing ? `<button class="bar-text strong" data-close>${esc(nextTrailing)}</button>` : "<span></span>";
     },
   };
+}
+
+/**
+ * A half sheet of square tiles, three to a row - an icon over a short title (iOS ActionSheetTiles
+ * / ActionSheetRow; the row's subtitle is the tile's tooltip, iOS's VoiceOver hint).
+ *   tiles: [{ title, subtitle, icon, tint: "danger"|null, disabled, onClick }]
+ * Picking a tile closes the sheet first, then runs it.
+ */
+export function showTileSheet({ title, note = "", tiles }) {
+  document.querySelector(".tile-sheet-backdrop")?.remove();
+  const backdrop = document.createElement("div");
+  backdrop.className = "sheet-backdrop tile-sheet-backdrop";
+  backdrop.innerHTML = `
+    <div class="sheet tile-sheet" role="dialog" aria-modal="true" aria-label="${esc(title)}">
+      <div class="sheet-grabber"></div>
+      <div class="tile-sheet-head"><div class="strong">${esc(title)}</div>${note ? `<div class="muted tiny">${esc(note)}</div>` : ""}</div>
+      <div class="tiles">
+        ${tiles.map((t, i) => `
+          <button class="tile ${t.tint === "danger" ? "tile-danger" : ""}" data-tile="${i}" title="${esc(t.subtitle || "")}" aria-label="${esc(t.title)}" ${t.disabled ? "disabled" : ""}>
+            <span class="tile-icon">${t.icon}</span>
+            <span class="tile-title">${esc(t.title)}</span>
+          </button>`).join("")}
+      </div>
+    </div>`;
+  const close = () => { backdrop.remove(); document.removeEventListener("keydown", onKey); };
+  const onKey = (event) => { if (event.key === "Escape") close(); };
+  document.addEventListener("keydown", onKey);
+  backdrop.addEventListener("click", (event) => {
+    if (event.target === backdrop) return close();
+    const tile = event.target.closest("[data-tile]");
+    if (!tile || tile.disabled) return;
+    close();
+    tiles[Number(tile.dataset.tile)]?.onClick?.();
+  });
+  document.body.appendChild(backdrop);
+  return { close };
 }

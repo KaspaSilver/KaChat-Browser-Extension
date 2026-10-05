@@ -938,3 +938,13 @@ button.sk-pill:disabled { opacity: 1; background: var(--panel) !important; color
 .faucet-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 .faucet-title { font-weight: 650; font-size: 14px; }
 .faucet-open { flex: none; display: inline-flex; }
+.tile-sheet { padding: 6px 20px 24px; gap: 12px; }
+.tile-sheet-head { text-align: center; display: flex; flex-direction: column; gap: 4px; padding: 14px 0 4px; }
+.tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.tile { aspect-ratio: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; border-radius: 16px; background: var(--panel-2); color: var(--text); font-weight: 600; font-size: 12px; padding: 8px; text-align: center; }
+.tile-icon { color: var(--kaspa); display: inline-flex; }
+.tile-icon svg { width: 24px; height: 24px; }
+.tile.tile-danger, .tile.tile-danger .tile-icon { color: #ff453a; }
+.tile:disabled { opacity: .4; }
+.tile-title { line-height: 1.2; }
+.kl-owner-copy { display: inline-flex; align-items: center; gap: 4px; background: transparent; padding: 0; color: var(--muted); font-weight: 400; }

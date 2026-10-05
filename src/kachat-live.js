@@ -14,7 +14,7 @@ import { KAS_UNIT } from "./net.js";
 import * as vault from "./vault.js";
 import * as wallet from "./wallet.js";
 import { kachatNames, kachatProfiles, kachatRegistry, kachatLaunched, prepareSigner } from "./kachat-names.js";
-import { SYMBOLS, openPanel, kachatWordmark } from "./kachat-ui.js";
+import { SYMBOLS, openPanel, kachatWordmark, showTileSheet } from "./kachat-ui.js";
 import { Operation, Stage, isOpen, needsDriving, KachatNamesActions } from "../shared/engine/kachat-names/actions.js";
 import { KachatNamesRegistry } from "../shared/engine/kachat-names/registry.js";
 import { Status, Profile, SocialKind, SocialPlatform, SocialSource } from "../shared/engine/kachat-names/registry-state.js";
@@ -89,6 +89,15 @@ const graceMs = () => registry()?.graceMs ?? 0n;
 const statusOf = (info) => info.status(graceMs());
 const shortAddress = (a) => KachatNamesRegistry.shortAddress(a);
 const addressOf = (key) => KachatNamesRegistry.addressOf(key);
+
+/** The network prefix plus both ends of an address on one line: kaspatest:qr4x7k...a9z2pq
+ *  (iOS KachatNamesRegistry.compactAddress) - where the full address doesn't fit. */
+function compactAddress(address) {
+  const colon = address.indexOf(":");
+  if (colon < 0) return address;
+  const body = address.slice(colon + 1);
+  return body.length > 14 ? `${address.slice(0, colon + 1)}${body.slice(0, 6)}...${body.slice(-6)}` : address;
+}
 
 /** An event party: an address (indexer) or an x-only key in hex (walker), as a short address. */
 function party(s) {
@@ -1206,20 +1215,13 @@ export async function showLiveNameDetail({ info: initial, onBack }) {
     const info = state.info;
     const status = statusOf(info);
     if (canActAsOwner()) {
-      const active = status === Status.active;
-      // The primary name is the chatting address's identity; a name on a spending address can't be it.
-      const second = [
-        info.isListed ? action("kl-delist", "Delist", SYMBOLS.tagSlash) : "",
-        isChatting() ? action("kl-primary", "Set as Primary", SYMBOLS.primary, { disabled: !active }) : "",
-      ].filter(Boolean);
+      // Expired (in grace or lapsed) and renewable: the one thing that matters now stays on the
+      // page; every owner action lives in the Manage Name sheet of tiles (iOS f61b978).
+      const p = params();
+      const renewNow = status !== Status.active && p && info.renewOpen(p);
       return `
-        ${periodActions(info, status)}
-        <div class="km-actions">
-          ${action("kl-list", info.isListed ? "Change Price" : "List for Sale", SYMBOLS.tag, { disabled: !active })}
-          ${action("kl-transfer", "Transfer", SYMBOLS.arrows)}
-        </div>
-        ${second.length ? `<div class="${second.length > 1 ? "km-actions" : "kl-one"}">${second.join("")}</div>` : ""}
-        <div class="kl-one"><button class="km-bordered with-icon danger-text" id="kl-release">${SYMBOLS.trash}<span>Release Name</span></button></div>`;
+        ${renewNow ? `<div class="kl-one">${action("kl-renew", "Renew", SYMBOLS.renew, { prominent: true })}</div>` : ""}
+        <div class="kl-one">${action("kl-manage", "Manage Name", SYMBOLS.sliders, { prominent: status === Status.active })}</div>`;
     }
     // Read-only on a KasSigner address: acting on it is the device's job (the Owner card says which).
     if (state.heldBy?.kind === "kasSigner") return "";
@@ -1228,27 +1230,32 @@ export async function showLiveNameDetail({ info: initial, onBack }) {
     return `<div class="${buy ? "km-actions" : "kl-one"}">${buy ? action("kl-buy", "Buy Now", SYMBOLS.cart, { prominent: true }) : ""}${action("kl-offer", "Make an Offer", SYMBOLS.hand)}</div>`;
   };
 
-  /** Registry v2: "Extend" while the paid period holds less than 2 years ("Extend to 2 years" when
-   *  that fills it), "Renew" once the renewal window is open (10 days before the expiry, and on
-   *  through grace and lapse), otherwise a disabled "Renewal opens on <date>". */
-  const periodActions = (info, status) => {
+  /** The owner's actions as tiles (iOS manageItems): Extend while the paid period holds less than
+   *  2 years, Renew once its window is open (otherwise the sheet says when it opens), list or
+   *  change the price, delist, transfer, Set as Primary (the chatting address only), release. */
+  const openManage = () => {
+    const info = state.info;
+    const status = statusOf(info);
     const p = params();
-    if (!p) return "";
-    const extendable = info.extendableYears(p);
-    const renewOpen = info.renewOpen(p);
-    let html = "";
-    if (extendable > 0n || renewOpen) {
-      const extendLabel = fillsPeriod(info, extendable, p) ? `Extend to ${p.maxYears} years` : "Extend";
-      const buttons = [
-        extendable > 0n ? action("kl-extend", extendLabel, SYMBOLS.calendarPlus, { prominent: status !== Status.active && !renewOpen }) : "",
-        renewOpen ? action("kl-renew", "Renew", SYMBOLS.renew, { prominent: status !== Status.active }) : "",
-      ].filter(Boolean);
-      html += `<div class="${buttons.length > 1 ? "km-actions" : "kl-one"}">${buttons.join("")}</div>`;
+    const tiles = [];
+    if (p) {
+      const extendable = info.extendableYears(p);
+      if (extendable > 0n) {
+        tiles.push({ title: fillsPeriod(info, extendable, p) ? `Extend to ${p.maxYears} years` : "Extend", subtitle: "Pays for more years now, up to the 2-year limit.", icon: SYMBOLS.calendarPlus, onClick: () => openExtendSheet(info) });
+      }
+      if (info.renewOpen(p)) tiles.push({ title: "Renew", subtitle: "Starts a new paid period from the expiry date.", icon: SYMBOLS.renew, onClick: () => openRenewSheet(info) });
     }
-    if (!renewOpen) {
-      html += `<div class="kl-one"><button class="km-bordered with-icon" disabled>${SYMBOLS.calendarClock}<span>Renewal opens on ${esc(day(info.renewOpens(p)))}</span></button></div>`;
+    if (info.isListed) {
+      tiles.push({ title: "Change Price", subtitle: "Changes the asking price.", icon: SYMBOLS.tag, disabled: status !== Status.active, onClick: () => openListSheet(info) });
+      tiles.push({ title: "Delist", subtitle: "Takes the name off the market.", icon: SYMBOLS.tagSlash, onClick: delist });
+    } else {
+      tiles.push({ title: "List for Sale", subtitle: "Puts the name up for sale at your price.", icon: SYMBOLS.tag, disabled: status !== Status.active, onClick: () => openListSheet(info) });
     }
-    return html;
+    tiles.push({ title: "Transfer", subtitle: "Sends the name to another address.", icon: SYMBOLS.arrows, onClick: () => openTransferSheet(info) });
+    if (isChatting()) tiles.push({ title: "Set as Primary", subtitle: "Shows you by this name across KaChat.", icon: SYMBOLS.primary, disabled: status !== Status.active, onClick: setPrimary });
+    tiles.push({ title: "Release Name", subtitle: "Gives the name up and returns its deposit.", icon: SYMBOLS.trash, tint: "danger", onClick: release });
+    const note = p && !info.renewOpen(p) ? `Renewal opens on ${day(info.renewOpens(p))}` : "";
+    showTileSheet({ title: info.display, note, tiles });
   };
 
   const ownerCard = () => {
@@ -1265,7 +1272,7 @@ export async function showLiveNameDetail({ info: initial, onBack }) {
         <span class="kl-owner-icon">${SYMBOLS.personFill}</span>
         <span class="tx-meta">
           ${who ? `<span class="strong small">${esc(who)}</span>` : ""}
-          ${address ? `<span class="mono tiny muted break">${esc(address)}</span>` : ""}
+          ${address ? `<button class="kl-owner-copy" id="kl-owner-copy" title="Copies the address" aria-label="${esc(address)}"><span class="mono tiny">${esc(compactAddress(address))}</span><span id="kl-owner-copy-icon">${ICONS.copy}</span></button>` : ""}
         </span>
       </div>`;
   };
@@ -1309,25 +1316,33 @@ export async function showLiveNameDetail({ info: initial, onBack }) {
     on("kl-buy", () => openBuySheet(info));
     on("kl-offer", () => openOfferSheet(info.name, info));
     on("kl-renew", () => openRenewSheet(info));
-    on("kl-extend", () => openExtendSheet(info));
-    on("kl-list", () => openListSheet(info));
-    on("kl-transfer", () => openTransferSheet(info));
+    on("kl-manage", openManage);
+    on("kl-owner-copy", async () => {
+      try { await navigator.clipboard.writeText(addressOf(info.owner)); } catch { return; }
+      const icon = $("#kl-owner-copy-icon");
+      if (icon) { icon.innerHTML = ICONS.checkmark || "✓"; setTimeout(() => { if (icon.isConnected) icon.innerHTML = ICONS.copy; }, 1500); }
+    });
     on("kl-reclaim", () => openReclaimSheet(info));
-    on("kl-delist", () => openTxSheet({
+    bindOfferRows(app, state.offers, info);
+  };
+
+  const delist = () => {
+    const info = state.info;
+    openTxSheet({
       title: "Delist", confirmTitle: "Delist", doneTitle: "Delisted",
       rows: [{ title: "Name", value: info.display }, { title: "Listed at", value: amount(info.price) }],
       operation: () => Operation.list(info, 0n),
-    }));
-    on("kl-release", () => openTxSheet({
+    });
+  };
+  const release = () => {
+    const info = state.info;
+    openTxSheet({
       title: "Release Name", confirmTitle: "Release", doneTitle: "Name released",
       warning: "Releasing gives the name up for good: it becomes free for anyone to register, and the time you paid for is lost. You get the bond and the registry deposit back.",
       rows: [{ title: "Name", value: info.display }],
       operation: () => Operation.release(info),
-    }));
-    on("kl-primary", setPrimary);
-    bindOfferRows(app, state.offers, info);
+    });
   };
-
   // Setting a primary name rewrites the profile record: confirmed on the save sheet with its fee
   // (iOS 7e238e5).
   const setPrimary = () => openProfileSaveSheet({
