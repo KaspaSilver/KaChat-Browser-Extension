@@ -205,8 +205,8 @@ function showChangePassword({ onBack }) {
 
 // --- Connection ---------------------------------------------------------------------------
 
-// iOS ConnectionHubPage: Connection Settings, the Testnet toggle and its footer, then Kaspa
-// Explorer in its own section. iOS applies a switch on the next launch; the extension reloads its
+// iOS ConnectionHubPage: the Testnet toggle first (no footer, iOS 010167f), Connection Settings,
+// then Kaspa Explorer in its own section. iOS applies a switch on the next launch; the extension reloads its
 // pages straight away (every open KaChat Wallet window follows).
 function showConnectionHub({ onBack }) {
   const explorer = wallet.EXPLORERS[wallet.currentExplorer()].name;
@@ -215,14 +215,12 @@ function showConnectionHub({ onBack }) {
     <section class="screen settings">
       <div class="section-header">Connection</div>
       <div class="glass list">
-        ${rowHtml("connection-settings", ICONS.antenna, "Connection Settings")}
         <button class="list-row settings-row" id="testnet" role="switch" aria-checked="${IS_TESTNET}">
           <span class="settings-label"><span class="testnet-icon">${TESTTUBE}</span><span>Testnet</span></span>
           <span class="toggle testnet-toggle ${IS_TESTNET ? "on" : ""}"></span>
         </button>
+        ${rowHtml("connection-settings", ICONS.antenna, "Connection Settings")}
       </div>
-      <!-- "K&#x41;S": a sentence, not an amount - ui.unitText must not make it TKAS. -->
-      <p class="form-footer">Testnet is for testing only - testnet K&#x41;S has no value. On testnet your account uses its kaspatest: address, with its own balance, and Connection Settings holds testnet values: the testnet explorer and automatic node discovery. Turning it off brings your mainnet settings back.</p>
       <div class="glass list">
         ${rowHtml("explorer", ICONS.safari, "Kaspa Explorer", IS_TESTNET ? "tn10.kaspa.stream" : explorer)}
       </div>

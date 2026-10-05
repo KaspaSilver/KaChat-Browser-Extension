@@ -16,10 +16,11 @@ import { showDomains } from "./domains.js";
 import { showKachatMarket, kachatWordmark } from "./market.js";
 import { kachatLive, kachatNames, kachatLabelOf, forgetKachatSigner, kachatSocial, ownKachatProfile } from "./kachat-names.js";
 import { showKachatProfileEditor } from "./kachat-profile.js";
+import { faucetCardHtml, startFaucetClaim, noteFaucetBalance, faucetPending } from "./faucet.js";
 import { showSettings, showLicenses } from "./settings.js";
 import { showApproval } from "./approve.js";
 import * as dock from "./dock.js";
-import { NETWORK, NETWORK_MIRROR_KEY, syncNetworkMirror } from "./net.js";
+import { NETWORK, NETWORK_MIRROR_KEY, IS_TESTNET, syncNetworkMirror } from "./net.js";
 import { showColdStorage } from "./cold.js";
 import { showPortfolio } from "./portfolio.js";
 import { showCameraPermissionPage } from "./camera.js";
@@ -205,6 +206,7 @@ function paintHome() {
           </button>
         </div>
 
+        ${IS_TESTNET && main ? faucetCardHtml(main) : ""}
         ${addressActionRowHtml("chatting", "Chatting", main, mainSompi != null ? `${wallet.formatKas(mainSompi, 8)} KAS` : null, null)}
         ${addressActionRowHtml("spending", "Spending", primary, primarySompi != null ? `${wallet.formatKas(primarySompi, 8)} KAS` : null, totalSpending != null ? `Total: ${wallet.formatKas(totalSpending, 8)} KAS` : null)}
 
@@ -311,6 +313,19 @@ function paintHome() {
   $("#domains").onclick = () => { if (main) showDomains({ address: main, onBack: showHome }); };
   $("#kachat-names").onclick = () => showKachatMarket({ onBack: showHome });
   $("#edit-kachat-profile").onclick = () => showKachatProfileEditor({ onSaved: () => refreshHome() });
+  // Claim Testnet Kaspa (testnet only): the faucet opens in a tab; a wallet open in its own tab
+  // watches the chatting balance for a minute, the popup checks it next time it opens.
+  const faucet = $("#faucet");
+  if (faucet) faucet.onclick = async () => {
+    await startFaucetClaim(main, s.balances?.main ?? 0n);
+    paintHomeIfShowing(s);
+    for (let i = 0; i < 12 && isTab; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 5000));
+      if (homeState !== s) return;
+      await refreshHome();
+      if (!faucetPending(main)) return;
+    }
+  };
   $("#settings").onclick = () => showSettings({ onBack: showHome });
   $("#logout").onclick = () => showSheet({
     title: "Log Out",
@@ -409,6 +424,8 @@ async function refreshHome() {
       }
       loadKachatSocial(s, s.addresses.main);
       s.balances = await wallet.balances(s.addresses, s.spending.hidden);
+      // A faucet visit's payment landed: Claim Testnet Kaspa locks for 24 hours.
+      if (IS_TESTNET) noteFaucetBalance(s.addresses.main, s.balances.main);
       // The other tabs' toolbars show the chatting wallet's balance, as iOS does.
       dock.setStatus({ balanceText: wallet.formatKas(s.balances.main, 8) });
     } catch (error) {

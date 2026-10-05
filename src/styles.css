@@ -931,3 +931,10 @@ button.sk-pill:disabled { opacity: 1; background: var(--panel) !important; color
 .sk-tap:disabled { background: color-mix(in srgb, var(--kaspa) 40%, transparent) !important; opacity: 1; }
 .spinner.dark { border-color: rgba(0,0,0,.25); border-top-color: #000; }
 .bar-spacer { visibility: hidden; }
+.faucet-card { display: flex; align-items: center; gap: 12px; width: 100%; padding: 14px 16px; border-radius: 18px; background: rgba(112,199,186,.15); color: var(--text); font-weight: 400; text-align: left; }
+.faucet-card.locked, .faucet-card:disabled { background: rgba(112,199,186,.06) !important; color: var(--text) !important; opacity: 1; }
+.faucet-icon { width: 28px; flex: none; display: inline-flex; justify-content: center; color: var(--kaspa); }
+.faucet-card.locked .faucet-icon, .faucet-card.locked .faucet-title { color: var(--muted); }
+.faucet-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.faucet-title { font-weight: 650; font-size: 14px; }
+.faucet-open { flex: none; display: inline-flex; }
