@@ -1,5 +1,7 @@
 # KaChat Wallet (browser extension)
 
+⚠️DO NOT USE AS DAILY DRIVER STILL IN BETA⚠️
+
 A Kaspa wallet for Chrome, Brave, Edge and other Chromium browsers (Firefox build to follow),
 built on the desktop app's wallet engine (copied into `shared/`, see `shared/README.md`). It is the wallet half of KaChat - the Profile tab of
 the iOS app - without chats. The same recovery phrase shows the same addresses as KaChat on
