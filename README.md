@@ -106,3 +106,8 @@ Upload notes and review answers for each store are in `STORE_LISTING.md`.
 
 Next ideas: KRC-20 tokens, a light theme and languages (iOS Appearance / Language), KNS domains
 on spending addresses (iOS Manage Addresses > KNS Domains tab).
+
+## License
+
+MIT - see [LICENSE](LICENSE). The copies in `shared/` (KaChat-Desktop's engine and the Kaspa
+WASM SDK) keep their own projects' terms.
