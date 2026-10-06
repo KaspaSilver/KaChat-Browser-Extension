@@ -14,7 +14,7 @@
 //
 // All crypto is WebCrypto (crypto.subtle), available in every extension page and worker.
 
-import { getLocal, setLocal, removeLocal, getSession, setSession, clearSession } from "./browser.js";
+import { getLocal, setLocal, removeLocal, getSession, setSession, clearSession, localArea } from "./browser.js";
 
 const VAULT_KEY = "kachat.vault.v1";
 const SESSION_KEY = "kachat.unlockKey";
@@ -112,6 +112,7 @@ export async function createVault(password, account) {
   const stored = { ...normalizeAccount(account), id: newAccountId(), createdAt: Date.now() };
   const payload = { accounts: [stored], activeAccountId: stored.id };
   await setLocal(VAULT_KEY, await seal(payload, keyBytes, kdf));
+  await publishAccountIds(payload);
   await setSession(SESSION_KEY, toBase64(keyBytes));
   return publicView(payload);
 }
@@ -129,6 +130,7 @@ export async function unlock(password) {
     throw new Error("Wrong password.");
   }
   await setSession(SESSION_KEY, toBase64(keyBytes));
+  await publishAccountIds(payload);
   return publicView(payload);
 }
 
@@ -146,6 +148,14 @@ async function readPayload() {
 async function writePayload(payload) {
   const vault = await getLocal(VAULT_KEY);
   await setLocal(VAULT_KEY, await seal(payload, await sessionKeyBytes(), vault.kdf));
+  await publishAccountIds(payload);
+}
+
+/** The ids of the accounts in the vault, readable without the password: the background worker
+ *  answers websites only for connections whose account still exists (audit EXT-002). */
+export const ACCOUNT_IDS_KEY = "kachat.accountIds";
+async function publishAccountIds(payload) {
+  await setLocal(ACCOUNT_IDS_KEY, payload.accounts.map((a) => a.id));
 }
 
 function normalizeAccount(account) {
@@ -277,9 +287,15 @@ export async function changePassword(currentPassword, nextPassword) {
  * Wipes the wallet from this browser: the vault and the unlock key. The only way back is the
  * recovery phrase, which is why the UI makes this a deliberate, typed confirmation.
  */
+/** Removes everything KaChat Wallet keeps in this browser (audit EXT-002): the vault and every
+ *  kachat.* record on both networks - connections, address caches, spending state, Cold Storage,
+ *  portfolios, settings - and the pages' own storage. */
 export async function resetWallet() {
   await clearSession();
-  await removeLocal([VAULT_KEY]);
+  const all = (await localArea?.get?.(null)) || {};
+  const keys = Object.keys(all).filter((k) => k === VAULT_KEY || k.startsWith("kachat"));
+  await removeLocal([VAULT_KEY, ...keys]);
+  try { localStorage.clear(); } catch { /* nothing kept there */ }
 }
 
 /** Confirms a password against the vault without changing the unlock state. */

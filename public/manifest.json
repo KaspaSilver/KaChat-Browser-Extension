@@ -52,7 +52,9 @@
   ],
   "permissions": [
     "storage",
-    "alarms"
+    "alarms",
+    "offscreen",
+    "clipboardWrite"
   ],
   "host_permissions": [
     "https://api.kaspa.org/*",
@@ -68,7 +70,9 @@
     "https://*.kaspa.red/*",
     "https://*.kaspa.stream/*",
     "https://*.kaspa.blue/*",
-    "https://*.kaspa.ws/*"
+    "https://*.kaspa.ws/*",
+    "https://kachat.duckdns.org/*",
+    "https://tnkachat.duckdns.org/*"
   ],
   "optional_host_permissions": [
     "https://*/*"

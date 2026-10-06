@@ -30,13 +30,16 @@ cpSync(dist, firefox, { recursive: true });
 const ff = { ...manifest };
 ff.background = { scripts: ["background.js"], type: "module" };
 delete ff.minimum_chrome_version;
+// Firefox has no offscreen pages: the clipboard wipe falls back to telling you to clear it.
+ff.permissions = (ff.permissions || []).filter((p) => p !== "offscreen");
 ff.browser_specific_settings = {
   gecko: {
     id: "wallet@kachat.app",
     strict_min_version: "128.0",
-    // AMO's required data-collection declaration. The wallet sends public addresses to the Kaspa
-    // network and APIs to show balances, and nothing to KaChat.
-    data_collection_permissions: { required: ["none"] },
+    // AMO's required data-collection declaration (audit EXT-004): public Kaspa addresses go to
+    // the Kaspa network and APIs for balances and sends, and the chatting address to KaChat's
+    // indexer to read its public profile.
+    data_collection_permissions: { required: ["financialAndPaymentInfo"] },
   },
 };
 writeFileSync(`${firefox}/manifest.json`, `${JSON.stringify(ff, null, 2)}\n`);

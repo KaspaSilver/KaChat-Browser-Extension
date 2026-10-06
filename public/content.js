@@ -5,8 +5,6 @@
   const CHANNEL = "kachat-wallet";
   // `chrome` first: recent Chromium's separate `browser` namespace drops sendResponse answers.
   const api = globalThis.chrome?.runtime ? globalThis.chrome : globalThis.browser;
-  // Connections are kept per network ("kachat.connections" / "kachat.connections.testnet").
-  const CONNECTION_KEYS = ["kachat.connections", "kachat.connections.testnet"];
   const origin = window.location.origin;
 
   const toPage = (message) => window.postMessage({ channel: CHANNEL, direction: "to-page", ...message }, origin);
@@ -29,17 +27,16 @@
       .catch(() => toPage({ id: data.id, error: { code: 4900, message: "KaChat Wallet is unavailable. Reload this page." } }));
   });
 
-  // Connecting, disconnecting or switching the connected account in the wallet.
-  api.storage?.onChanged?.addListener((changes, area) => {
-    const key = CONNECTION_KEYS.find((k) => changes[k]);
-    if (area !== "local" || !key) return;
-    const before = changes[key].oldValue?.[origin]?.address || null;
-    const after = changes[key].newValue?.[origin]?.address || null;
-    if (before === after) return;
-    if (after) toPage({ event: "accountsChanged", payload: [after] });
-    else {
-      toPage({ event: "accountsChanged", payload: [] });
-      toPage({ event: "disconnect", payload: null });
-    }
+  // Connecting, disconnecting, switching account or network: the background worker tells this
+  // tab (it only messages tabs of the origin concerned). This script never reads the wallet's
+  // storage - it can't: storage is limited to the extension's own pages (audit EXT-006).
+  const EVENTS = new Set(["accountsChanged", "disconnect", "networkChanged"]);
+  // Introduces this tab to the background, which keeps which tabs show which site.
+  try { Promise.resolve(api.runtime.sendMessage({ type: "site-hello" })).catch(() => {}); } catch { /* reloaded */ }
+  api.runtime.onMessage.addListener((message, sender) => {
+    if (sender?.id !== api.runtime.id || message?.type !== "kachat-site-event") return false;
+    if (message.origin !== origin || !EVENTS.has(message.event)) return false;
+    toPage({ event: message.event, payload: message.payload ?? null });
+    return false;
   });
 })();

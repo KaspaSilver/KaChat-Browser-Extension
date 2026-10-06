@@ -68,6 +68,7 @@ const signature = await window.kachat.signMessage("hello");    // asks the user
 await window.kachat.disconnect();
 window.kachat.on("accountsChanged", (accounts) => {});
 window.kachat.on("disconnect", () => {});
+window.kachat.on("networkChanged", (network) => {});   // "mainnet" | "testnet-10"
 ```
 
 Errors carry a `code`: `4001` rejected by the user, `4100` not connected, `4200` unsupported

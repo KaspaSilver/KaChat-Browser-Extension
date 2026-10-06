@@ -22,12 +22,23 @@ import { calculateMass, calculateFee, fetchQuotedFeeRateSompiPerGram } from "../
 import { looksLikeName, resolveEverywhere, primaryResolution, notFoundMessage, ownsAnyName, ownedNamesOfMany } from "./names.js";
 import { fetchKasPrice, peekKasPrice } from "../shared/engine/prices.js";
 import { getAddressInfo, fetchAddressInfo, peekAddressInfo, clearKnsCache } from "../shared/engine/kns.js";
-import { transferDomain as knsTransferDomain, setKnsPrimaryDomain } from "../shared/engine/kns-write.js";
-import { getLocal, setLocal } from "./browser.js";
+import {
+  transferDomain as knsTransferDomain, setKnsPrimaryDomain, setKnsPendingStorage, listPendingKnsTransfers,
+  resumeKnsTransfer, clearPendingKnsTransfer,
+} from "../shared/engine/kns-write.js";
+import { getLocal, setLocal, removeLocal } from "./browser.js";
 import { IS_TESTNET, NETWORK_ID, ADDRESS_PREFIX, netKey, MAINNET_REST, TESTNET_REST, MAINNET_KNS, TESTNET_KNS } from "./net.js";
 import { activeAccountSecrets, accountSecretsById } from "./vault.js";
 
 let kaspaPromise = null;
+
+// A .kas transfer is a commit then a reveal; its recovery record (audit EXT-005) lives in the
+// extension's own storage, so a popup closed between the two can still finish it.
+setKnsPendingStorage({
+  getItem: (key) => getLocal(key),
+  setItem: (key, value) => setLocal(key, value),
+  removeItem: (key) => removeLocal(key),
+});
 let rpc = null;
 let rpcPromise = null;
 
@@ -838,9 +849,13 @@ export async function revealSpendingAddress(index) {
  */
 export async function freshReceiveAddress() {
   const { account, state } = await activeState();
+  // Derived from the recovery phrase every time (audit EXT-006): a cached address that doesn't
+  // match is replaced, never shown.
   const addressAt = async (index) => {
     const cached = (await cachedAddresses(account.id))?.spending?.[index];
-    return cached || (await spendingAddressRange(index, 1))[index];
+    const derived = (await spendingAddressRange(index, 1))[index];
+    if (cached && cached !== derived) await cacheSpendingAddress(account.id, index, derived);
+    return derived;
   };
   if (Number.isInteger(state.receiveIndex)) {
     const address = await addressAt(state.receiveIndex);
@@ -998,9 +1013,12 @@ export async function transferDomain({ domain, assetId, toAddress, priorityFeeSo
       fresh = { accountId: account.id, index, address: (await spendingAddressRange(index, 1))[index] };
     }
   }
+  const account = await activeAccountSecrets();
   const result = await knsTransferDomain({
     engine, domain, assetId, toAddress,
     signer: { privateKey: engine.privateKey, address: engine.address },
+    // Who signs, so Finish transfer can rebuild the commit's key after a closed popup.
+    source: { kind: source?.kind || "main", index: source?.index ?? null, accountId: account.id },
     changeAddress: fresh?.address || null,
     revealPriorityFeeSompi: priorityFeeSompi,
     onStatus,
@@ -1011,6 +1029,30 @@ export async function transferDomain({ domain, assetId, toAddress, priorityFeeSo
     await cacheSpendingAddress(fresh.accountId, fresh.index, fresh.address);
   }
   return result;
+}
+
+/** Unfinished .kas transfers (commit sent, reveal not yet) of the active account on this network. */
+export async function pendingDomainTransfers() {
+  const account = await activeAccountSecrets();
+  return (await listPendingKnsTransfers()).filter((r) => !r.source?.accountId || r.source.accountId === account.id);
+}
+
+/** Finishes an unfinished transfer: reveals its commit with the key that sent it.
+ *  -> { status: "revealed" | "already-transferred" | "no-commit", ... } */
+export async function finishDomainTransfer(record, onStatus = () => {}) {
+  const source = record.source?.kind === "spending" ? { kind: "spending", index: record.source.index } : { kind: "main" };
+  const engine = await knsEngine(source);
+  return resumeKnsTransfer({
+    engine, assetId: record.assetId,
+    signer: { privateKey: engine.privateKey, address: engine.address },
+    onStatus,
+    log: (...parts) => console.info("[KaChat Wallet]", ...parts),
+  });
+}
+
+/** Forgets an unfinished transfer whose commit was never found on chain. */
+export function discardDomainTransfer(assetId) {
+  return clearPendingKnsTransfer(assetId);
 }
 
 // --- Chatting address picker (iOS ChattingAddressPickerView) ---------------------------------

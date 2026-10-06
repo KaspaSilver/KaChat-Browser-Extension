@@ -1,7 +1,7 @@
 // Shared screen plumbing for the popup: rendering, the toast, clipboard, the iOS-style
 // navigation header, SF-Symbol-like icons, and the address QR screen.
 
-import { tellBackground, getLocal, setLocal } from "./browser.js";
+import { ext, tellBackground, getLocal, setLocal } from "./browser.js";
 import { drawKaspaQr } from "../shared/engine/qr.js";
 import { formatKas } from "./wallet.js";
 import { IS_TESTNET, kasLabel } from "./net.js";
@@ -105,14 +105,15 @@ export async function saveSettings(patch) {
 export async function copySecret(text, message) {
   try {
     await navigator.clipboard.writeText(text);
-    toast(message);
   } catch {
     toast("Couldn't copy - select and copy it instead");
     return;
   }
-  setTimeout(async () => {
-    try { if ((await navigator.clipboard.readText()) === text) await navigator.clipboard.writeText(""); } catch { /* not focused */ }
-  }, 30_000);
+  // The popup closes as soon as you click away to paste, so the clipboard is cleared by the
+  // background worker 30 s later, through an offscreen page (audit EXT-003). A browser without
+  // offscreen pages (Firefox) can't, and the message says so instead of promising it.
+  const reply = await ext.runtime.sendMessage({ type: "clear-clipboard-soon" }).catch(() => null);
+  toast(reply?.supported ? message : message.replace(/\s*Clipboard will clear in 30s\.?/, " Clear your clipboard after pasting: this browser doesn't let KaChat Wallet clear it."));
 }
 
 /**
@@ -353,7 +354,7 @@ export function showQrPending({ failed = false, onBack }) {
   render(`
     ${navHeader({})}
     <section class="qr-page">
-      ${failed ? '<p class="qr-note">Spending address is unlocking — go back and try again.</p>' : '<span class="spinner dark-spinner"></span><p class="qr-note">Preparing a fresh address</p>'}
+      ${failed ? '<p class="qr-note">Spending address is unlocking. Go back and try again.</p>' : '<span class="spinner dark-spinner"></span><p class="qr-note">Preparing a fresh address</p>'}
     </section>`, "qr");
   $("#back").onclick = onBack;
 }

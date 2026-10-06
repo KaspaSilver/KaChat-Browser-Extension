@@ -18,6 +18,7 @@ import { KachatNamesRegistry } from "../shared/engine/kachat-names/registry.js";
 import { KachatNamesActions } from "../shared/engine/kachat-names/actions.js";
 import { KachatSocialImageResolver } from "../shared/engine/kachat-names/social-image-resolver.js";
 import { chattingSigner, namesNodeMethods, cachedAddresses, privateKeyHex } from "./wallet.js";
+import { ext } from "./browser.js";
 import { readAccounts } from "./vault.js";
 
 const localStorageAdapter = {
@@ -160,14 +161,33 @@ export async function kachatLabelOf(address) {
 
 // --- Social profiles (iOS KachatSocialImageResolver) ---------------------------------------
 //
-// A .kachat profile's avatar, banner and bio come from social profile links, looked up on this
-// device (shared/engine/kachat-names/social-image-resolver.js). The wallet reads the platforms'
-// pages directly: its website-connect content scripts already give it access to https sites, so
-// nothing more is asked for. An extension can't pick a User-Agent, so the resolver's "crawler"
-// hint is not honored: pages answer as they do to a browser (Facebook's profile pictures, which
-// it serves only to its own crawler, may not show).
+// A KaChat profile's avatar, banner and bio come from social profile links, looked up on this
+// device (shared/engine/kachat-names/social-image-resolver.js). Those reads use their own optional
+// host permissions, asked once when you allow profile pictures (audit EXT-004) - never the
+// website-connect content scripts' access. Until you allow them nothing is fetched from those
+// sites. An extension can't pick a User-Agent, so the resolver's "crawler" hint is not honored:
+// pages answer as they do to a browser (Facebook's profile pictures may not show).
+
+/** Every site a profile lookup reads (pictures themselves load as plain images). */
+export const SOCIAL_ORIGINS = [
+  "https://x.com/*", "https://api.fxtwitter.com/*", "https://www.youtube.com/*", "https://discord.com/*",
+  "https://api.github.com/*", "https://t.me/*", "https://kick.com/*", "https://www.twitch.tv/*",
+  "https://www.instagram.com/*", "https://www.tiktok.com/*", "https://www.facebook.com/*", "https://www.linkedin.com/*",
+];
+
+/** Whether you allowed profile lookups on the social sites. */
+export async function socialLookupsAllowed() {
+  try { return await ext.permissions.contains({ origins: SOCIAL_ORIGINS }); } catch { return false; }
+}
+
+/** Asks the browser for the social sites (call from a click). Resolves whether they were granted. */
+export async function allowSocialLookups() {
+  try { return await ext.permissions.request({ origins: SOCIAL_ORIGINS }); } catch { return false; }
+}
 
 async function fetchText(url, { accept, timeoutMs = 8000, maxBytes = 3_000_000, signal } = {}) {
+  // Only with the permission you granted for profile lookups (audit EXT-004).
+  if (!(await socialLookupsAllowed())) return null;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   const onAbort = () => controller.abort();

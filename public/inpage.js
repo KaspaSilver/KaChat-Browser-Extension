@@ -13,12 +13,13 @@
 //   await kachat.sendKaspa(to, sompi, { priorityFee })  -> txid   (asks the user)
 //   await kachat.signMessage(text)            -> signature hex    (asks the user)
 //   await kachat.disconnect()
-//   kachat.on("accountsChanged" | "disconnect", handler) / kachat.removeListener(...)
+//   kachat.on("accountsChanged" | "disconnect" | "networkChanged", handler) / kachat.removeListener(...)
+//     networkChanged gets "mainnet" | "testnet-10" when the wallet switches networks.
 (() => {
   if (window.kachat) return;
   const CHANNEL = "kachat-wallet";
   const pending = new Map();
-  const listeners = { accountsChanged: new Set(), disconnect: new Set() };
+  const listeners = { accountsChanged: new Set(), disconnect: new Set(), networkChanged: new Set() };
   let nextId = 1;
 
   class KaChatWalletError extends Error {

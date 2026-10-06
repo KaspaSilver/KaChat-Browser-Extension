@@ -27,6 +27,7 @@ import { showSend } from "./send.js";
 import { kachatWordmark } from "./market.js";
 import { addressNamesTab, showLiveNameDetail } from "./kachat-live.js";
 import { kachatRegistry } from "./kachat-names.js";
+import { followAccount } from "./approve.js";
 import { showAddToPortfolio } from "./portfolio.js";
 
 // SF Symbols these screens use, drawn to match.
@@ -1018,6 +1019,8 @@ function showIdentityDetail({ row, current, onBack, onChanged }) {
       const view = await vault.readAccounts();
       await vault.setIdentityIndex(view.activeAccountId, row.index);
       await wallet.deriveAddresses();
+      // Connected websites follow the account to its new chatting address (audit EXT-001).
+      await followAccount(view.activeAccountId);
       toast(`Chatting address set to #${row.index}.`);
       onChanged();
     } catch (error) {

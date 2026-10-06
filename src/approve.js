@@ -6,7 +6,7 @@
 // or title can't stand in for it. The page's own words (a message to sign) are shown as plain
 // text, never markup.
 
-import { netKey } from "./net.js";
+import { netKey, reencodeAddress } from "./net.js";
 import * as vault from "./vault.js";
 import * as wallet from "./wallet.js";
 import { ext, getLocal, setLocal } from "./browser.js";
@@ -25,11 +25,41 @@ export async function removeConnection(origin) {
   await setLocal(CONNECTIONS_KEY, all);
 }
 
-/** Drops every site connected to an account (the account was removed). */
+// Both networks' connection maps, with the address prefix each one hands out.
+const NETWORK_CONNECTIONS = [["kachat.connections", "kaspa"], ["kachat.connections.testnet", "kaspatest"]];
+
+/** Drops every site connected to an account (the account was removed) - on BOTH networks, so the
+ *  other network can't keep serving a removed account (audit EXT-002). null drops them all. */
 export async function removeConnectionsFor(accountId) {
-  const all = await connections();
-  for (const [origin, entry] of Object.entries(all)) if (!accountId || entry.accountId === accountId) delete all[origin];
-  await setLocal(CONNECTIONS_KEY, all);
+  for (const [key] of NETWORK_CONNECTIONS) {
+    const all = (await getLocal(key)) || {};
+    for (const [origin, entry] of Object.entries(all)) if (!accountId || entry.accountId === accountId) delete all[origin];
+    await setLocal(key, all);
+  }
+}
+
+/**
+ * Sites follow the account, not a frozen address (audit EXT-001): after Change Chatting Address
+ * every connection of `accountId` (both networks) gets the account's current chatting address and
+ * public key, and content.js tells each site with accountsChanged.
+ */
+export async function followAccount(accountId, identity = null) {
+  const current = identity || await wallet.identityFor(accountId);
+  for (const [key, hrp] of NETWORK_CONNECTIONS) {
+    const all = (await getLocal(key)) || {};
+    let changed = false;
+    for (const entry of Object.values(all)) {
+      if (entry.accountId !== accountId) continue;
+      const address = reencodeAddress(current.address, hrp) || current.address;
+      if (entry.address !== address || entry.publicKey !== current.publicKey) {
+        entry.address = address;
+        entry.publicKey = current.publicKey;
+        changed = true;
+      }
+    }
+    if (changed) await setLocal(key, all);
+  }
+  return current;
 }
 
 function siteHeader(origin) {
@@ -185,7 +215,15 @@ async function connectionFor(request, reject) {
   if (!connection) { toast("This site is no longer connected."); reject(); return null; }
   const view = await vault.readAccounts();
   if (!view.accounts.some((a) => a.id === connection.accountId)) { toast("The connected account was removed."); reject(); return null; }
-  return { ...connection, accountName: view.accounts.find((a) => a.id === connection.accountId)?.name || connection.accountName };
+  // The address and key the request will really use: the account's chatting address now. A
+  // connection still on an older one is brought up to date first (audit EXT-001).
+  const identity = await followAccount(connection.accountId);
+  return {
+    ...connection,
+    address: identity.address,
+    publicKey: identity.publicKey,
+    accountName: view.accounts.find((a) => a.id === connection.accountId)?.name || connection.accountName,
+  };
 }
 
 // --- send Kaspa -------------------------------------------------------------------------------

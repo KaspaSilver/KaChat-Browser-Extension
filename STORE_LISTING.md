@@ -56,7 +56,15 @@ the user's approval.
 
 - `storage` - Stores the password-encrypted wallet (recovery phrases), account names, derived
   public addresses, settings and connected websites in the browser.
-- `alarms` - Locks the wallet automatically after the auto-lock time the user chooses.
+- `alarms` - Locks the wallet automatically after the auto-lock time the user chooses, and
+  schedules the clipboard clear below.
+- `offscreen`, `clipboardWrite` - 30 seconds after the user copies their recovery phrase or a
+  private key, an offscreen page clears the clipboard (the popup has closed by then). Chrome / Edge
+  only; Firefox has no offscreen pages, so there the wallet tells the user to clear it themselves.
+- Host permissions `kachat.duckdns.org`, `tnkachat.duckdns.org` - KaChat's own indexer: reads the
+  public KaChat profile (avatar, banner and bio links, Linktree, .kachat name) of the user's own
+  chatting address for the Profile screen, and .kachat names on testnet. The request carries that
+  public address.
 - Host permission `api.kaspa.org` - Kaspa REST API: transaction history and address usage.
 - Host permissions `*.kaspa.green`, `*.kaspa.red`, `*.kaspa.stream`, `*.kaspa.blue`, `*.kaspa.ws` -
   the public Kaspa node resolver and nodes, for balances and sending transactions.
@@ -69,27 +77,34 @@ the user's approval.
 - Host permissions `api.gateio.ws`, `query1.finance.yahoo.com` - Portfolio: long-range KAS price history (fallback) and the comparison charts (VOO, gold, silver).
 - Content scripts on `https://*/*` (and localhost) - provide `window.kachat`, the interface Kaspa
   websites use to ask the wallet for a connection, payment or signature. The scripts only relay
-  those requests; they do not read or change page content. Every request needs the user's
-  approval in the wallet.
+  those requests; they do not read or change page content, and the wallet uses this access for
+  nothing else. Every request needs the user's approval in the wallet.
+- Optional host permissions `x.com`, `api.fxtwitter.com`, `www.youtube.com`, `discord.com`,
+  `api.github.com`, `t.me`, `kick.com`, `www.twitch.tv`, `www.instagram.com`, `www.tiktok.com`,
+  `www.facebook.com`, `www.linkedin.com` - requested only when the user taps Allow in Edit KaChat
+  Profile: the wallet reads the public profile pages the user linked, to show that profile's
+  picture, banner or bio. Nothing is read from those sites until then.
 - Optional host permission `https://*/*` - requested only when the user sets a custom Kaspa REST
   API in Settings, for that one address.
 
 **Remote code:** No. All code, including the Kaspa WebAssembly module, is in the package.
 (`wasm-unsafe-eval` in the CSP lets the bundled WebAssembly compile; nothing is fetched and run.)
 
-**Data usage:** The developer collects no user data. Public Kaspa addresses are sent to the
-Kaspa network and the APIs above to show balances and send transactions - the user's own
-requests to third-party services, not collection by the developer. If the form insists on a
-category, the closest is "Financial and payment information" (blockchain addresses), with "not
-sold", "not used for unrelated purposes" and "not used for creditworthiness" all certified.
-Your call - review it before submitting.
+**Data usage:** Category: "Financial and payment information" (public blockchain addresses).
+Public Kaspa addresses are sent to the Kaspa network and the APIs above to show balances and send
+transactions, and the user's chatting address is sent to KaChat's indexer (`kachat.duckdns.org`)
+to read its public KaChat profile. Nothing else is sent, nothing is stored about the user, and
+the address is not sold, not used for unrelated purposes and not used for creditworthiness.
+Like any web request, these services see the user's IP address.
 
 ## Firefox Add-ons
 
 - **Add-on ID:** `wallet@kachat.app` (in the Firefox manifest; do not change it after the first
   upload).
 - **Minimum Firefox:** 128 (needs `world: "MAIN"` content scripts and `storage.session`).
-- **Data collection declaration:** `none` (in the manifest's `data_collection_permissions`).
+- **Data collection declaration:** `financialAndPaymentInfo` (required: public Kaspa addresses go
+  to the Kaspa APIs and nodes, and the chatting address to KaChat's indexer for its profile), in
+  the manifest's `data_collection_permissions`.
 - **Source code:** AMO asks for it because the upload is bundled/minified. Upload the source zip
   and paste these build notes:
 

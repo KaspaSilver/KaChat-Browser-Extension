@@ -16,6 +16,7 @@
 import { ext } from "./browser.js";
 
 const ALARM = "kachat.autolock";
+const CLIPBOARD_ALARM = "kachat.clear-clipboard";
 const SETTINGS_KEY = "kachat.settings";
 const DEFAULT_AUTOLOCK_MINUTES = 15;
 
@@ -119,7 +120,10 @@ async function openApproval(origin, kind, params) {
 }
 
 async function handleSiteRequest(method, params, origin) {
-  const connection = (await connections())[origin] || null;
+  let connection = (await connections())[origin] || null;
+  // A connection to an account no longer in the vault is no connection (audit EXT-002).
+  const accountIds = (await ext.storage.local.get("kachat.accountIds"))["kachat.accountIds"];
+  if (connection && Array.isArray(accountIds) && !accountIds.includes(connection.accountId)) connection = null;
   const open = connection && (await isUnlocked());
   switch (method) {
     case "getNetwork":
@@ -166,8 +170,19 @@ async function handleSiteRequest(method, params, origin) {
 ext.runtime.onMessage.addListener((message, sender, sendResponse) => {
   switch (message?.type) {
     case "activity": armAutoLock(); return false;
+    case "clear-clipboard-soon": {
+      // A recovery phrase or private key was copied: clear the clipboard in 30 s (audit EXT-003).
+      if (!fromExtensionPage(sender) || !ext.offscreen?.createDocument) { sendResponse({ supported: false }); return false; }
+      ext.alarms.create(CLIPBOARD_ALARM, { when: Date.now() + 30_000 });
+      sendResponse({ supported: true });
+      return false;
+    }
     case "lock": lockNow(); return false;
+    case "site-hello":
+      rememberSiteTab(sender).catch(() => {});
+      return false;
     case "dapp-request": {
+      rememberSiteTab(sender).catch(() => {});
       const origin = siteOrigin(sender);
       if (!origin) { sendResponse({ error: { code: 4100, message: "Requests are only accepted from the page itself." } }); return false; }
       handleSiteRequest(String(message.method || ""), Array.isArray(message.params) ? message.params : [], origin)
@@ -201,6 +216,103 @@ ext.windows?.onRemoved?.addListener((windowId) => {
 
 ext.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === ALARM) lockNow();
+  if (alarm.name === CLIPBOARD_ALARM) clearClipboard();
+});
+
+/** Empties the clipboard from an offscreen page - it needs no focus and outlives the popup. It
+ *  writes an empty string without reading first, so a copy made in the 30 s is cleared too. */
+async function clearClipboard() {
+  if (!ext.offscreen?.createDocument) return;
+  try {
+    await ext.offscreen.createDocument({
+      url: "offscreen.html",
+      reasons: ["CLIPBOARD"],
+      justification: "Clears a copied recovery phrase or private key from the clipboard after 30 seconds.",
+    });
+  } catch { /* already open */ }
+  try { await ext.runtime.sendMessage({ type: "offscreen-clear-clipboard" }); } catch { /* the page wasn't ready */ }
+  try { await ext.offscreen.closeDocument(); } catch { /* already closed */ }
+}
+
+// --- Storage stays with the extension (audit EXT-006) ---------------------------------------
+// Content scripts run inside web pages' processes, so they get no access to storage.local (the
+// encrypted vault, connections, cached addresses, settings). Where the browser can't restrict it,
+// the website script still never reads it.
+function lockStorageToExtension() {
+  try {
+    const result = ext.storage.local.setAccessLevel?.({ accessLevel: "TRUSTED_CONTEXTS" });
+    result?.catch?.(() => {});
+  } catch { /* not supported here */ }
+}
+lockStorageToExtension();
+ext.runtime.onInstalled?.addListener(lockStorageToExtension);
+
+// --- Telling sites what changed (audits EXT-006, EXT-007) -----------------------------------
+// A site hears accountsChanged / disconnect when its connection changes, and networkChanged when
+// the wallet switches networks - sent only to tabs of that site's origin.
+
+// Which tabs show which site: each page's script says hello (and every request carries its tab);
+// the origin comes from the browser, never the page. Kept in storage.session (extension-only).
+const SITE_TABS_KEY = "kachat.siteTabs";
+
+async function rememberSiteTab(sender) {
+  const origin = siteOrigin(sender);
+  const tabId = sender?.tab?.id;
+  if (!origin || tabId == null) return;
+  const map = (await ext.storage.session.get(SITE_TABS_KEY))[SITE_TABS_KEY] || {};
+  if (map[tabId] === origin) return;
+  map[tabId] = origin;
+  await ext.storage.session.set({ [SITE_TABS_KEY]: map });
+}
+
+ext.tabs?.onRemoved?.addListener(async (tabId) => {
+  const map = (await ext.storage.session.get(SITE_TABS_KEY))[SITE_TABS_KEY] || {};
+  if (!(tabId in map)) return;
+  delete map[tabId];
+  await ext.storage.session.set({ [SITE_TABS_KEY]: map });
+});
+
+async function tellSite(origin, event, payload) {
+  const map = (await ext.storage.session.get(SITE_TABS_KEY))[SITE_TABS_KEY] || {};
+  for (const [tabId, tabOrigin] of Object.entries(map)) {
+    if (tabOrigin !== origin) continue;
+    try {
+      await ext.tabs.sendMessage(Number(tabId), { type: "kachat-site-event", origin, event, payload });
+    } catch { /* the tab navigated away or closed */ }
+  }
+}
+
+const CONNECTION_KEYS = { "kachat.connections": "mainnet", "kachat.connections.testnet": "testnet" };
+
+ext.storage.onChanged.addListener(async (changes, area) => {
+  if (area !== "local") return;
+  const testnet = await onTestnet();
+  for (const [key, network] of Object.entries(CONNECTION_KEYS)) {
+    // Only the network the wallet is on: the other one's sites aren't answered now.
+    if (!changes[key] || (network === "testnet") !== testnet) continue;
+    const before = changes[key].oldValue || {};
+    const after = changes[key].newValue || {};
+    for (const origin of new Set([...Object.keys(before), ...Object.keys(after)])) {
+      const was = before[origin]?.address || null;
+      const now = after[origin]?.address || null;
+      if (was === now) continue;
+      if (now) tellSite(origin, "accountsChanged", [now]);
+      else { tellSite(origin, "accountsChanged", []); tellSite(origin, "disconnect", null); }
+    }
+  }
+  const networkChange = changes["kachat.network"];
+  if (networkChange && networkChange.oldValue !== networkChange.newValue) {
+    const nowTestnet = networkChange.newValue === "testnet";
+    const all = await ext.storage.local.get(Object.keys(CONNECTION_KEYS));
+    const current = all[nowTestnet ? "kachat.connections.testnet" : "kachat.connections"] || {};
+    const origins = new Set([...Object.keys(all["kachat.connections"] || {}), ...Object.keys(all["kachat.connections.testnet"] || {})]);
+    for (const origin of origins) {
+      tellSite(origin, "networkChanged", nowTestnet ? "testnet-10" : "mainnet");
+      const address = current[origin]?.address || null;
+      if (address) tellSite(origin, "accountsChanged", [address]);
+      else { tellSite(origin, "accountsChanged", []); tellSite(origin, "disconnect", null); }
+    }
+  }
 });
 
 // A browser restart already empties storage.session; this also clears a leftover alarm.

@@ -285,8 +285,9 @@ function paintHome() {
       onBack: showHome,
     });
   };
-  if (main) $("#chatting-qr").onclick = () => showQr({
-    address: main,
+  // Shown from the recovery phrase, not only the cache (audit EXT-006).
+  if (main) $("#chatting-qr").onclick = async () => showQr({
+    address: (await wallet.identityFor(s.account.id).catch(() => null))?.address || main,
     balanceSompi: mainSompi,
     note: "This address should be for chatting and domains only. 1 Kaspa is enough for about 500 interactions in the app. Domains cost from 35 to 4,000 Kaspa, depending on the name.",
     onBack: paintHome,

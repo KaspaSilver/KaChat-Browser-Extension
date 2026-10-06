@@ -14,7 +14,7 @@
 
 import { remember } from "./dock.js";
 import * as wallet from "./wallet.js";
-import { app, esc, render, $, toast, ICONS, navHeader } from "./ui.js";
+import { app, esc, render, $, toast, showAlert, ICONS, navHeader } from "./ui.js";
 import * as names from "./names.js";
 import { kachatRegistry } from "./kachat-names.js";
 import { showKachatMarket } from "./market.js";
@@ -52,6 +52,10 @@ export function showDomains({ address, onBack }) {
   };
   const back = () => showDomains({ address, onBack });
   const here = () => app.dataset.screen === "domains";
+  const loadPending = () => wallet.pendingDomainTransfers()
+    .then((pending) => { state.pending = pending; if (here()) paint(); })
+    .catch(() => {});
+  loadPending();
 
   const getNameButton = (tld) => {
     const info = names.service(tld);
@@ -61,10 +65,11 @@ export function showDomains({ address, onBack }) {
 
   const kasTab = () => {
     const list = state.data?.domains || [];
-    if (state.error) return `<p class="error">${esc(state.error)}</p>`;
+    const pending = (state.pending || []).map(pendingCardHtml).join("");
+    if (state.error) return `${pending}<p class="error">${esc(state.error)}</p>`;
     if (!state.data && state.loading) return '<div class="center-text"><span class="spinner"></span></div>';
-    if (!list.length) return '<p class="muted center-text">No domains yet.</p>';
-    return list.map((domain, i) => `
+    if (!list.length) return `${pending}<p class="muted center-text">No domains yet.</p>`;
+    return pending + list.map((domain, i) => `
       <button class="domain-button" data-i="${i}" aria-label="${esc(domain.fullName)}">
         ${cardHtml(domain, sameDomain(domain.fullName, state.data.primaryDomain))}
       </button>`).join("");
@@ -114,6 +119,12 @@ export function showDomains({ address, onBack }) {
     }
     const retry = $("#retry");
     if (retry) retry.onclick = loadOwned;
+    for (const b of app.querySelectorAll("[data-finish]")) {
+      b.onclick = () => {
+        const record = (state.pending || []).find((r) => r.assetId === b.dataset.finish);
+        if (record) finishTransfer(record, () => { loadPending(); back(); });
+      };
+    }
     if (selectedTab === "kachat" && liveTab) liveTab.bind(app, { openName: (info) => showLiveNameDetail({ info, onBack: back }) });
     // Inscribe (iOS e4da63d): the .kachat marketplace; a new name shows here on the way back.
     const inscribe = $("#inscribe");
@@ -255,6 +266,53 @@ const STAGES = {
   revealed: ["Confirming the new owner", 0.95],
   verifying: ["Confirming the new owner", 0.95],
 };
+
+// --- Unfinished transfers (audit EXT-005) ----------------------------------------------------
+// A transfer whose commit went out but whose reveal didn't (a closed popup, a refused reveal) is
+// kept in storage; Finish Transfer reveals it with the key that sent it. Its 2 KAS are safe.
+
+function pendingCardHtml(record) {
+  return `
+    <div class="glass pending-transfer">
+      <div class="strong small">Unfinished transfer: ${esc(record.domain || "domain")}</div>
+      <div class="muted tiny">To ${esc(wallet.shortAddress(record.recipient || ""))}. The commit was sent but the reveal didn't go through; your 2 KAS are safe.</div>
+      <div class="pending-buttons"><button class="small-button" data-finish="${esc(record.assetId)}">Finish Transfer</button></div>
+    </div>`;
+}
+
+/** Runs Finish Transfer for `record` on a progress screen, then calls `after`. */
+async function finishTransfer(record, after) {
+  const progress = (status) => {
+    const [title, fraction] = STAGES[status] || ["Finishing transfer", 0.5];
+    render(`
+      <section class="screen progress-sheet">
+        <h2 class="center-text">Finishing ${esc(record.domain || "transfer")}</h2>
+        <div class="progress"><div class="progress-bar" style="width:${Math.round(fraction * 100)}%"></div></div>
+        <p class="center-text">${esc(title)}</p>
+        <p class="muted small center-text">Revealing the commit that was already sent. Keep this window open until it finishes.</p>
+      </section>`, "send-domain-progress");
+  };
+  progress("revealing");
+  try {
+    const result = await wallet.finishDomainTransfer(record, ({ status }) => progress(status));
+    if (result.status === "no-commit") {
+      showAlert({
+        title: "No Commit Found",
+        message: "The commit for this transfer isn't on chain, so nothing was spent. If you just sent it, wait a minute and try again; otherwise you can forget this transfer.",
+        confirmLabel: "Forget It", cancelLabel: "Keep",
+        onConfirm: async () => { await wallet.discardDomainTransfer(record.assetId); after(); },
+      });
+      after();
+      return;
+    }
+    toast(result.status === "already-transferred" ? `${record.domain} already belongs to the recipient.` : `${record.domain} transferred.`);
+    if (result.revealTxid) showDomainSent({ txid: result.revealTxid, onDone: after });
+    else after();
+  } catch (error) {
+    toast(String(error?.message || error));
+    after();
+  }
+}
 
 /** Send Domain. `source` is the owner: the chatting address, or { kind: "spending", index }. */
 export function showSendDomain({ domain, onBack, onSent, source = { kind: "main" } }) {
@@ -423,6 +481,20 @@ export function showSendDomain({ domain, onBack, onSent, source = { kind: "main"
       showDomainSent({ txid: result.revealTxid, onDone: onSent });
     } catch (error) {
       console.warn("[KaChat Wallet] domain transfer failed:", error);
+      // The commit went out (or a transfer of this domain is already unfinished): never commit
+      // again - finish that one instead (audit EXT-005).
+      if ((error?.code === "knsTransferRevealPending" || error?.code === "knsTransferPending") && error.pendingTransfer) {
+        state.sending = false;
+        showAlert({
+          title: "Finish the Transfer",
+          message: String(error.message || ""),
+          confirmLabel: error.code === "knsTransferRevealPending" ? "Retry Reveal" : "Finish Transfer",
+          cancelLabel: "Later",
+          onConfirm: () => finishTransfer(error.pendingTransfer, onSent),
+        });
+        onBack();
+        return;
+      }
       state.sending = false;
       state.error = String(error?.message || error);
       paint();

@@ -7,7 +7,7 @@
 
 import { esc, ICONS } from "./ui.js";
 import { openPanel } from "./kachat-ui.js";
-import { kachatLaunched, kachatProfiles, kachatSocial, ownKachatProfile } from "./kachat-names.js";
+import { kachatLaunched, kachatProfiles, kachatSocial, ownKachatProfile, socialLookupsAllowed, allowSocialLookups } from "./kachat-names.js";
 import { openProfileSaveSheet } from "./kachat-live.js";
 import { Profile, SocialKind, SocialPlatform, SocialSource } from "../shared/engine/kachat-names/registry-state.js";
 import { KachatNamesRegistry } from "../shared/engine/kachat-names/registry.js";
@@ -50,7 +50,7 @@ function showLiveProfileEditor({ onSaved }) {
   const resolver = kachatSocial();
   const fields = {};
   for (const kind of KINDS) fields[kind] = { platform: "x", handle: "", lookup: "none", resolved: null, key: "", timer: null };
-  const state = { linktree: "", primary: "", activeNames: [], loaded: false, error: null };
+  const state = { linktree: "", primary: "", activeNames: [], loaded: false, error: null, allowed: true };
   let handle = null;
   let panel = null;
 
@@ -88,6 +88,14 @@ function showLiveProfileEditor({ onSaved }) {
     if (field.lookup === "empty") {
       return `<div class="form-row kp-preview muted">${NO_PERSON}<span class="small">No ${esc(kind)} on this ${esc(name)} profile.</span></div>`;
     }
+    // Never asked: profile lookups need the linked sites' permission first (audit EXT-004).
+    if (!state.allowed) {
+      return `
+        <div class="form-row kp-preview muted">
+          ${NO_WIFI}<span class="small kp-grow">Allow profile lookups to see what ${esc(name)} shows.</span>
+          <button class="bar-text strong" data-allow>Allow</button>
+        </div>`;
+    }
     return `
       <div class="form-row kp-preview muted">
         ${NO_WIFI}<span class="small kp-grow">Couldn't reach ${esc(name)}.</span>
@@ -95,11 +103,19 @@ function showLiveProfileEditor({ onSaved }) {
       </div>`;
   };
 
+  /** Asks the browser for the social sites once (a click), then looks every linked field up. */
+  const allow = async () => {
+    if (!(await allowSocialLookups())) return;
+    state.allowed = true;
+    for (const kind of KINDS) if (!isEmpty(fields[kind])) lookup(kind, 0);
+  };
+
   const paintPreview = (kind) => {
     if (!handle?.isOpen()) return;
     const host = panel.querySelector(`[data-preview="${kind}"]`);
     host.innerHTML = previewHtml(kind);
     host.querySelector("[data-retry]")?.addEventListener("click", () => lookup(kind, 0));
+    host.querySelector("[data-allow]")?.addEventListener("click", allow);
     const note = panel.querySelector(`[data-bad="${kind}"]`);
     note.hidden = !isBad(fields[kind], kind);
     paintSave();
@@ -208,7 +224,7 @@ function showLiveProfileEditor({ onSaved }) {
           <span class="accent">${PERSON_TEXT}</span>
           <span class="small">Your profile belongs to your address, not to a name: it stays the same when you buy, sell or let a name go.</span>
         </div></div>
-        <div class="form-footer">Each piece comes from a social profile you link, exactly as that platform shows it, so its moderation applies here too. You can use one account for all three, or mix them.</div>
+        <div class="form-footer">Each piece comes from a social profile you link, exactly as that platform shows it, so its moderation applies here too. You can use one account for all three, or mix them. To show them, KaChat Wallet reads those public profile pages once you allow it.</div>
       </div>
       ${KINDS.map(sourceSection).join("")}
       <div class="form-section">
@@ -261,6 +277,7 @@ function showLiveProfileEditor({ onSaved }) {
   paintSave();
 
   (async () => {
+    state.allowed = await socialLookupsAllowed();
     try {
       const rt = await kachatProfiles();
       const address = rt.actions.myAddress;
