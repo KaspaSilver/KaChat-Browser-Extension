@@ -500,6 +500,8 @@ export function showColdSend(opts) {
           <div><span>Available</span><span>${esc(formatKas8(opts.availableSompi))} KAS</span></div>
           <div><span>Network Fee</span><span>${esc(formatKas8(s.unsigned.feeSompi))} KAS</span></div>
         </div>
+        ${s.unsigned.foldedChangeSompi > 0n ? `
+          <p class="cold-fee-warning" role="note">This fee includes ${esc(formatKas8(s.unsigned.foldedChangeSompi))} KAS of change that is too small for the network to accept as its own output, so it goes to the network instead of back to this address.</p>` : ""}
         <p class="cold-sign-hint">Scan this on your KasSigner device</p>
         <div class="cold-sign-frame"><canvas id="kspt-qr" width="560" height="560" aria-label="Unsigned transaction QR"></canvas></div>
         ${many ? `

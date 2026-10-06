@@ -16,7 +16,8 @@ import * as vault from "./vault.js";
 import * as wallet from "./wallet.js";
 import { kachatNames, kachatProfiles, kachatRegistry, kachatLaunched, prepareSigner } from "./kachat-names.js";
 import { SYMBOLS, openPanel, kachatWordmark, showTileSheet } from "./kachat-ui.js";
-import { Operation, Stage, isOpen, needsDriving, KachatNamesActions } from "../shared/engine/kachat-names/actions.js";
+import { Operation, Stage, isOpen, needsDriving, KachatNamesActions, recordPrice } from "../shared/engine/kachat-names/actions.js";
+import { paramsExpiresSoonMs } from "../shared/engine/kachat-names/manifest.js";
 import { KachatNamesRegistry } from "../shared/engine/kachat-names/registry.js";
 import { Status, Profile, SocialKind, SocialPlatform, SocialSource } from "../shared/engine/kachat-names/registry-state.js";
 import { normalize, unhex32, p2pkScript, bytesEqual, yearMs, tier } from "../shared/engine/kachat-names/codec.js";
@@ -519,6 +520,9 @@ export function registrationCardsHtml() {
       ? '<span class="spinner small-spin"></span>'
       : r.stage === Stage.registered ? `<span class="kl-green">${SYMBOLS.seal}</span>` : `<span class="kl-orange">${SYMBOLS.alertCircle}</span>`;
     let stage = STAGE_TEXT[r.stage] || "";
+    if (r.stage === Stage.priceChanged) {
+      stage = `The price changed to ${amount(recordPrice(r.priceChangedTo) ?? 0n)} since you confirmed, so nothing was sent. Confirm the new price to continue, or cancel the commit.`;
+    }
     if (r.stage === Stage.waiting) {
       stage = r.commitDaa == null
         ? "Waiting for the commit to confirm..."
@@ -539,6 +543,13 @@ export function registrationCardsHtml() {
       buttons = `<div class="kl-buttons">
         ${finishedTx(r) ? `<button class="km-prominent small-button" data-reg-view="${esc(r.id)}">View Transaction</button>` : ""}
         <button class="km-bordered small-button" data-reg-done="${esc(r.id)}">Done</button>
+      </div>`;
+    }
+    else if (r.stage === Stage.priceChanged) {
+      // paying more than confirmed is a new approval (iOS 4f5d95e, IOS-054)
+      buttons = `<div class="kl-buttons">
+        <button class="km-prominent small-button" data-reg-newprice="${esc(r.id)}" ${working ? "disabled" : ""}>Confirm New Price</button>
+        <button class="km-bordered small-button danger-text" data-reg-cancel="${esc(r.id)}" ${working ? "disabled" : ""}>Cancel Commit</button>
       </div>`;
     }
     else if (r.stage === Stage.taken) buttons = `<button class="km-bordered small-button danger-text" data-reg-cancel="${esc(r.id)}" ${working ? "disabled" : ""}>Cancel Commit</button>`;
@@ -583,6 +594,15 @@ export function bindRegistrationCards(container) {
   const find = (id) => hub.pending.find((r) => r.id === id);
   for (const b of container.querySelectorAll("[data-reg-view]")) b.onclick = () => { const r = find(b.dataset.regView); const done = r && finishedTx(r); if (done) showTxDone(done); };
   for (const b of container.querySelectorAll("[data-reg-done]")) b.onclick = async () => (await runtime()).actions.dismiss(b.dataset.regDone);
+  // Continues at the new price: like any send, it asks for the password first (iOS authorizeNewPrice).
+  for (const b of container.querySelectorAll("[data-reg-newprice]")) {
+    b.onclick = async () => {
+      if (!(await confirmPassword())) return;
+      cardErrors.delete(b.dataset.regNewprice);
+      (await runtime()).actions.acceptNewPrice(b.dataset.regNewprice);
+      hub.changed();
+    };
+  }
   for (const b of container.querySelectorAll("[data-reg-retry]")) b.onclick = async () => (await runtime()).actions.retry(b.dataset.regRetry);
   for (const b of container.querySelectorAll("[data-reg-cancel]")) {
     b.onclick = async () => {
@@ -676,13 +696,16 @@ function offerExpiresIn(offer) {
 /** iOS KachatOfferRow (ba07975): the owner accepts with a click on the row or Accept, or declines
  *  from the menu; an expired offer goes back to its buyer on its own; one made to an earlier owner
  *  is declined and pulled back by the buyer's app. */
-function offerRowHtml(offer, { isBuyer, isOwner, declined = false }) {
+function offerRowHtml(offer, { isBuyer, isOwner, declined = false, nameInfo = null }) {
   const actions = runtimeActions();
   const daa = hub.virtualDaa ?? actions?.virtualDaa;
   const refundable = daa != null && offer.refundable(daa);
   const returning = Boolean(actions?.returningOffers?.has(offer.id));
   const withdrawing = Boolean(actions?.withdrawingOffers?.has(offer.id));
-  const acceptable = isOwner && !refundable && !declined;
+  // ...and the name itself still active: an expired name would reach the buyer only to be
+  // reclaimed (iOS 71128c4, IOS-055)
+  const nameActive = Boolean(nameInfo && statusOf(nameInfo) === Status.active);
+  const acceptable = isOwner && !refundable && !declined && nameActive;
   const who = isBuyer ? "Your offer" : (addressOf(offer.buyer) ? shortAddress(addressOf(offer.buyer)) : "");
   let state = "";
   if (declined || withdrawing) {
@@ -893,13 +916,24 @@ function openTxSheet({ title, confirmTitle, doneTitle = "Transaction sent", warn
     paint();
     try {
       await prepareSigner(op);
-      const id = await (await runtime()).actions.perform(op);
+      // never pays more than the price shown (the price record can change at any time; iOS 4f5d95e)
+      const maxPrice = typeof state.plan?.priceFee === "bigint" ? state.plan.priceFee : null;
+      const id = await (await runtime()).actions.perform(op, { maxPrice });
       state.txId = id;
       handle.setBar({ trailing: "Done" });
       onDone(id);
       showTxDone({ txId: id, title: doneTitle, onClose: () => handle.close() });
     } catch (error) {
       state.sendError = errorText(error);
+      // the price moved: build the plan again so the new price shows and is confirmed again
+      if (error?.code === "priceChanged" && handle?.isOpen()) {
+        state.sending = false;
+        const shown = state.sendError;
+        rebuild();
+        state.sendError = shown;
+        paint();
+        return;
+      }
     }
     state.sending = false;
     paint();
@@ -1026,12 +1060,16 @@ function openClaimSheet(target) {
   };
 
   async function start() {
+    // the price shown is the most the registration will ever pay (iOS 4f5d95e, IOS-054)
+    const q = state.quote;
+    if (!q?.affordable || state.starting || BigInt(q.years) !== state.years) return;
     if (!(await confirmPassword())) return;
+    if (!handle?.isOpen() || state.quote !== q) return;
     state.starting = true;
     state.startError = null;
     paint();
     try {
-      await (await runtime()).actions.startRegistration({ name: target.name, years: state.years });
+      await (await runtime()).actions.startRegistration({ name: target.name, years: BigInt(q.years), maxPrice: q.price });
       handle.close();
       toast(`Claiming ${target.name}.kachat`);
       return;
@@ -1060,10 +1098,13 @@ function openClaimSheet(target) {
 // --- Sheets with inputs --------------------------------------------------------------------
 
 function openBuySheet(info) {
-  const soon = info.expiresAt - 30n * 86_400_000n < BigInt(Date.now());
+  // 30 days on mainnet's yearly clock, the renewal window on testnet's 10-minute one (IOS-060)
+  const p = params();
+  const soonMs = p ? paramsExpiresSoonMs(p) : 30n * 86_400_000n;
+  const soon = info.expiresAt - soonMs < BigInt(Date.now());
   openTxSheet({
     title: "Buy Name", confirmTitle: "Confirm Purchase", doneTitle: "Name bought",
-    footer: soon ? "Less than 30 days are left before this name expires. You'd have to renew it soon." : "The payment reaches the seller and the name reaches you in the same transaction - both happen, or neither does.",
+    footer: soon ? `Less than ${duration(soonMs)} is left before this name expires. You'd have to renew it soon.` : "The payment reaches the seller and the name reaches you in the same transaction - both happen, or neither does.",
     rows: [{ title: "Name", value: info.display }, { title: "Price (to the seller)", value: amount(info.price) }, { title: "Expires", value: day(info.expiresAt) }],
     operation: () => Operation.buy(info),
   });
@@ -1108,7 +1149,7 @@ function openRenewSheet(info) {
   const perYear = namePrice(info.name) ?? 0n;
   openTxSheet({
     title: "Renew", confirmTitle: "Renew", doneTitle: "Renewed",
-    footer: "A renewal starts the next period at the current expiry, so no time is lost or gained, even after it passed. The price goes to the miners.",
+    footer: "A renewal starts the next period at the current expiry, not from today, so a name that expired a while ago gets less time. The price goes to the miners.",
     rows: () => [
       { title: "Name", value: info.display },
       { title: pricePerPeriodTitle(), value: amount(perYear) },
@@ -1320,7 +1361,7 @@ export async function showLiveNameDetail({ info: initial, onBack }) {
     if (state.heldBy?.kind === "kasSigner") return "";
     if (status === Status.lapsed) return `<div class="kl-one">${action("kl-reclaim", "Reclaim", SYMBOLS.reclaim, { prominent: true })}</div>`;
     const buy = info.isListed && status === Status.active;
-    return `<div class="${buy ? "km-actions" : "kl-one"}">${buy ? action("kl-buy", "Buy Now", SYMBOLS.cart, { prominent: true }) : ""}${action("kl-offer", "Make an Offer", SYMBOLS.hand)}</div>`;
+    return `<div class="${buy ? "km-actions" : "kl-one"}">${buy ? action("kl-buy", "Buy Now", SYMBOLS.cart, { prominent: true }) : ""}${status === Status.active ? action("kl-offer", "Make an Offer", SYMBOLS.hand) : ""}</div>`;
   };
 
   /** The owner's actions as tiles (iOS manageItems): Extend while the paid period holds less than
@@ -1381,7 +1422,7 @@ export async function showLiveNameDetail({ info: initial, onBack }) {
     return `
       ${sectionHeader("Offers", owner ? "Tap an offer to accept it. Expired offers go back to their buyers." : null)}
       ${state.offers.length
-        ? `<div class="km-card km-list">${state.offers.map((o) => offerRowHtml(o, { isBuyer: isMine(o.buyer), isOwner: owner && indexer, declined: o.isDeclined(state.info.owner) })).join("")}</div>`
+        ? `<div class="km-card km-list">${state.offers.map((o) => offerRowHtml(o, { isBuyer: isMine(o.buyer), isOwner: owner && indexer, declined: o.isDeclined(state.info.owner), nameInfo: state.info })).join("")}</div>`
         : '<div class="km-card km-empty-card muted small">No open offers.</div>'}
       ${registry()?.source?.kind === "chain" ? '<p class="muted small kl-pad">Offers from others appear once a names indexer is connected.</p>' : ""}`;
   };
@@ -1412,7 +1453,8 @@ export async function showLiveNameDetail({ info: initial, onBack }) {
     const info = state.info;
     const on = (id, fn) => { const el = $(`#${id}`); if (el) el.onclick = fn; };
     on("kl-buy", () => openBuySheet(info));
-    on("kl-offer", () => openOfferSheet(info.name, info));
+    // an expired name can be reclaimed by anyone soon: no offers on it (iOS 71128c4)
+    on("kl-offer", () => { if (statusOf(info) === Status.active) openOfferSheet(info.name, info); });
     on("kl-renew", () => openRenewSheet(info));
     on("kl-manage", openManage);
     on("kl-owner-copy", async () => {
