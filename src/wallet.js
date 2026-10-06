@@ -584,6 +584,21 @@ function restBase() {
  * { txs, complete }: complete is false when the page could not be fetched.
  * Each tx: { txid, time (ms), direction: "out" | "in" | null, amountSompi, feeSompi }.
  */
+/** The address's last `limit` transactions as the REST API sends them (inputs with their
+ *  previous-outpoint address, outputs, block_time, transaction_id), or null when they can't be
+ *  read - for the bell's received-Kaspa check (iOS AddressActivityNotifier catch-up). */
+export async function recentTransactions(address, limit = 10) {
+  const url = `${restBase()}/addresses/${encodeURIComponent(address)}/full-transactions?limit=${limit}&offset=0&resolve_previous_outpoints=light`;
+  try {
+    const response = await fetch(url, { headers: { Accept: "application/json" }, cache: "no-store", signal: AbortSignal.timeout(15_000) });
+    if (!response.ok) return null;
+    const txs = await response.json().catch(() => null);
+    return Array.isArray(txs) ? txs : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function history(address) {
   const url = `${restBase()}/addresses/${encodeURIComponent(address)}/full-transactions?limit=200&offset=0&resolve_previous_outpoints=light`;
   for (const delay of [0, 600, 2000, 5000]) {

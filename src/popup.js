@@ -14,7 +14,9 @@ import { cachedOwnedNames, ownedNames, otherNamesCount } from "./names.js";
 import { showWelcome, showUnlock, enterApp, setHandlers, setLoggedOut } from "./onboarding.js";
 import { showDomains } from "./domains.js";
 import { showKachatMarket, kachatWordmark } from "./market.js";
-import { watchRegistrations, scheduleLapse } from "./kachat-live.js";
+import { watchRegistrations, scheduleLapse, showLiveNameDetail } from "./kachat-live.js";
+import * as bell from "./bell.js";
+import { startKachatNamesNotifier } from "./kachat-notifier.js";
 import { kachatLive, kachatNames, kachatLabelOf, forgetKachatSigner, kachatSocial, ownKachatProfile } from "./kachat-names.js";
 import { showKachatProfileEditor } from "./kachat-profile.js";
 import { KachatNamesRegistry } from "../shared/engine/kachat-names/registry.js";
@@ -23,7 +25,7 @@ import { showSettings, showLicenses } from "./settings.js";
 import { showApproval } from "./approve.js";
 import * as dock from "./dock.js";
 import { NETWORK, NETWORK_MIRROR_KEY, IS_TESTNET, syncNetworkMirror } from "./net.js";
-import { showColdStorage } from "./cold.js";
+import { showColdStorage, coldWatchAddresses } from "./cold.js";
 import { showPortfolio } from "./portfolio.js";
 import { showCameraPermissionPage } from "./camera.js";
 
@@ -109,6 +111,8 @@ async function showHome() {
   const currency = (await settings()).currency || "usd";
   const cached = await wallet.cachedAddresses(account.id);
   const spending = await wallet.spendingState(account.id);
+  // The bell keeps a feed per account (its chatting address) and network.
+  bell.useAccount(cached?.main || null);
   homeState = {
     account,
     currency,
@@ -167,6 +171,7 @@ function paintHome() {
           <span>${mainSompi != null ? esc(wallet.formatKas(mainSompi, 8)) : "--"} KAS</span>
         </button>
         <div class="toolbar-right">
+          ${bell.bellButtonHtml()}
           ${isTab ? "" : `<button class="icon" id="expand" aria-label="Open in a tab" title="Open in a tab">${ICONS.expand}</button>`}
           <button class="icon" id="lock" aria-label="Lock" title="Lock">${ICONS.lock}</button>
         </div>
@@ -244,6 +249,7 @@ function paintHome() {
   $("#dot").onclick = () => toast(s.connection === "ok" ? `Connected to ${wallet.connectedNodeUrl().replace(/^wss:\/\//, "")}` : s.connection === "bad" ? "Can't reach a Kaspa node - retrying" : "Connecting to the Kaspa network…");
   $("#balance").onclick = () => { if (mainSompi != null) copyText(wallet.formatKas(mainSompi, 8), "Balance"); };
   $("#lock").onclick = lockWallet;
+  $("#bell").onclick = openBell;
   const expand = $("#expand");
   if (expand) expand.onclick = async () => { await ext.tabs.create({ url: ext.runtime.getURL("popup.html?view=tab") }); window.close(); };
   if (main) $("#share").onclick = () => copyText(profileLinkFor(main), "Profile link");
@@ -394,6 +400,42 @@ function addressActionRowHtml(kind, title, address, balanceText, totalText) {
     </div>`;
 }
 
+// --- The bell (iOS GlobalNotificationListView): received Kaspa and .kachat news -------------
+
+/** Repaints just the bell's dot when the feed changes. */
+bell.onBellChange(() => {
+  const button = app.querySelector("#bell");
+  if (!button) return;
+  button.outerHTML = bell.bellButtonHtml();
+  app.querySelector("#bell").onclick = openBell;
+});
+
+function openBell() {
+  bell.showBell({
+    // a receipt opens the wallet, as iOS opens Portfolio
+    openWallet: () => dock.selectTab("portfolio"),
+    // a .kachat row opens the name; one that's free again opens the marketplace to claim it
+    openName: async (name) => {
+      try {
+        const rt = await kachatNames();
+        const found = rt ? await rt.registry.lookup(name) : null;
+        if (found?.kind === "registered") return showLiveNameDetail({ info: found.info, onBack: showHome });
+      } catch { /* the marketplace then */ }
+      showKachatMarket({ onBack: showHome });
+    },
+  });
+}
+
+/** Every address of the account, labelled the way the bell describes it (iOS describe(address)). */
+async function bellReceipts(s) {
+  const list = [{ address: s.addresses.main, label: "Chatting address" }];
+  for (const address of Object.values(s.addresses.spending || {})) list.push({ address, label: "Spending address" });
+  try {
+    for (const c of await coldWatchAddresses()) list.push({ address: c.address, label: `Cold storage (${c.account})` });
+  } catch { /* no KasSigner accounts */ }
+  bell.checkReceipts(list);
+}
+
 let refreshing = false;
 async function refreshHome() {
   if (refreshing || !homeState) return;
@@ -403,6 +445,7 @@ async function refreshHome() {
     // Addresses first: derived from the phrase (a moment of CPU on first unlock), then cached.
     if (!s.addresses || s.addresses.accountId !== s.account.id || !s.addresses.spending?.[s.spending.maxIndex]) {
       s.addresses = await wallet.deriveAddresses();
+      bell.useAccount(s.addresses.main);
       s.kns = wallet.cachedKns(s.addresses.main);
       s.otherNames = cachedOwnedNames(s.addresses.main);
       paintHomeIfShowing(s);
@@ -437,6 +480,8 @@ async function refreshHome() {
             if (rt && key) await countHeld();
             // an open registration brings its progress sheet back up (iOS 61fb0fc)
             watchRegistrations();
+            // the bell's .kachat news: offers, sales, renewal and expiry (iOS 86471dd)
+            startKachatNamesNotifier();
             return kachatLabelOf(main);
           })
           .then((label) => { if (s.addresses?.main === main && s.kachatLabel !== label) { s.kachatLabel = label; paintHomeIfShowing(s); } })
@@ -444,6 +489,8 @@ async function refreshHome() {
       }
       loadKachatSocial(s, s.addresses.main);
       s.balances = await wallet.balances(s.addresses, s.spending.hidden);
+      // The bell: Kaspa that arrived in any of this account's addresses since the last look.
+      bellReceipts(s);
       // A faucet visit's payment landed: Claim Testnet Kaspa locks for 24 hours.
       if (IS_TESTNET) noteFaucetBalance(s.addresses.main, s.balances.main);
       // The other tabs' toolbars show the chatting wallet's balance, as iOS does.

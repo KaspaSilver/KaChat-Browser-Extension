@@ -266,7 +266,8 @@ body.tab:has(.profile) { height: 100vh; }
 .profile { display: flex; flex-direction: column; height: calc(600px - var(--dock-h, 0px)); }
 body.tab .profile { height: calc(100vh - 48px - var(--dock-h, 0px)); }
 
-.toolbar { display: grid; grid-template-columns: 70px 1fr 70px; align-items: center; padding: 8px 10px 2px; }
+/* The right side holds the bell, expand and lock: it takes what it needs and the balance the rest. */
+.toolbar { display: grid; grid-template-columns: 44px minmax(0, 1fr) auto; align-items: center; padding: 8px 10px 2px; }
 .dot-button { background: transparent; padding: 8px; justify-self: start; border-radius: 50%; display: inline-flex; line-height: 0; }
 .dot-button .dot { display: block; }
 .toolbar-balance {
@@ -275,6 +276,8 @@ body.tab .profile { height: calc(100vh - 48px - var(--dock-h, 0px)); }
   font-size: 13px; font-weight: 650; font-variant-numeric: tabular-nums;
 }
 .toolbar-balance img { width: 15px; height: 15px; }
+.toolbar-balance { min-width: 0; max-width: 100%; }
+.toolbar-balance span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .toolbar-right { justify-self: end; display: flex; gap: 2px; }
 
 .profile-title { display: flex; align-items: center; gap: 12px; padding: 2px 16px 8px; background: var(--bg); }
@@ -982,3 +985,17 @@ button.kl-tile:not(:disabled), .kl-tile-split { cursor: pointer; }
 .step-title { margin: 0; font-size: 20px; font-weight: 700; }
 .length-choice { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; background: transparent; color: var(--kaspa); border: 1.5px solid var(--kaspa); font-weight: 600; }
 .length-choice.chosen { background: var(--kaspa); color: #fff; }
+
+/* The Profile bell (iOS GlobalNotificationListView): a red dot while anything is unread. */
+.bell-button { position: relative; }
+.bell-dot { position: absolute; top: 4px; right: 4px; width: 8px; height: 8px; border-radius: 50%; background: #ff3b30; }
+.bell-actions { display: flex; justify-content: flex-end; margin: -4px 0 6px; }
+.bell-list { display: flex; flex-direction: column; background: var(--panel); border-radius: 14px; overflow: hidden; }
+.bell-row { display: flex; align-items: flex-start; gap: 10px; padding: 11px 14px; background: transparent; color: var(--text); text-align: left; font-weight: 400; border-radius: 0; border-bottom: .5px solid var(--line); }
+.bell-row:last-child { border-bottom: 0; }
+.bell-row-icon { display: inline-flex; width: 24px; flex: none; padding-top: 1px; }
+.bell-row-text { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.bell-row-body { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.bell-empty { display: flex; flex-direction: column; align-items: center; gap: 10px; text-align: center; padding: 60px 30px; }
+.bell-empty svg { width: 40px; height: 40px; }
+.bell-empty p { margin: 0; }
