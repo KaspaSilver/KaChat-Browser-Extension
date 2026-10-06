@@ -13,6 +13,7 @@ import * as vault from "./vault.js";
 import { app, esc, render, $, toast, copyText, settings, showSheet, ICONS, formatKas8 } from "./ui.js";
 import { otherDomainsHtml, bindOtherDomains, splitTypedName } from "./names.js";
 import { scanQr } from "./camera.js";
+import { sompiFromUserText, sanitizeAmountInput, sompiToKasNumber } from "./amounts.js";
 import { KAS_UNIT } from "./net.js";
 import {
   FEE_TIERS, recipientCardHtml, amountState, amountEntryHtml, fitAmountInput, pillHtml, feeControlsHtml,
@@ -332,7 +333,7 @@ export function showSend(opts) {
     };
     const amountInput = $("#amount");
     amountInput.oninput = () => {
-      const cleaned = amountInput.value.replace(/[^\d.]/g, "");
+      const cleaned = sanitizeAmountInput(amountInput.value);
       if (cleaned !== amountInput.value) amountInput.value = cleaned;
       fitAmountInput(amountInput);
       state.amountText = amountField.onInput(cleaned, price);
@@ -380,7 +381,8 @@ export function showSend(opts) {
     const feeOk = $("#fee-ok");
     if (feeOk) {
       const commit = async () => {
-        const value = Number($("#custom-fee").value);
+        const sompi = sompiFromUserText($("#custom-fee").value);
+        const value = sompi == null ? NaN : sompiToKasNumber(sompi);
         state.editingFee = false;
         if (Number.isFinite(value) && value > 0) {
           state.customFeeKas = value;

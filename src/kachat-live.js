@@ -11,6 +11,7 @@
 
 import { app, esc, render, $, toast, ICONS, navHeader, unitText, showSheet } from "./ui.js";
 import { KAS_UNIT } from "./net.js";
+import { sompiFromUserText } from "./amounts.js";
 import * as vault from "./vault.js";
 import * as wallet from "./wallet.js";
 import { kachatNames, kachatProfiles, kachatRegistry, kachatLaunched, prepareSigner } from "./kachat-names.js";
@@ -43,20 +44,8 @@ function signed(delta) {
   return v >= 0n ? `+${amount(v)}` : `-${amount(-v)}`;
 }
 
-/** "12.5" or "12,5" -> sompi; null for anything else or more than 8 decimals. */
-function parseSompi(text) {
-  const t = String(text ?? "").trim().replace(",", ".");
-  if (!t) return null;
-  const parts = t.split(".");
-  if (parts.length > 2 || !/^\d*$/.test(parts[0])) return null;
-  const whole = BigInt(parts[0] || "0");
-  let frac = 0n;
-  if (parts.length === 2) {
-    if (parts[1].length > 8 || !/^\d*$/.test(parts[1])) return null;
-    frac = BigInt(parts[1].padEnd(8, "0") || "0");
-  }
-  return whole * SOMPI + frac;
-}
+/** "12.5" or "12,5" -> sompi; null for anything else - the one exact parser (amounts.js). */
+const parseSompi = (text) => sompiFromUserText(text);
 
 const positive = (v) => (v != null && v > 0n ? v : null);
 

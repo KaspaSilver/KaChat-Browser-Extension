@@ -28,6 +28,7 @@ import { kachatWordmark } from "./market.js";
 import { addressNamesTab, showLiveNameDetail } from "./kachat-live.js";
 import { kachatRegistry } from "./kachat-names.js";
 import { followAccount } from "./approve.js";
+import { sompiFromUserText } from "./amounts.js";
 import { showAddToPortfolio } from "./portfolio.js";
 
 // SF Symbols these screens use, drawn to match.
@@ -873,7 +874,8 @@ async function showConsolidate({ list, onBack }) {
     const feeOk = $("#fee-ok");
     if (feeOk) {
       const commit = () => {
-        const value = Number($("#custom-fee").value);
+        const typed = sompiFromUserText($("#custom-fee").value);
+        const value = typed == null ? NaN : Number(typed) / 1e8;
         state.editing = false;
         // Below the normal fee is clamped up to it.
         if (Number.isFinite(value) && value > 0) state.customKas = Math.max(value, state.base);

@@ -52,7 +52,7 @@ export function recipientCardHtml({ input = "", lockedAddress = null, status = {
     } else {
       line = status.valid
         ? `<div class="sk-status good">${ICONS.checkFill}<span>Valid address</span></div>`
-        : `<div class="sk-status bad">${ICONS.xCircle}<span>Invalid address format</span></div>`;
+        : `<div class="sk-status bad">${ICONS.xCircle}<span>${esc(status.invalidReason || "Invalid address format")}</span></div>`;
     }
   }
   return `

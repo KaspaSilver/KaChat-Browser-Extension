@@ -952,3 +952,5 @@ button.sk-pill:disabled { opacity: 1; background: var(--panel) !important; color
 .kl-clickable { cursor: pointer; }
 .pending-transfer { padding: 14px; border-radius: 16px; display: flex; flex-direction: column; gap: 6px; border: 1px solid rgba(255,159,10,.45); }
 .pending-buttons { display: flex; gap: 8px; margin-top: 4px; }
+.passphrase-note { display: flex; gap: 8px; align-items: flex-start; color: #ff9f0a; font-size: 14px; margin: 0; }
+.passphrase-note svg { flex: none; width: 16px; height: 16px; margin-top: 2px; }

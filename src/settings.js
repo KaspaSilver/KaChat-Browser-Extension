@@ -549,13 +549,14 @@ async function showSeedPhrase({ password, onBack }) {
           <div class="callout-title">${ICONS.warning}<span>Security Warning</span></div>
           <p>Anyone with your seed phrase can access your account. Never share it with anyone.</p>
         </div>
+        ${secrets.passphrase ? `<p class="passphrase-note">${ICONS.key}<span>This wallet also uses a passphrase. You need it together with these words to restore it.</span></p>` : ""}
         ${revealed ? `
           <div class="seed-grid">${words.map((w, i) => `<div class="seed-word"><span class="n">${i + 1}.</span><span class="w">${esc(w)}</span></div>`).join("")}</div>
           ${secrets.passphrase ? `<div class="glass key-box"><div class="muted small">Passphrase</div><div class="mono">${esc(secrets.passphrase)}</div></div>` : ""}
           <button id="copy-seed" class="with-icon soft">${ICONS.copy}<span>Copy Seed Phrase</span></button>
           <button id="copy-key" class="with-icon soft">${ICONS.key}<span>Copy Private Key Hex</span></button>`
           : `<button class="reveal-box" id="reveal">${ICONS.eyeSlash}<span>Tap to reveal seed phrase</span></button>
-             ${secrets.passphrase ? '<p class="muted small center-text">This account also uses a passphrase - it is shown with the words.</p>' : ""}`}
+`}
       </section>`, "seed");
     $("#back").onclick = () => { clearTimeout(hideTimer); onBack(); };
     const reveal = $("#reveal");

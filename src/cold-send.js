@@ -22,6 +22,7 @@ import { scanQr } from "./camera.js";
 import { showCoinControl } from "./send.js";
 import { SF, shortAddress } from "./cold-common.js";
 import { KAS_UNIT } from "./net.js";
+import { sompiFromUserText, sanitizeAmountInput } from "./amounts.js";
 import {
   recipientCardHtml, amountState, amountEntryHtml, fitAmountInput, pillHtml, feeControlsHtml,
   slideButtonHtml, bindSlideButton, trimmedKas,
@@ -80,10 +81,8 @@ export function showColdSend(opts) {
 
   // --- derived ----------------------------------------------------------------------------
   const amountSompi = () => {
-    const exact = wallet.kasToSompi(s.amountText);
-    if (exact != null) return exact > 0n ? exact : null;
-    const kas = Number.parseFloat(s.amountText);
-    return Number.isFinite(kas) && kas > 0 ? BigInt(Math.round(kas * 1e8)) : null;
+    const exact = sompiFromUserText(s.amountText);
+    return exact != null && exact > 0n ? exact : null;
   };
   const effectiveAddress = () => (s.resolved?.address || s.toInput.trim());
   const hasValidRecipient = () => Boolean(s.resolved) || (s.validAddress === true && !s.resolving);
@@ -333,6 +332,7 @@ export function showColdSend(opts) {
             resolvedAddress: s.resolved?.address || null,
             resolvedName: s.resolved?.domain || null,
             valid: s.validAddress === true,
+            invalidReason: s.validAddress === false ? wallet.otherNetworkReason(s.toInput) : null,
           },
           extraHtml: s.resolutions.length
             ? otherDomainsHtml({ resolutions: s.resolutions, selectedTld: s.resolved?.tld || splitTypedName(s.toInput).tld, open: s.othersOpen })
@@ -402,7 +402,7 @@ export function showColdSend(opts) {
 
     const amount = $("#amount");
     amount.oninput = () => {
-      const cleaned = amount.value.replace(/[^\d.]/g, "");
+      const cleaned = sanitizeAmountInput(amount.value);
       if (cleaned !== amount.value) amount.value = cleaned;
       fitAmountInput(amount);
       s.amountText = amountField.onInput(cleaned, price);
@@ -460,10 +460,10 @@ export function showColdSend(opts) {
     const feeOk = $("#fee-ok");
     if (feeOk) {
       const commit = () => {
-        const kas = Number.parseFloat($("#custom-fee").value);
+        const typed = sompiFromUserText($("#custom-fee").value);
         s.editingFee = false;
-        if (Number.isFinite(kas) && kas >= 0) {
-          const total = BigInt(Math.round(kas * 1e8));
+        if (typed != null) {
+          const total = typed;
           const base = defaultFee();
           // Below the default adds nothing (iOS commitCustomFee).
           s.customExtra = total > base ? total - base : 0n;

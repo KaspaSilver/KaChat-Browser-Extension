@@ -27,8 +27,9 @@ import {
   resumeKnsTransfer, clearPendingKnsTransfer,
 } from "../shared/engine/kns-write.js";
 import { getLocal, setLocal, removeLocal } from "./browser.js";
-import { IS_TESTNET, NETWORK_ID, ADDRESS_PREFIX, netKey, MAINNET_REST, TESTNET_REST, MAINNET_KNS, TESTNET_KNS } from "./net.js";
+import { IS_TESTNET, NETWORK as ACTIVE_NETWORK, NETWORK_ID, ADDRESS_PREFIX, netKey, MAINNET_REST, TESTNET_REST, MAINNET_KNS, TESTNET_KNS, isValidKaspaAddress, networkOfAddress } from "./net.js";
 import { activeAccountSecrets, accountSecretsById } from "./vault.js";
+import { sompiFromUserText } from "./amounts.js";
 
 let kaspaPromise = null;
 
@@ -416,11 +417,9 @@ export async function utxos(address) {
     .sort((a, b) => (a.amount > b.amount ? -1 : a.amount < b.amount ? 1 : 0));
 }
 
+/** A KAS amount (typed or computed) in sompi, or null - the one exact parser (amounts.js). */
 export function kasToSompi(kasText) {
-  const text = String(kasText ?? "").trim();
-  if (!/^\d*\.?\d{0,8}$/.test(text) || text === "" || text === ".") return null;
-  const [whole, fraction = ""] = text.split(".");
-  return BigInt(whole || "0") * 100_000_000n + BigInt((fraction + "00000000").slice(0, 8));
+  return sompiFromUserText(kasText);
 }
 
 export function sompiToKasText(sompi) {
@@ -440,6 +439,20 @@ export async function isValidAddress(text) {
 }
 
 /**
+ * Why a valid address can't be used here: it is the other network's (iOS
+ * KaspaAddress.otherNetworkReason, ce20e87 / audit IOS-003). Paying a kaspatest: address on
+ * mainnet would send real KAS to that key's mainnet script. null for an address of the running
+ * network, or one that isn't valid at all.
+ */
+export function otherNetworkReason(address) {
+  const clean = String(address || "").trim().toLowerCase().split("?")[0];
+  if (!isValidKaspaAddress(clean)) return null;
+  const network = networkOfAddress(clean);
+  if (!network || network === ACTIVE_NETWORK) return null;
+  return network === "testnet" ? "This is a Testnet address. KaChat Wallet is on Mainnet." : "This is a Mainnet address. KaChat Wallet is on Testnet.";
+}
+
+/**
  * What the recipient field means: a kaspa: address, or a name on any service (iOS
  * NameServicesClient) - the ending typed, else the first of .kachat, .kas, .k, .kaspa that
  * resolves. Returns { address, domain, tld, resolutions } - `resolutions` is every service's
@@ -451,7 +464,7 @@ export async function resolveRecipient(input) {
   if (!text) throw new Error("Enter a Kaspa address (kaspa:...)");
   if (/^kaspa(test)?:/i.test(text)) {
     const address = text.split("?")[0].toLowerCase();
-    if (!(await isValidAddress(address))) throw new Error("Invalid address format");
+    if (!(await isValidAddress(address))) throw new Error(otherNetworkReason(address) || "Invalid address format");
     return { address, domain: null, tld: null, resolutions: [] };
   }
   if (looksLikeName(text)) {
