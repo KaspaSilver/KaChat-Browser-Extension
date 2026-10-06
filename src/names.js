@@ -301,14 +301,15 @@ export async function ownsAnyName(address, kasOwns) {
   return ownsKachatName(address);
 }
 
-/** .kachat where it is live (testnet): any name, active or not, counts (iOS 25cc2c9). */
+/** .kachat where it is live (testnet): a name the address still holds - active or expired in
+ *  grace, never lapsed (iOS 25cc2c9, aa36d2a). */
 async function ownsKachatName(address) {
   const registry = kachatRegistry();
   const key = registry ? KachatNamesRegistry.keyOf(String(address || "").toLowerCase()) : null;
   if (!key) return false;
   try {
     await registry.refreshIfStale();
-    return (await registry.namesOf(key, { includeInactive: true })).length > 0;
+    return (await registry.heldNames(key)).length > 0;
   } catch {
     return false;
   }

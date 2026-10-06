@@ -957,3 +957,28 @@ button.sk-pill:disabled { opacity: 1; background: var(--panel) !important; color
 
 /* KasSigner send: change too small to keep was folded into the fee (iOS IOS-013). */
 .cold-fee-warning { margin: 0; width: 100%; box-sizing: border-box; padding: 8px 10px; border-radius: 10px; font-size: 12.5px; line-height: 1.4; color: #7a4b00; background: rgba(230,150,0,.12); border: 1px solid rgba(230,150,0,.35); }
+
+/* .kachat marketplace (iOS 0765ce0 / 27a4f39 / c488d1d): a compact hero, then tiles in two columns. */
+.km-hero.compact { padding-top: 12px; }
+.kl-tile-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin: 0 16px; }
+.kl-tile { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; min-height: 140px; padding: 14px 10px; margin: 0; text-align: center; color: var(--text); font-weight: 400; }
+button.kl-tile:not(:disabled), .kl-tile-split { cursor: pointer; }
+.kl-tile-name { max-width: 100%; font-size: 16px; font-weight: 700; line-height: 21px; overflow-wrap: anywhere; }
+.kl-tile-suffix { font-size: 12px; font-weight: 600; color: var(--kaspa); }
+.kl-tile-footer { display: flex; flex-direction: column; align-items: center; gap: 8px; max-width: 100%; margin-top: 8px; }
+.kl-tile-price { max-width: 100%; font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.kl-tile-open { position: absolute; inset: 0; margin: 0; padding: 0; border: 0; border-radius: inherit; background: transparent; cursor: pointer; }
+.kl-tile-button { position: relative; z-index: 1; }
+
+/* A registration's progress: a half sheet that stays up until it's done (iOS 61fb0fc). Above the
+   panels, under the done sheet and the password prompt. */
+.kl-progress-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: flex; align-items: flex-end; z-index: 52; animation: fade .15s ease; }
+.kl-progress { gap: 12px; padding-bottom: 20px; }
+.kl-progress .kl-reg { margin: 0; }
+.kl-domains-offers { margin-top: 18px; display: flex; flex-direction: column; gap: 8px; }
+
+/* Create Account steps (iOS acd879b / c6bd716): the step's title, and the seed length as two
+   full-width buttons in the Generate Account style - the chosen one filled, the other outlined. */
+.step-title { margin: 0; font-size: 20px; font-weight: 700; }
+.length-choice { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; background: transparent; color: var(--kaspa); border: 1.5px solid var(--kaspa); font-weight: 600; }
+.length-choice.chosen { background: var(--kaspa); color: #fff; }

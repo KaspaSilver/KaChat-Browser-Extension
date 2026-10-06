@@ -14,6 +14,7 @@ import { cachedOwnedNames, ownedNames, otherNamesCount } from "./names.js";
 import { showWelcome, showUnlock, enterApp, setHandlers, setLoggedOut } from "./onboarding.js";
 import { showDomains } from "./domains.js";
 import { showKachatMarket, kachatWordmark } from "./market.js";
+import { watchRegistrations, scheduleLapse } from "./kachat-live.js";
 import { kachatLive, kachatNames, kachatLabelOf, forgetKachatSigner, kachatSocial, ownKachatProfile } from "./kachat-names.js";
 import { showKachatProfileEditor } from "./kachat-profile.js";
 import { KachatNamesRegistry } from "../shared/engine/kachat-names/registry.js";
@@ -423,12 +424,19 @@ async function refreshHome() {
         const main = s.addresses.main;
         kachatNames()
           .then(async (rt) => {
-            // The .kachat names for the Your Domains count: the set its .kachat tab lists.
+            // The .kachat names for the Your Domains count: the set its .kachat tab lists - active
+            // names and expired ones in grace, never lapsed ones (iOS aa36d2a heldNames).
             const key = KachatNamesRegistry.keyOf(main.toLowerCase());
-            if (rt && key) {
-              const count = (await rt.registry.namesOf(key, { includeInactive: true }).catch(() => null))?.length;
-              if (count != null && s.kachatCount !== count && s.addresses?.main === main) { s.kachatCount = count; paintHomeIfShowing(s); }
-            }
+            const countHeld = async () => {
+              const held = await rt.registry.heldNames(key).catch(() => null);
+              if (!held || s.addresses?.main !== main) return;
+              if (s.kachatCount !== held.length) { s.kachatCount = held.length; paintHomeIfShowing(s); }
+              // a name that lapses while the wallet is open comes off the count right then
+              scheduleLapse("count", held, countHeld);
+            };
+            if (rt && key) await countHeld();
+            // an open registration brings its progress sheet back up (iOS 61fb0fc)
+            watchRegistrations();
             return kachatLabelOf(main);
           })
           .then((label) => { if (s.addresses?.main === main && s.kachatLabel !== label) { s.kachatLabel = label; paintHomeIfShowing(s); } })

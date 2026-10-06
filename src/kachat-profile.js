@@ -55,8 +55,14 @@ function showLiveProfileEditor({ onSaved }) {
   let panel = null;
 
   const badLinktree = () => Boolean(state.linktree.trim()) && Profile.linktreeLinkFromUsername(state.linktree) == null;
+  /** A filled-in field whose lookup hasn't found what it shows (still looking, unreachable, or
+   *  nothing there). It doesn't block saving (iOS 5cac6af): a social site being slow or unreachable
+   *  from here must never stop a profile (or a primary name) from saving; the link is saved as
+   *  entered and every viewer's app looks it up itself. The editor just says so. */
   const notReviewed = (kind) => !isEmpty(fields[kind]) && fields[kind].lookup !== "found";
-  const blocked = () => KINDS.some((k) => isBad(fields[k], k) || notReviewed(k)) || badLinktree();
+  const hasUncheckedLinks = () => KINDS.some((k) => !isBad(fields[k], k) && notReviewed(k));
+  /** Only a malformed handle or Linktree username stops a save. */
+  const blocked = () => KINDS.some((k) => isBad(fields[k], k)) || badLinktree();
 
   const profile = () => new Profile({
     avatar: sourceOf(fields.avatar, SocialKind.avatar)?.link ?? null,
@@ -185,7 +191,7 @@ function showLiveProfileEditor({ onSaved }) {
 
   const saveFooter = () => (state.error
     ? `<span class="error-text">${esc(state.error)}</span>`
-    : "Saving writes your profile to the chain from your address to itself, for a network fee. Profiles are public.");
+    : `${hasUncheckedLinks() ? "Some links couldn't be checked from this device right now. They're saved as entered, and people's apps load them when they can. " : ""}Saving writes your profile to the chain from your address to itself, for a network fee. Profiles are public.`);
 
   const paintSave = () => {
     if (!handle?.isOpen()) return;

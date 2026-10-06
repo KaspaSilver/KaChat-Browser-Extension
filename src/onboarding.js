@@ -219,26 +219,24 @@ async function finishAccount(account, onBack, buttonLabel) {
 
 // --- create account: iOS CreateWalletView + PassphraseOptionView, same steps and words ------
 //
-//   1. Create Account - Important card, Seed Phrase Length (12/24), Account Name, Generate Account
-//   2. Write Down Your Seed Phrase - tap to reveal, numbered grid (no copy, as on iOS), the
+//   1. Create a name for your wallet - the name, stored only on this device (iOS acd879b)
+//   2. Choose seed phrase length - 12 or 24 words as two buttons (c6bd716), the Important card,
+//      Generate Account
+//   3. Write Down Your Seed Phrase - tap to reveal, numbered grid (no copy, as on iOS), the
 //      "I have written down..." checkbox, Next
-//   3. Passphrase - the question (Yes / No / What is a passphrase?), the entry screen with the
+//   4. Passphrase - the question (Yes / No / What is a passphrase?), the entry screen with the
 //      live address preview, and the explainer
-//   4. Wallet password - the one step iOS does not have: a browser has no Face ID or iOS
+//   5. Wallet password - the one step iOS does not have: a browser has no Face ID or iOS
 //      keychain, so the phrase is sealed with a password instead (vault.js).
 // iOS then shows its Welcome Guide (chat setup); a wallet-only extension goes straight home.
 
 let createDraft = null;
 function freshCreateDraft() {
-  // Nothing preset: no length picked and an empty name. Generate Account stays off until the
-  // user has chosen both.
+  // Nothing preset: an empty name and no length picked - both are the user's choice.
   return { wordCount: null, name: "", phrase: null, revealed: false, confirmed: false };
 }
 
-function canGenerate(draft) {
-  return (draft.wordCount === 12 || draft.wordCount === 24) && Boolean(draft.name.trim());
-}
-
+/** Step 1: the account's name, local to this device. */
 function showCreate() {
   if (!createDraft) createDraft = freshCreateDraft();
   if (createDraft.phrase) return showCreateSeed();
@@ -247,37 +245,58 @@ function showCreate() {
     ${navHeader()}
     <section class="screen">
       <h1 class="large-title">Create Account</h1>
-      <div class="callout warn">
-        <div class="callout-title">${ICONS.warning}<span>Important</span></div>
-        <p>You will be shown a seed phrase. This is the only way to recover your account. Write it down and store it securely.</p>
-      </div>
       <div class="field-group">
-        <h3>Seed Phrase Length</h3>
-        <div class="segmented" role="radiogroup" aria-label="Seed Phrase Length">
-          <button type="button" role="radio" data-words="12" aria-checked="${d.wordCount === 12}">12 words</button>
-          <button type="button" role="radio" data-words="24" aria-checked="${d.wordCount === 24}">24 words</button>
-        </div>
+        <h2 class="step-title">Create a name for your wallet</h2>
+        <p class="muted small">This name is only stored on this device, to tell your wallets apart. No one else will ever see it.</p>
       </div>
-      <div class="field-group">
-        <h3>Account Name</h3>
+      <form id="name-form" class="field-group">
         <input id="name" value="${esc(d.name)}" placeholder="Enter account name" maxlength="40" autocomplete="off" autofocus />
-      </div>
-      <p class="error" id="error"></p>
-      <button id="generate" class="with-icon" ${canGenerate(d) ? "" : "disabled"}>${ICONS.plusCircle}<span>Generate Account</span></button>
+      </form>
+      <button id="next" ${d.name.trim() ? "" : "disabled"}>Next</button>
     </section>`, "create");
   $("#back").onclick = () => { createDraft = null; showWelcome(); };
-  for (const option of app.querySelectorAll(".segmented button")) {
-    option.onclick = () => {
-      d.wordCount = Number(option.dataset.words);
-      for (const other of app.querySelectorAll(".segmented button")) other.setAttribute("aria-checked", String(other === option));
-      $("#generate").disabled = !canGenerate(d);
-    };
-  }
   const name = $("#name");
-  name.oninput = () => { d.name = name.value; $("#generate").disabled = !canGenerate(d); };
+  const next = () => { if (d.name.trim()) showCreateLength(); };
+  name.oninput = () => { d.name = name.value; $("#next").disabled = !d.name.trim(); };
+  $("#name-form").onsubmit = (event) => { event.preventDefault(); next(); };
+  $("#next").onclick = next;
+  name.focus();
+}
+
+// The chosen length's mark, white on the filled button (iOS checkmark.circle.fill).
+const CHOSEN_MARK = '<svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10" fill="#fff"/><path d="M7.5 12.5l3 3 6-6.5" fill="none" stroke="var(--kaspa)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
+/** Step 2: 12 or 24 words, and the warning that the seed phrase comes next. */
+function showCreateLength() {
+  const d = createDraft;
+  const choice = (count) => {
+    const chosen = d.wordCount === count;
+    return `<button type="button" class="length-choice ${chosen ? "chosen" : ""}" role="radio" aria-checked="${chosen}" data-words="${count}">
+      ${chosen ? CHOSEN_MARK : ICONS.circle}<span>${count} words</span>
+    </button>`;
+  };
+  render(`
+    ${navHeader()}
+    <section class="screen">
+      <h1 class="large-title">Create Account</h1>
+      <div class="field-group" role="radiogroup" aria-label="Choose seed phrase length">
+        <h2 class="step-title">Choose seed phrase length</h2>
+        ${choice(12)}
+        ${choice(24)}
+      </div>
+      <div class="callout warn">
+        <div class="callout-title">${ICONS.warning}<span>Important</span></div>
+        <p>The next screen shows your seed phrase. It is the only way to recover your account: write it down and store it securely, and make sure no one can see your screen.</p>
+      </div>
+      <p class="error" id="error"></p>
+      <button id="generate" class="with-icon" ${d.wordCount ? "" : "disabled"}>${ICONS.plusCircle}<span>Generate Account</span></button>
+    </section>`, "create");
+  $("#back").onclick = showCreate;
+  for (const option of app.querySelectorAll("[data-words]")) {
+    option.onclick = () => { d.wordCount = Number(option.dataset.words); showCreateLength(); };
+  }
   $("#generate").onclick = async () => {
-    if (!d.wordCount) { $("#error").textContent = "Choose a seed phrase length."; return; }
-    if (!d.name.trim()) { $("#error").textContent = "Enter an account name."; return; }
+    if (!d.wordCount) return;
     const button = $("#generate");
     button.disabled = true;
     button.innerHTML = '<span class="spinner"></span><span>Generate Account</span>';
@@ -288,7 +307,7 @@ function showCreate() {
       showCreateSeed();
     } catch (error) {
       $("#error").textContent = error.message;
-      button.disabled = !canGenerate(d);
+      button.disabled = false;
       button.innerHTML = `${ICONS.plusCircle}<span>Generate Account</span>`;
     }
   };
@@ -314,8 +333,8 @@ function showCreateSeed() {
       </button>
       <button id="next" ${d.confirmed ? "" : "disabled"}>Next</button>
     </section>`, "create");
-  // Leaving this screen leaves Create Account, as on iOS: the phrase goes with it.
-  $("#back").onclick = () => { createDraft = null; showWelcome(); };
+  // Back goes to the length step and the phrase goes with it: Generate Account makes a new one.
+  $("#back").onclick = () => { d.phrase = null; d.revealed = false; d.confirmed = false; showCreateLength(); };
   const reveal = $("#reveal");
   if (reveal) reveal.onclick = () => { d.revealed = true; showCreateSeed(); };
   $("#confirm").onclick = () => { d.confirmed = !d.confirmed; showCreateSeed(); };

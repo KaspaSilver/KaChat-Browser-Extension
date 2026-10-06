@@ -9,7 +9,9 @@
 //
 // On TESTNET (testnet-10, with the bundled registry manifest verified) it is live
 // (kachat-live.js, iOS KachatNamesLiveViews.swift): search shows real availability and the price,
-// Claim registers, the tabs read the registry, and registrations in flight show their progress.
+// Claim registers (its progress is a half sheet that stays up until it's done), and the tabs -
+// Marketplace, Reclaimable, Activity (iOS 0765ce0) - read the registry. Your own names and the
+// offers you made live in Your Domains.
 
 import { app, esc, render, $, ICONS, navHeader } from "./ui.js";
 import { SYMBOLS, kachatWordmark, openPanel } from "./kachat-ui.js";
@@ -42,41 +44,22 @@ export function showKachatMarket({ onBack }) {
       </div>`;
   };
 
-  const featured = () => `
-    <button class="km-featured" data-listing>
-      <div class="km-featured-card">${redact("name.kachat")}</div>
-      <div class="strong small">${redact("000 KAS")}</div>
-      <div class="accent tiny strong">${redact("Buy")}</div>
-    </button>`;
-
-  const listingRow = () => `
-    <button class="km-row" data-listing>
-      <span class="km-dot"></span>
-      <span class="tx-meta"><span class="strong small">${redact("somename.kachat")}</span><span class="tiny">${redact("listed 1h ago")}</span></span>
-      <span class="strong small">${redact("000 KAS")}</span>
-      <span class="km-chevron">${ICONS.chevron}</span>
-    </button>`;
+  // A name tile's shape, redacted: no invented name or price (iOS tilePlaceholder, 27a4f39 / c488d1d).
+  const tile = (attr = "") => `<button class="km-card kl-tile" ${attr}>${live.nameTileHtml(redact("somename"), redact("000 KAS"))}</button>`;
 
   const marketPage = () => `
-    ${header("Featured", "Names their owners have put up for sale.")}
-    <div class="km-hscroll">${featured().repeat(4)}</div>
-    ${header("Recently listed")}
-    <div class="km-card km-list">${Array.from({ length: 5 }, listingRow).join("")}</div>
+    ${header("For sale")}
+    ${live.nameGridHtml(Array.from({ length: 4 }, () => tile("data-listing")).join(""))}
     <button class="km-bordered with-icon" disabled>${SYMBOLS.tag}<span>List a Name for Sale</span></button>
     <p class="muted small center-text">Listings appear here once .kachat names launch.</p>`;
 
-  const myNamesPage = () => `
-    <div class="km-empty">
-      <span class="accent">${ICONS.atCircle}</span>
-      <div class="km-title">No .kachat names yet</div>
-      <p class="muted small">Names you claim or buy show here. From here you'll set one as your name in chats, list it for sale, or send it to someone.</p>
-      <button class="km-prominent" disabled>Claim a Name</button>
-    </div>
-    ${header("Offers", "Offers you've made, and offers on names you own. Accept one, or withdraw your own, from here.")}
-    <div class="km-card km-empty-card muted small">No offers yet.</div>`;
+  const reclaimablePage = () => `
+    ${header("Reclaimable", "Names whose owners let them lapse. Anyone may reclaim one: the bond goes back to its last owner, you keep the freed deposit as a bounty, and the name is free to claim.")}
+    ${live.nameGridHtml(Array.from({ length: 2 }, () => tile('disabled aria-hidden="true"')).join(""))}
+    <p class="muted small center-text">Reclaimable names appear here once .kachat names launch.</p>`;
 
   const activityPage = () => `
-    ${header("Recent activity", "Claims, listings and sales across the marketplace.")}
+    ${header("Recent activity", "Every claim, renewal, listing, sale, offer, transfer and reclaim across the registry.")}
     <div class="km-card km-list">
       ${["tag", "cart", "at", "arrows"].map((icon) => `
         <div class="km-row">
@@ -96,10 +79,8 @@ export function showKachatMarket({ onBack }) {
         <button class="icon plain nav-right accent" id="how" aria-label="How it works">${SYMBOLS.question}</button>
       </header>
       <section class="km">
-        <div class="km-hero">
+        <div class="km-hero compact">
           ${kachatWordmark(64)}
-          <h2>Your name on KaChat</h2>
-          <p class="muted small">Claim a .kachat name, or buy and sell them peer to peer. The name and the payment settle together on Kaspa - nobody holds either in between.</p>
           <div id="km-status">${heroStatus()}</div>
         </div>
         <div class="km-search">
@@ -110,9 +91,8 @@ export function showKachatMarket({ onBack }) {
           </label>
           <div id="search-result">${searchResult()}</div>
         </div>
-        <div id="km-regs" class="kl-regs">${isLive() ? live.registrationCardsHtml() : ""}</div>
         <div class="underline-tabs" role="tablist">
-          ${[["market", "Marketplace"], ["myNames", "My Names"], ["activity", "Activity"]].map(([id, title]) =>
+          ${[["market", "Marketplace"], ["reclaimable", "Reclaimable"], ["activity", "Activity"]].map(([id, title]) =>
             `<button role="tab" data-page="${id}" aria-selected="${id === page}">${title}</button>`).join("")}
         </div>
         <div class="km-page" id="km-page">${pageHtml()}</div>
@@ -132,7 +112,7 @@ export function showKachatMarket({ onBack }) {
   };
 
   // Mainnet (or before the testnet registry is ready): the mockups.
-  const mockPage = () => (page === "market" ? marketPage() : page === "myNames" ? myNamesPage() : activityPage());
+  const mockPage = () => (page === "reclaimable" ? reclaimablePage() : page === "activity" ? activityPage() : marketPage());
   // Live, or not launched here (mainnet): the same pages - empty on mainnet (iOS 7227d69). The
   // placeholder pages remain only for a testnet registry that is setting up.
   const livePages = () => isLive() || !kachatLaunched;
@@ -153,7 +133,6 @@ export function showKachatMarket({ onBack }) {
     if (livePages()) live.bindLivePage($("#km-page"), nav);
     if (!isLive()) return;
     live.bindSearchResult($("#search-result"), nav);
-    live.bindRegistrationCards($("#km-regs"));
   };
   const paintSearch = () => {
     $("#search-result").innerHTML = searchResult();
@@ -165,7 +144,6 @@ export function showKachatMarket({ onBack }) {
     const scroller = app.querySelector(".km");
     const scroll = scroller?.scrollTop || 0;
     $("#km-status").innerHTML = heroStatus();
-    $("#km-regs").innerHTML = isLive() ? live.registrationCardsHtml() : "";
     $("#km-page").innerHTML = pageHtml();
     paintSearch();
     bindParts();
