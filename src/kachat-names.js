@@ -86,6 +86,9 @@ function base() {
       getUtxosByAddresses: (addresses) => engine.utxosForRegistry(addresses),
       restBase: () => getEndpoint("kaspaApi"),
       indexerBase: () => getEndpoint("kasiaIndexer"),
+      // the names indexer is only used while it is at most about a minute behind the network;
+      // otherwise the registry walks the chain itself (iOS 7aa6c6d)
+      virtualDaaScore: () => engine.currentVirtualDaaScore(),
       storage: localStorageAdapter,
       log: (...parts) => console.info("[KaChat Wallet]", ...parts),
     });
@@ -225,6 +228,10 @@ export function kachatSocial() {
 export async function ownKachatProfile(address) {
   const reg = base().registry;
   if (!address) return null;
+  // This wallet's own profile follows the chain (iOS 5d4ce87): a profile saved on another device
+  // (KaChat for iOS, Android, Desktop) is adopted when it's newer, so an imported wallet shows it
+  // and the editor starts from it instead of overwriting it.
+  try { await reg.syncOwnProfile?.(address, { maxAgeMs: 5 * 60_000 }); } catch { /* the device copy stays */ }
   try {
     const own = (await reg.ownProfile(address))?.profile;
     if (own) return own;

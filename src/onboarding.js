@@ -236,45 +236,76 @@ function freshCreateDraft() {
   return { wordCount: null, name: "", phrase: null, revealed: false, confirmed: false };
 }
 
-/** Step 1: the account's name, local to this device. */
-function showCreate() {
-  if (!createDraft) createDraft = freshCreateDraft();
-  if (createDraft.phrase) return showCreateSeed();
-  const d = createDraft;
+/** A name for the wallet, local to this device (iOS AccountNameForm) - Create Account's first
+ *  step and Import Account's second. */
+function showAccountName({ title, draft, onBack, onNext }) {
   render(`
     ${navHeader()}
     <section class="screen">
-      <h1 class="large-title">Create Account</h1>
+      <h1 class="large-title">${esc(title)}</h1>
       <div class="field-group">
         <h2 class="step-title">Create a name for your wallet</h2>
         <p class="muted small">This name is only stored on this device, to tell your wallets apart. No one else will ever see it.</p>
       </div>
       <form id="name-form" class="field-group">
-        <input id="name" value="${esc(d.name)}" placeholder="Enter account name" maxlength="40" autocomplete="off" autofocus />
+        <input id="name" value="${esc(draft.name)}" placeholder="Enter account name" maxlength="40" autocomplete="off" autofocus />
       </form>
-      <button id="next" ${d.name.trim() ? "" : "disabled"}>Next</button>
-    </section>`, "create");
-  $("#back").onclick = () => { createDraft = null; showWelcome(); };
+      <button id="next" ${draft.name.trim() ? "" : "disabled"}>Next</button>
+    </section>`, title === "Create Account" ? "create" : "import");
+  $("#back").onclick = onBack;
   const name = $("#name");
-  const next = () => { if (d.name.trim()) showCreateLength(); };
-  name.oninput = () => { d.name = name.value; $("#next").disabled = !d.name.trim(); };
+  const next = () => { if (draft.name.trim()) onNext(); };
+  name.oninput = () => { draft.name = name.value; $("#next").disabled = !draft.name.trim(); };
   $("#name-form").onsubmit = (event) => { event.preventDefault(); next(); };
   $("#next").onclick = next;
   name.focus();
 }
 
+/** Step 1: the account's name. */
+function showCreate() {
+  if (!createDraft) createDraft = freshCreateDraft();
+  if (createDraft.phrase) return showCreateSeed();
+  showAccountName({
+    title: "Create Account",
+    draft: createDraft,
+    onBack: () => { createDraft = null; showWelcome(); },
+    onNext: showCreateLength,
+  });
+}
+
+/** "What is a seed phrase?" (iOS dd0aab1 / 712bb4d SeedPhraseExplainerPage): a page, in the same
+ *  headline-and-text sections as "What is a passphrase?". */
+function showSeedExplainer({ onBack }) {
+  const section = (title, body) => `<div class="explainer-section"><h3>${esc(title)}</h3><p class="muted small">${esc(body)}</p></div>`;
+  render(`
+    ${navHeader({ title: "What is a seed phrase?" })}
+    <section class="screen explainer">
+      ${section("The short version", "A seed phrase is a list of 12 or 24 ordinary words that works as the master key to your account. Your wallet, your chatting address and your messages all come from it.")}
+      ${section("Anyone with it can take everything", "Anyone who has these words can take everything in your account. If you lose them and lose this device, nobody can get your account back, not even KaChat.")}
+      ${section("How to keep it safe", "Write the words on paper, in order, and keep them somewhere safe and private. Never type them into a website, send them in a chat, or keep them in a screenshot or cloud notes.")}
+      ${section("12 or 24 words?", "12 words are already very secure. 24 words add even more protection.")}
+    </section>`, "create");
+  $("#back").onclick = onBack;
+}
+
+// SF Symbol questionmark.circle, for "What is this?".
+const QUESTION_MARK = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9.5"/><path d="M9.6 9.3a2.5 2.5 0 0 1 4.8.9c0 1.7-2.4 2.3-2.4 3.8M12 17.2h.01"/></svg>';
+
 // The chosen length's mark, white on the filled button (iOS checkmark.circle.fill).
 const CHOSEN_MARK = '<svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10" fill="#fff"/><path d="M7.5 12.5l3 3 6-6.5" fill="none" stroke="var(--kaspa)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
+/** A 12 / 24 words button (iOS SeedLengthButton): the chosen one filled, the other outlined. */
+function lengthChoice(count, chosenCount) {
+  const chosen = chosenCount === count;
+  return `<button type="button" class="length-choice ${chosen ? "chosen" : ""}" role="radio" aria-checked="${chosen}" data-words="${count}">
+    ${chosen ? CHOSEN_MARK : ICONS.circle}<span>${count} words</span>
+  </button>`;
+}
 
 /** Step 2: 12 or 24 words, and the warning that the seed phrase comes next. */
 function showCreateLength() {
   const d = createDraft;
-  const choice = (count) => {
-    const chosen = d.wordCount === count;
-    return `<button type="button" class="length-choice ${chosen ? "chosen" : ""}" role="radio" aria-checked="${chosen}" data-words="${count}">
-      ${chosen ? CHOSEN_MARK : ICONS.circle}<span>${count} words</span>
-    </button>`;
-  };
+  const choice = (count) => lengthChoice(count, d.wordCount);
   render(`
     ${navHeader()}
     <section class="screen">
@@ -290,8 +321,10 @@ function showCreateLength() {
       </div>
       <p class="error" id="error"></p>
       <button id="generate" class="with-icon" ${d.wordCount ? "" : "disabled"}>${ICONS.plusCircle}<span>Generate Account</span></button>
+      <button id="what" class="ghost with-icon what-button">${QUESTION_MARK}<span>What is this?</span></button>
     </section>`, "create");
   $("#back").onclick = showCreate;
+  $("#what").onclick = () => showSeedExplainer({ onBack: showCreateLength });
   for (const option of app.querySelectorAll("[data-words]")) {
     option.onclick = () => { d.wordCount = Number(option.dataset.words); showCreateLength(); };
   }
@@ -528,7 +561,34 @@ function showImportSource() {
       if (list) list.scrollTop = scroll;
     };
   }
-  $("#continue").onclick = showImportWords;
+  $("#continue").onclick = showImportName;
+}
+
+/** Import Account, step 2 (iOS dd0aab1 ImportNameStep): the same name screen as Create Account. */
+function showImportName() {
+  showAccountName({ title: "Import Account", draft: importDraft, onBack: showImportSource, onNext: showImportLength });
+}
+
+/** Import Account, step 3 (iOS ImportLengthStep): how many words the phrase being imported has. */
+function showImportLength() {
+  const d = importDraft;
+  render(`
+    ${navHeader()}
+    <section class="screen">
+      <h1 class="large-title">Import Account</h1>
+      <div class="field-group" role="radiogroup" aria-label="Choose seed phrase length">
+        <h2 class="step-title">Choose seed phrase length</h2>
+        <p class="muted small">How many words is the seed phrase you're importing?</p>
+        ${lengthChoice(12, d.wordCount)}
+        ${lengthChoice(24, d.wordCount)}
+      </div>
+      <button id="next" ${d.wordCount ? "" : "disabled"}>Next</button>
+    </section>`, "import");
+  $("#back").onclick = showImportName;
+  for (const option of app.querySelectorAll("[data-words]")) {
+    option.onclick = () => { d.wordCount = Number(option.dataset.words); d.active = Math.min(d.active, d.wordCount - 1); showImportLength(); };
+  }
+  $("#next").onclick = () => { if (d.wordCount) showImportWords(); };
 }
 
 // The seed words go into a numbered grid, one word per slot, with the BIP39 suggestions bar -
@@ -562,14 +622,6 @@ function showImportWords() {
   render(`
     ${navHeader({ title: "Import Account" })}
     <section class="screen import-words">
-      <div class="field-group">
-        <h3>Account Name</h3>
-        <input id="name" value="${esc(d.name)}" placeholder="Enter account name" maxlength="40" autocomplete="off" />
-      </div>
-      <div class="segmented" role="radiogroup" aria-label="Seed Phrase Length">
-        <button type="button" role="radio" data-words="12" aria-checked="${count === 12}">12 words</button>
-        <button type="button" role="radio" data-words="24" aria-checked="${count === 24}">24 words</button>
-      </div>
       <div class="words-head">
         <span>Enter your recovery phrase</span>
         <button class="mini-button" id="paste" type="button">${ICONS.clipboard}<span>Paste</span></button>
@@ -588,7 +640,7 @@ function showImportWords() {
       <p class="error" id="error"></p>
       <button id="continue" class="with-icon" ${canImport(d) ? "" : "disabled"}>${ICONS.arrowRightCircle}<span>Continue</span></button>
     </section>`, "import");
-  $("#back").onclick = showImportSource;
+  $("#back").onclick = showImportLength;
 
   const refresh = () => {
     const n = importWordsValid(d);
@@ -599,17 +651,6 @@ function showImportWords() {
     }
     $("#continue").disabled = !canImport(d);
   };
-  const name = $("#name");
-  name.oninput = () => { d.name = name.value; refresh(); };
-
-  for (const option of app.querySelectorAll(".segmented button")) {
-    option.onclick = () => {
-      d.wordCount = Number(option.dataset.words);
-      d.active = Math.min(d.active, d.wordCount - 1);
-      showImportWords();
-      focusSlot(d.active);
-    };
-  }
 
   const applyPaste = (text) => {
     try {

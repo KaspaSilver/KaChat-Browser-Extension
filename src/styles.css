@@ -1010,3 +1010,17 @@ button.kl-tile:not(:disabled), .kl-tile-split { cursor: pointer; }
 .kl-claims-count { position: absolute; top: 0; right: -2px; min-width: 15px; height: 15px; padding: 0 4px; box-sizing: border-box; border-radius: 999px; background: var(--kaspa); color: #fff; font-size: 10px; font-weight: 700; line-height: 15px; text-align: center; pointer-events: none; }
 .kl-claims { display: flex; flex-direction: column; gap: 12px; }
 .kl-claims .kl-reg { margin: 0; }
+.what-button { align-self: center; justify-content: center; }
+.explainer { gap: 18px; }
+.explainer-section h3 { margin: 0 0 6px; font-size: 16px; font-weight: 700; }
+.explainer-section p { margin: 0; line-height: 1.45; }
+
+/* Expired tab + grace countdowns (iOS cb3c27d, fde757f) */
+.kl-countdown { font-variant-numeric: tabular-nums; }
+.kl-tile-release { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.kl-tile-release .kl-countdown { font-size: 15px; font-weight: 700; color: #ff9f0a; }
+.kl-grace-line { display: flex; align-items: flex-start; gap: 6px; margin-top: 6px; }
+.kl-grace-line svg { width: 14px; height: 14px; flex: none; margin-top: 1px; }
+.kl-grace-copy { display: flex; flex-direction: column; gap: 2px; }
+.kl-grace-copy .kl-countdown { font-weight: 600; }
+.underline-tabs button { white-space: nowrap; }

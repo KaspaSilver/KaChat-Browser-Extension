@@ -25,6 +25,11 @@
 // all profile lookups for 10 minutes, any other failure that address for 5 minutes. Own profile
 // records are stored per network (`ownProfileStorageKey`).
 //
+// This wallet's own profile follows the chain on every network (iOS 5d4ce87, `syncOwnProfile`):
+// the indexer's `GET /profiles/{address}` record replaces the device's copy when the device has
+// none (a fresh import) or it is a different, newer record (`ownProfileSyncDecision`), so a
+// profile saved on another device shows here and the editor starts from it.
+//
 // The Swift file also holds KachatSocialImageResolver (a profile's avatar, banner and bio, looked
 // up on the device from its social links). Here it lives in social-image-resolver.js and is
 // re-exported below; the app keeps one instance with its own fetch and storage.
@@ -36,7 +41,7 @@ import {
 } from "./registry-state.js";
 
 export {
-  KachatSocialImageResolver, socialImageCachePrefix, socialFreshForMs, socialLookupDeadlineMs, socialRequestTimeoutMs, socialRecentMs,
+  KachatSocialImageResolver, socialImageCachePrefix, socialImageLegacyCachePrefix, socialFreshForMs, socialLookupDeadlineMs, socialRequestTimeoutMs, socialRecentMs,
 } from "./social-image-resolver.js";
 
 /** The storage key of the walker's cache (testnet-10). */
@@ -54,6 +59,27 @@ export function ownProfileStorageKey(address) {
   const a = String(address ?? "").trim().toLowerCase();
   return `${ownProfileKeyPrefixFor(a.startsWith("kaspa:") ? "mainnet" : "testnet")}:${a}`;
 }
+/**
+ * Whether the indexer's record of this wallet's own profile replaces this device's copy (iOS
+ * 5d4ce87 `syncOwnProfile`'s rule). `local`: the `ownProfile()` record `{ txId, at }` or null;
+ * `remote`: the `IndexerAPI.profile` shape `{ profile, txId, updatedAt }` or null.
+ * -> "adopt": the device has no copy (a fresh import), or the record is a different one (txId)
+ *    saved after the device's last save (`updatedAt > at`);
+ *    "keep": the same record, or not newer than the device's last save (the indexer hasn't seen
+ *    this device's latest save yet), or it carries no `updatedAt` to compare;
+ *    "none": the indexer has no usable record (no profile or no txId) - the device copy stays.
+ */
+export function ownProfileSyncDecision(local, remote) {
+  if (!remote || !remote.profile || typeof remote.txId !== "string" || !remote.txId) return "none";
+  if (!local) return "adopt";
+  if (String(local.txId ?? "").toLowerCase() === remote.txId.toLowerCase()) return "keep";
+  if (remote.updatedAt == null) return "keep";
+  const at = Number(remote.updatedAt);
+  const saved = Number(local.at);
+  if (!Number.isFinite(at) || !(at > (Number.isFinite(saved) ? saved : 0))) return "keep";
+  return "adopt";
+}
+
 /** A 503 from `GET /profiles/{address}` (an indexer without the profiles follower) pauses every
  *  profile-only lookup this long (10 minutes). */
 export const profilesUnavailablePauseMs = 600_000;
@@ -119,6 +145,9 @@ function isUpgradingError(error) {
  *  - `manifest`: a verified Manifest (manifest.js), or a (sync/async) function returning one; called
  *      once and kept
  *  - `now()`: unix ms (Number or BigInt; default Date.now)
+ *  - optional: `virtualDaaScore()` -> Promise<BigInt|number> the network's virtual DAA score (desktop:
+ *      engine.currentDagPoint().virtualDaaScore). With it, an indexer more than `maxIndexerLagDaa`
+ *      behind the network isn't used (iOS 7aa6c6d); without it, the indexer's own `synced` is trusted.
  *  - optional: `isEnabled()` (default true; false makes refresh a no-op, as iOS
  *      KachatNamesService.isLaunched - the app passes that gate), `log(...args)` (default console.log), `cacheKey`
  *      (default "kachat-names-registry-testnet-v1"), `sleep(ms)`.
@@ -134,6 +163,7 @@ export class KachatNamesRegistry {
       manifest: deps.manifest ?? null,
       now: deps.now ?? (() => Date.now()),
       isEnabled: deps.isEnabled ?? (() => true),
+      virtualDaaScore: deps.virtualDaaScore ?? null,
       log: deps.log ?? ((...a) => console.log(...a)),
       cacheKey: deps.cacheKey ?? registryCacheKey,
       sleep: deps.sleep ?? sleep,
@@ -165,6 +195,10 @@ export class KachatNamesRegistry {
     this._profilesUnavailableUntil = 0;
     /** lowercased address -> unix ms of its last failed profile-only lookup */
     this._profileMisses = new Map();
+    /** lowercased address -> the own-profile sync in flight (one each) */
+    this._ownProfileSyncs = new Map();
+    /** lowercased address -> unix ms of its last answered own-profile sync */
+    this._ownProfileSyncedAt = new Map();
   }
 
   // MARK: - Observing (Swift @Published)
@@ -200,7 +234,12 @@ export class KachatNamesRegistry {
     if (!this.deps.isEnabled()) throw new Failure("there is no .kachat registry on this network yet");
     const m = await this._loadManifest();
     if (this.source == null || forceSourceCheck) {
-      this.source = await this._chooseSource(m);
+      const chosen = await this._chooseSource(m);
+      if (this.source && this.source.kind !== chosen.kind) {
+        this.deps.log("[KachatNames] registry source:", chosen.kind === "chain"
+          ? "the chain (the indexer is behind or elsewhere)" : "the indexer");
+      }
+      this.source = chosen;
     }
     if (this.source.kind === "chain" && (this.chainState == null || this._cacheNetwork !== m.network)) {
       this.chainState = (await this._loadCache(m)) ?? RegistryState.atGenesis(m);
@@ -217,6 +256,8 @@ export class KachatNamesRegistry {
     this._ownProfiles = new Map();
     this._profilesUnavailableUntil = 0;
     this._profileMisses = new Map();
+    this._ownProfileSyncs = new Map();
+    this._ownProfileSyncedAt = new Map();
     this.lastError = null;
     this.registryUpgrading = false;
     this.refreshedAt = null;
@@ -232,13 +273,26 @@ export class KachatNamesRegistry {
   /** Whether the names indexer is the source. */
   get isIndexer() { return this.source?.kind === "indexer"; }
 
+  /** An indexer further behind the network than this many DAA (about a minute) isn't used: its
+   *  names would be stale - a name just claimed or sold missing, a registration waiting on it - so
+   *  the app walks the chain itself until it catches up (iOS 7aa6c6d `maxIndexerLagDaa`). */
+  static get maxIndexerLagDaa() { return 600n; }
+
   async _chooseSource(m) {
     const base = this.indexerBase();
     if (!base) return { kind: "chain" };
     try {
       const status = IndexerAPI.status(await this._get(base, "/names/status"));
       // registry v4: the indexer is matched on the registry id alone (no price covenant)
-      if (status.registryCovenantId?.toLowerCase() === hex(m.registryCovenantId)) return { kind: "indexer", base };
+      if (status.registryCovenantId?.toLowerCase() !== hex(m.registryCovenantId)) return { kind: "chain" };
+      if (status.synced === false) return { kind: "chain" };
+      // Without a network position to compare with, the indexer's own "synced" is trusted.
+      if (status.indexedDaa != null && typeof this.deps.virtualDaaScore === "function") {
+        let virtual = null;
+        try { virtual = BigInt(await this.deps.virtualDaaScore()); } catch { virtual = null; }
+        if (virtual != null && virtual > BigInt(status.indexedDaa) + KachatNamesRegistry.maxIndexerLagDaa) return { kind: "chain" };
+      }
+      return { kind: "indexer", base };
     } catch { /* no indexer: walk the chain */ }
     return { kind: "chain" };
   }
@@ -259,7 +313,9 @@ export class KachatNamesRegistry {
    *  A failed refresh counts as an attempt too (`refreshIfStale` waits `maxAge` before the next)
    *  and bumps `revision` only when the error changed, so screens that reload on `revision` (and
    *  refresh from there) can't turn a refusal into a refresh loop. */
-  refresh({ forceSourceCheck = false } = {}) {
+  /** Every refresh re-checks the source (iOS 7aa6c6d), so an indexer that fell behind is dropped and
+   *  one that caught up is used again (an old `{ forceSourceCheck }` argument is ignored). */
+  refresh() {
     if (!this.deps.isEnabled()) return Promise.resolve();
     if (this._refreshing) return this._refreshing;
     this.isRefreshing = true;
@@ -267,7 +323,7 @@ export class KachatNamesRegistry {
       const previousError = this.lastError;
       let changed = true;
       try {
-        const m = await this.prepare({ forceSourceCheck });
+        const m = await this.prepare({ forceSourceCheck: true });
         if (this.source.kind === "chain") await this._walk(m);
         this.lastError = null;
         this.registryUpgrading = false;
@@ -497,6 +553,29 @@ export class KachatNamesRegistry {
       .sort((a, b) => (a.expiresAt < b.expiresAt ? -1 : a.expiresAt > b.expiresAt ? 1 : 0));
   }
 
+  /** Names that expired and are still in their grace period (`Status.grace`: only their owner can
+   *  renew them), soonest release first: each is free to claim at `expiresAt + graceMs`. The
+   *  indexer serves `GET /names/grace` (kachat-indexer docs/KACHAT_NAMES_GRACE.md); an indexer
+   *  without it yet is answered from this device's own chain walk when it has one. Swift
+   *  `inGrace()` (iOS cb3c27d). */
+  async inGrace() {
+    await this.prepare();
+    const grace = this.graceMs, now = this._nowMs();
+    const fromChain = () => (this.chainState?.names ?? []).map((n) => RegistryState.nameInfo(n));
+    let all;
+    if (this.source.kind === "indexer") {
+      try {
+        all = IndexerAPI.names(await this._get(this.source.base, "/names/grace"), keyOf);
+      } catch {
+        all = fromChain();
+      }
+    } else {
+      all = fromChain();
+    }
+    return all.filter((n) => n.status(grace, now) === Status.grace)
+      .sort((a, b) => (a.expiresAt < b.expiresAt ? -1 : a.expiresAt > b.expiresAt ? 1 : 0));
+  }
+
   /** Open offers on a name, highest first. Without an indexer only the offers this device made
    *  are known. Swift `offers(for:)`. */
   async offersFor(name) {
@@ -657,6 +736,15 @@ export class KachatNamesRegistry {
     if (own) return makeIdentity({ address, profile: own.sanitized() });
     // not a Kaspa address: nothing to ask (and nothing unchecked goes into the URL)
     if (!decodeAddress(address)) return makeIdentity({ address });
+    const record = await this._fetchProfileRecord(address);
+    return makeIdentity({ address, profile: record.profile?.sanitized() ?? null });
+  }
+
+  /** `GET /profiles/{address}` for a checked, lowercased address -> the `IndexerAPI.profile`
+   *  record, under the profile pauses: throws without a request with no indexer, during a 503
+   *  pause or within `profileMissPauseMs` of this address's last failure; a 503 starts the
+   *  10-minute pause and any failure records a miss for the address. */
+  async _fetchProfileRecord(address) {
     const now = Number(this._nowMs());
     const base = this.indexerBase();
     if (!base || now < this._profilesUnavailableUntil) throw new Failure("profiles are not indexed on this network yet");
@@ -686,14 +774,57 @@ export class KachatNamesRegistry {
       throw miss("the names indexer sent an unreadable profile");
     }
     this._profileMisses.delete(address);
-    return makeIdentity({ address, profile: record.profile?.sanitized() ?? null });
+    return record;
+  }
+
+  /**
+   * Brings this device's copy of its own profile up to date with the chain (iOS 5d4ce87
+   * `syncOwnProfile(address:)`), so a profile saved on another device - KaChat for iOS or Android,
+   * another desktop - shows here and the editor starts from it instead of overwriting it. Reads
+   * `GET /profiles/{address}` (either network: no registry data) and adopts that record when
+   * `ownProfileSyncDecision` says so: stored like a save (`{ address, profile, txId, at:
+   * updatedAt }`) and the revision bumped. Resolves true when it adopted, false otherwise; never
+   * throws. Under the same pauses as `profileOnlyIdentity` (no request without an indexer, during
+   * a 503 pause or within 5 minutes of this address's failed lookup). One sync per address at a
+   * time (a call while one runs joins it); `maxAgeMs` > 0 skips the request when this address was
+   * answered that recently (0 = always ask).
+   */
+  syncOwnProfile(rawAddress, { maxAgeMs = 0 } = {}) {
+    const address = String(rawAddress ?? "").trim().toLowerCase();
+    if (!decodeAddress(address)) return Promise.resolve(false);
+    const running = this._ownProfileSyncs.get(address);
+    if (running) return running;
+    const syncs = this._ownProfileSyncs;
+    const job = this._syncOwnProfile(address, Number(maxAgeMs) || 0)
+      .catch(() => false) // unreachable, paused or unreadable: the device copy stays
+      .finally(() => { if (syncs.get(address) === job) syncs.delete(address); });
+    syncs.set(address, job);
+    return job;
+  }
+
+  async _syncOwnProfile(address, maxAgeMs) {
+    const last = this._ownProfileSyncedAt.get(address);
+    if (maxAgeMs > 0 && last != null && Number(this._nowMs()) - last < maxAgeMs) return false;
+    const record = await this._fetchProfileRecord(address);
+    this._ownProfileSyncedAt.set(address, Number(this._nowMs()));
+    if (String(record.address ?? "").trim().toLowerCase() !== address) return false;
+    const remote = { profile: record.profile?.sanitized() ?? null, txId: record.txId, updatedAt: record.updatedAt };
+    const local = await this.ownProfile(address);
+    if (ownProfileSyncDecision(local, remote) !== "adopt") return false;
+    this.deps.log("[KachatNames] own profile updated from the chain (saved on another device):", String(remote.txId).slice(0, 12));
+    const at = remote.updatedAt != null ? Number(remote.updatedAt) : Number(this._nowMs());
+    await this._storeOwnProfile({ address, profile: remote.profile, txId: remote.txId, at });
+    return true;
   }
 
   /** Unix ms until which profile-only lookups are paused after a 503 (0 = not paused). */
   get profilesPausedUntil() { return this._profilesUnavailableUntil; }
 
-  /** The profile record this device last wrote for `address`: `{ address, profile: Profile, txId,
-   *  at: Number }` or null. Swift `ownProfile(for:)`. Stored per network (`ownProfileStorageKey`). */
+  /** This device's record of its own profile for `address`: `{ address, profile: Profile, txId,
+   *  at: Number }` or null - the record it last wrote (`at` = when it was saved), or the one
+   *  `syncOwnProfile` adopted from the chain (`at` = the indexer's `updatedAt`). Swift
+   *  `ownProfile(for:)`. Stored per network (`ownProfileStorageKey`) as JSON `{ address, profile,
+   *  txId, at }`; a `savedAt` in place of `at` is read too. */
   async ownProfile(rawAddress) {
     const address = String(rawAddress).trim().toLowerCase();
     if (this._ownProfiles.has(address)) return this._ownProfiles.get(address);
@@ -703,7 +834,7 @@ export class KachatNamesRegistry {
       const j = JSON.parse(text);
       const profile = Profile.fromJSONObject(j.profile);
       if (!profile || typeof j.address !== "string" || typeof j.txId !== "string") return null;
-      const p = { address: j.address, profile, txId: j.txId, at: Number(j.at) };
+      const p = { address: j.address, profile, txId: j.txId, at: Number(j.at ?? j.savedAt) };
       this._ownProfiles.set(address, p);
       return p;
     } catch {
@@ -714,7 +845,10 @@ export class KachatNamesRegistry {
   /** Remember the profile record this wallet just wrote (a Profile or its plain fields). */
   async noteOwnProfile(profile, rawAddress, txId) {
     const p = profile instanceof Profile ? profile : new Profile(profile ?? {});
-    const record = { address: String(rawAddress).trim().toLowerCase(), profile: p.sanitized(), txId, at: Number(this._nowMs()) };
+    await this._storeOwnProfile({ address: String(rawAddress).trim().toLowerCase(), profile: p.sanitized(), txId, at: Number(this._nowMs()) });
+  }
+
+  async _storeOwnProfile(record) {
     this._ownProfiles.set(record.address, record);
     this._profileMisses.delete(record.address);
     await this._storageSet(ownProfileStorageKey(record.address), JSON.stringify({ ...record, profile: record.profile.toJSON() }));

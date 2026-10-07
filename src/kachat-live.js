@@ -93,6 +93,49 @@ function duration(ms) {
   if (minutes >= 60) { const h = Math.floor(minutes / 60), m = minutes % 60; return m ? `${h}h ${m}m` : `${h}h`; }
   return `${minutes} min`;
 }
+/** Time left until a moment, for a live countdown (iOS KachatLive.countdown, cb3c27d): "2d 5h"
+ *  while days remain, else "1:04:09" or "4:09"; "0:00" once it passed. */
+function countdownText(ms) {
+  const total = Math.max(0, Math.floor(Number(ms) / 1000));
+  if (!Number.isFinite(total)) return "";
+  if (total >= 86_400) {
+    const days = Math.floor(total / 86_400);
+    const hours = Math.floor((total % 86_400) / 3_600);
+    return hours ? `${days}d ${hours}h` : `${days}d`;
+  }
+  const h = Math.floor(total / 3_600);
+  const m = Math.floor((total % 3_600) / 60);
+  const pad = (n) => String(n).padStart(2, "0");
+  return h ? `${h}:${pad(m)}:${pad(total % 60)}` : `${m}:${pad(total % 60)}`;
+}
+
+// Live countdowns (iOS TimelineView, every second): each [data-countdown] shows the time left until
+// its unix-ms moment. One timer while any is on screen. One with data-countdown-reload reloads the
+// hub once when it reaches zero, so a released name moves from Expired to Available (iOS cb3c27d).
+let countdownTimer = null;
+const countdownReloaded = new Set();
+
+function countdownHtml(atMs, { reloadKey = null } = {}) {
+  if (countdownTimer == null) countdownTimer = setInterval(tickCountdowns, 1_000);
+  const at = Number(atMs);
+  return `<span class="kl-countdown" data-countdown="${at}"${reloadKey ? ` data-countdown-reload="${esc(reloadKey)}"` : ""}>${esc(countdownText(at - Date.now()))}</span>`;
+}
+
+function tickCountdowns() {
+  const shown = [...document.querySelectorAll("[data-countdown]")];
+  if (!shown.length) { clearInterval(countdownTimer); countdownTimer = null; return; }
+  const now = Date.now();
+  let released = false;
+  for (const el of shown) {
+    const left = Number(el.dataset.countdown) - now;
+    const text = countdownText(left);
+    if (el.textContent !== text) el.textContent = text;
+    const key = el.dataset.countdownReload;
+    if (key && left <= 0 && !countdownReloaded.has(key)) { countdownReloaded.add(key); released = true; }
+  }
+  if (released && hub.isLive) hub.reload();
+}
+
 /** `count` periods: "1 year" / "2 years", or on a short clock "10 min" / "20 min". */
 function periods(count) {
   const n = BigInt(count);
@@ -338,7 +381,10 @@ export const hub = {
   upgrading: false,
   search: { kind: "idle" },
   listings: [],
+  /** names expired past grace: back on the market, Available to anyone (iOS eea52b2) */
   lapsed: [],
+  /** expired and still in grace: the Expired tab, each counting down to its release (iOS cb3c27d) */
+  grace: [],
   activity: [],
   loadError: null,
   loaded: false,
@@ -397,6 +443,7 @@ export const hub = {
     try {
       this.listings = await reg.listings();
       this.lapsed = await reg.lapsed();
+      this.grace = await reg.inGrace().catch(() => []);
       // Your own names and the offers you made live in Profile > Your Domains (iOS 0765ce0).
       this.activity = await reg.activity();
       this.loadError = null;
@@ -757,6 +804,27 @@ export function livePageHtml(page) {
         : emptyCard(hub.loaded ? "No expired names right now." : null)}
       ${loadErrorHtml()}`;
   }
+  if (page === "expired") {
+    // Names that expired and are still in their grace period - only their owner can renew them -
+    // soonest release first, each counting down to its release to Available, with its claim price.
+    // When one reaches zero the hub reloads and it moves to Available (iOS cb3c27d).
+    const grace = graceMs();
+    return `
+      ${sectionHeader("Expired")}
+      ${hub.grace.length
+        ? nameGridHtml(hub.grace.map((n) => {
+          const releaseAt = n.expiresAt + grace;
+          const price = namePrice(n.name);
+          return `
+            <button class="km-card kl-tile" data-name="${esc(n.name)}" aria-label="${esc(n.display)}">
+              ${nameTileHtml(esc(n.name), `
+                <span class="kl-tile-release"><span class="muted tiny">Released in</span>${countdownHtml(releaseAt, { reloadKey: `${n.name}:${releaseAt}` })}</span>
+                ${price != null ? `<span class="muted tiny kl-tile-expiry">${esc(amount(price))}</span>` : ""}`)}
+            </button>`;
+        }).join(""))
+        : emptyCard(hub.loaded ? "No names are in their grace period right now." : null)}
+      ${loadErrorHtml()}`;
+  }
   if (page === "activity") {
     return `
       ${sectionHeader("Recent activity", "Every claim, renewal, listing, sale, offer, transfer and reclaim across the registry.")}
@@ -797,7 +865,7 @@ export function bindLivePage(container, nav) {
   for (const row of container.querySelectorAll("[data-name]")) {
     row.onclick = () => {
       const name = row.dataset.name;
-      const info = [...hub.listings, ...hub.lapsed].find((n) => n.name === name);
+      const info = [...hub.listings, ...hub.lapsed, ...hub.grace].find((n) => n.name === name);
       if (info) nav.openName(info);
     };
   }
@@ -958,7 +1026,7 @@ const labeledRow = (title, value, bold = false) =>
  *   operation(): the Operation for the current inputs, or null
  *   inputsHtml / bindInputs(panel, changed): the sheet's own fields; `changed()` rebuilds
  */
-function openTxSheet({ title, confirmTitle, doneTitle = "Transaction sent", warning = null, footer = null, rows = [], operation, inputsHtml = "", bindInputs = null, onDone = () => {}, onFinished = null }) {
+function openTxSheet({ title, confirmTitle, doneTitle = "Transaction sent", warning = null, footer = null, rows = [], operation, inputsHtml = "", bindInputs = null, onDone = () => {}, onFinished = null, back = null }) {
   const state = { plan: null, planError: null, building: false, sending: false, txId: null, sendError: null, token: 0, balance: null };
   let handle = null;
   const rowsNow = () => (typeof rows === "function" ? rows() : rows);
@@ -1068,10 +1136,14 @@ function openTxSheet({ title, confirmTitle, doneTitle = "Transaction sent", warn
     paint();
   }
 
+  // A step of a flow (Renew after "How long?", iOS 26bd5dc): Back, not Cancel, leads back.
+  let wentBack = false;
   handle = openPanel({
-    title, leading: "Cancel", full: true,
+    title, leading: back ? "Back" : "Cancel", full: true,
     body: `<div data-inputs class="kl-inputs">${inputsHtml}</div><div data-plan></div>`,
+    onClose: () => { if (wentBack && !state.txId && !state.sending) back?.(); },
   });
+  if (back) handle.panel.querySelector(".panel-bar > [data-close]")?.addEventListener("click", () => { wentBack = true; });
   bindInputs?.(handle.panel, rebuild);
   rebuild();
   chattingBalance().then((balance) => { state.balance = balance; paint(); });
@@ -1278,10 +1350,28 @@ function openOfferSheet(name, info) {
   });
 }
 
+/** Renew (iOS 26bd5dc): "How long?" first - the periods as full-width choices with what each
+ *  costs - then the review with the fee and Renew; its Back leads to "How long?" again. Each period
+ *  costs the renewal price (registry v4). */
 function openRenewSheet(info) {
-  const state = { years: 1n };
+  const perYear = renewPrice(info.name) ?? 0n;
+  showSheet({
+    title: "How long?",
+    subtitle: "A renewal starts the next period at the current expiry, not from today.",
+    rows: Array.from({ length: Math.max(1, maxYears()) }, (_, i) => ({
+      label: yearsText(i + 1), subtitle: amount(perYear * BigInt(i + 1)), icon: SYMBOLS.renew,
+      onClick: () => openRenewReview(info, BigInt(i + 1)),
+    })),
+    cancelSubtitle: "Keep the name as it is.",
+  });
+}
+
+/** Renew, step 2: what the chosen period costs, and Renew. */
+function openRenewReview(info, years) {
+  const state = { years };
   const perYear = renewPrice(info.name) ?? 0n;
   openTxSheet({
+    back: () => openRenewSheet(info),
     title: "Renew", confirmTitle: "Renew", doneTitle: "Renewed",
     footer: "A renewal starts the next period at the current expiry, not from today, so a name that expired a while ago gets less time. The price goes to the miners.",
     rows: () => [
@@ -1290,10 +1380,6 @@ function openRenewSheet(info) {
       { title: "New period", value: `${day(info.expiresAt)} – ${day(info.expiresAt + state.years * periodMs())}` },
     ],
     operation: () => Operation.renew(info, state.years),
-    inputsHtml: `<div class="form-section"><div class="form-card"><div class="form-row">${segmented("years", Array.from({ length: Math.max(1, maxYears()) }, (_, i) => [i + 1, yearsText(i + 1)]), 1)}</div></div></div>`,
-    bindInputs(panel, changed) {
-      bindSegmented(panel, "years", (value) => { state.years = BigInt(value); changed(); });
-    },
   });
 }
 
@@ -1487,6 +1573,7 @@ export async function showLiveNameDetail({ info: initial, onBack }) {
           <div class="kl-expiry">${statusPill(status)}<span class="muted tiny">Expires ${esc(day(info.expiresAt))}</span></div>
         </div>
         ${info.periodStart != null ? `<div class="muted tiny kl-paid">${SYMBOLS.calendar}<span>Paid from ${esc(day(info.periodStart))} to ${esc(day(info.expiresAt))}</span></div>` : ""}
+        ${status === Status.grace ? `<div class="tiny kl-orange kl-grace-line">${SYMBOLS.hourglass}<span class="kl-grace-copy"><span>Grace period ends ${esc(day(info.expiresAt + graceMs()))}</span><span>Released in ${countdownHtml(info.expiresAt + graceMs())}</span></span></div>` : ""}
         ${note}
       </div>`;
   };

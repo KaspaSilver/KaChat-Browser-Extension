@@ -58,6 +58,12 @@ export function showKachatMarket({ onBack }) {
     ${live.nameGridHtml(Array.from({ length: 2 }, () => tile('disabled aria-hidden="true"')).join(""))}
     <p class="muted small center-text">Expired names appear here once .kachat names launch.</p>`;
 
+  // Names in their grace period, redacted (iOS expiredPage, cb3c27d).
+  const expiredPage = () => `
+    ${header("Expired")}
+    ${live.nameGridHtml(Array.from({ length: 2 }, () => `<button class="km-card kl-tile" disabled aria-hidden="true">${live.nameTileHtml(redact("somename"), '<span class="muted tiny">00:00</span>')}</button>`).join(""))}
+    <p class="muted small center-text">Names in their grace period appear here once .kachat names launch.</p>`;
+
   const activityPage = () => `
     ${header("Recent activity", "Every claim, renewal, listing, sale, offer, transfer and reclaim across the registry.")}
     <div class="km-card km-list">
@@ -95,7 +101,7 @@ export function showKachatMarket({ onBack }) {
           <div id="search-result">${searchResult()}</div>
         </div>
         <div class="underline-tabs" role="tablist">
-          ${[["market", "Marketplace"], ["available", "Available"], ["activity", "Activity"]].map(([id, title]) =>
+          ${[["market", "Marketplace"], ["available", "Available"], ["expired", "Expired"], ["activity", "Activity"]].map(([id, title]) =>
             `<button role="tab" data-page="${id}" aria-selected="${id === page}">${title}</button>`).join("")}
         </div>
         <div class="km-page" id="km-page">${pageHtml()}</div>
@@ -120,7 +126,7 @@ export function showKachatMarket({ onBack }) {
   const bindClaims = () => { const b = $("#claims"); if (b) b.onclick = () => live.openClaimsList(); };
 
   // Mainnet (or before the testnet registry is ready): the mockups.
-  const mockPage = () => (page === "available" ? availablePage() : page === "activity" ? activityPage() : marketPage());
+  const mockPage = () => (page === "available" ? availablePage() : page === "expired" ? expiredPage() : page === "activity" ? activityPage() : marketPage());
   // Live, or not launched here (mainnet): the same pages - empty on mainnet (iOS 7227d69). The
   // placeholder pages remain only for a testnet registry that is setting up.
   const livePages = () => isLive() || !kachatLaunched;
