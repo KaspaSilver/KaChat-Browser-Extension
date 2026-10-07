@@ -1,7 +1,7 @@
 // The bell's .kachat news (iOS 86471dd KachatNamesNotifier; KaChat-Desktop ui/kachat-names-notifier.js):
 // turns registry changes into bell rows - an offer on one of your names, a name sold or reclaimed,
-// its renewal window opening, its expiry and lapse, and what became of your own offers (accepted,
-// declined, expired, returned).
+// its renewal window opening, its expiry and the end of its grace (no longer yours: Available to
+// anyone, iOS eea52b2), and what became of your own offers (accepted, declined, expired, returned).
 //
 // It compares what the registry says now with what it saw on the last check (kept per wallet), after
 // registry refreshes and each time the wallet opens. The first check of a wallet only records where
@@ -93,7 +93,7 @@ export async function checkKachatNamesNews() {
       if (!quiet) record({ id: `kachat-${id}`, source: "kachat", title, body, timestamp: stamp, targetId: name });
     };
 
-    // Your names: renewal open, expired (grace), lapsed - once per paid period.
+    // Your names: renewal open, expired (grace), past grace (no longer yours) - once per paid period.
     for (const n of owned) {
       const display = `${n.name}.kachat`;
       const expiresAt = String(n.expiresAt);
@@ -121,16 +121,16 @@ export async function checkKachatNamesNews() {
           s.renewNoted = true;
           s.graceNoted = true;
           if (!s.lapsedNoted) {
-            post(`lapsed-${n.name}-${expiresAt}`, n.name, `${display} has lapsed`,
-              "It's no longer yours and has moved to Reclaimable in the marketplace. Reclaim it yourself to get your bond back.");
+            post(`lapsed-${n.name}-${expiresAt}`, n.name, `${display} is no longer yours`,
+              "It expired and wasn't renewed, so it's now available to anyone in the marketplace. Your bond comes back to you when someone claims it.");
             s.lapsedNoted = true;
           }
       }
       next.names[n.name] = s;
     }
 
-    // Names that left this wallet: sold, bought through an offer, or reclaimed by someone. A
-    // transfer or release is your own doing and needs no notice.
+    // Names that left this wallet: sold, bought through an offer, or freed (reclaimed - claiming an
+    // expired name frees it first). A transfer or release is your own doing and needs no notice.
     for (const name of Object.keys(old?.names || {})) {
       if (next.names[name]) continue;
       let history = [];
@@ -143,7 +143,7 @@ export async function checkKachatNamesNews() {
       } else if (last.op === "offer_accepted" || last.op === "offer_accept") {
         post(`sold-${last.txId}`, name, `${display} sold`, "You accepted an offer for it.");
       } else if (last.op === "reclaim") {
-        post(`reclaimed-${last.txId}`, name, `${display} was reclaimed`, "It lapsed and someone reclaimed it. It's free to register again.");
+        post(`reclaimed-${last.txId}`, name, `${display} was freed`, "It expired and was cleared from the registry. Your bond is back with you.");
       }
     }
 

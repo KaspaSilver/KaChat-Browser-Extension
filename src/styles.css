@@ -999,3 +999,14 @@ button.kl-tile:not(:disabled), .kl-tile-split { cursor: pointer; }
 .bell-empty { display: flex; flex-direction: column; align-items: center; gap: 10px; text-align: center; padding: 60px 30px; }
 .bell-empty svg { width: 40px; height: 40px; }
 .bell-empty p { margin: 0; }
+
+/* .kachat v4 (iOS eea52b2 / ad184c3 / b219bb0): past grace a name is "Available"; a sale tile says
+   when the name expires; the claims button with its count next to How it works. */
+.kl-pill.kl-lapsed { color: #30d158; background: rgba(48,209,88,.15); }
+.kl-tile-expiry { margin-top: -6px; }
+.kl-tile-soon { padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; color: #ff9f0a; background: rgba(255,159,10,.15); }
+.km-nav-actions { display: flex; align-items: center; gap: 2px; }
+.kl-claims-button { position: relative; }
+.kl-claims-count { position: absolute; top: 0; right: -2px; min-width: 15px; height: 15px; padding: 0 4px; box-sizing: border-box; border-radius: 999px; background: var(--kaspa); color: #fff; font-size: 10px; font-weight: 700; line-height: 15px; text-align: center; pointer-events: none; }
+.kl-claims { display: flex; flex-direction: column; gap: 12px; }
+.kl-claims .kl-reg { margin: 0; }

@@ -10,7 +10,7 @@
 // On TESTNET (testnet-10, with the bundled registry manifest verified) it is live
 // (kachat-live.js, iOS KachatNamesLiveViews.swift): search shows real availability and the price,
 // Claim registers (its progress is a half sheet that stays up until it's done), and the tabs -
-// Marketplace, Reclaimable, Activity (iOS 0765ce0) - read the registry. Your own names and the
+// Marketplace, Available, Activity (iOS 0765ce0, eea52b2) - read the registry. Your own names and the
 // offers you made live in Your Domains.
 
 import { app, esc, render, $, ICONS, navHeader } from "./ui.js";
@@ -53,10 +53,10 @@ export function showKachatMarket({ onBack }) {
     <button class="km-bordered with-icon" disabled>${SYMBOLS.tag}<span>List a Name for Sale</span></button>
     <p class="muted small center-text">Listings appear here once .kachat names launch.</p>`;
 
-  const reclaimablePage = () => `
-    ${header("Reclaimable", "Names whose owners let them lapse. Anyone may reclaim one: the bond goes back to its last owner, you keep the freed deposit as a bounty, and the name is free to claim.")}
+  const availablePage = () => `
+    ${header("Available")}
     ${live.nameGridHtml(Array.from({ length: 2 }, () => tile('disabled aria-hidden="true"')).join(""))}
-    <p class="muted small center-text">Reclaimable names appear here once .kachat names launch.</p>`;
+    <p class="muted small center-text">Expired names appear here once .kachat names launch.</p>`;
 
   const activityPage = () => `
     ${header("Recent activity", "Every claim, renewal, listing, sale, offer, transfer and reclaim across the registry.")}
@@ -76,7 +76,10 @@ export function showKachatMarket({ onBack }) {
       <header class="navbar">
         <button class="nav-back" id="back" aria-label="Back">${ICONS.back}<span>Back</span></button>
         <div class="nav-title">.kachat</div>
-        <button class="icon plain nav-right accent" id="how" aria-label="How it works">${SYMBOLS.question}</button>
+        <div class="nav-right km-nav-actions">
+          <span id="km-claims">${claimsButton()}</span>
+          <button class="icon plain accent" id="how" aria-label="How it works">${SYMBOLS.question}</button>
+        </div>
       </header>
       <section class="km">
         <div class="km-hero compact">
@@ -92,7 +95,7 @@ export function showKachatMarket({ onBack }) {
           <div id="search-result">${searchResult()}</div>
         </div>
         <div class="underline-tabs" role="tablist">
-          ${[["market", "Marketplace"], ["reclaimable", "Reclaimable"], ["activity", "Activity"]].map(([id, title]) =>
+          ${[["market", "Marketplace"], ["available", "Available"], ["activity", "Activity"]].map(([id, title]) =>
             `<button role="tab" data-page="${id}" aria-selected="${id === page}">${title}</button>`).join("")}
         </div>
         <div class="km-page" id="km-page">${pageHtml()}</div>
@@ -101,6 +104,7 @@ export function showKachatMarket({ onBack }) {
     if (scroller) scroller.scrollTop = scroll;
     $("#back").onclick = onBack;
     $("#how").onclick = () => showHowItWorks(isLive());
+    bindClaims();
     const search = $("#search");
     search.oninput = () => {
       state.search = search.value;
@@ -111,8 +115,12 @@ export function showKachatMarket({ onBack }) {
     bindParts();
   };
 
+  // The names being claimed, with a count, next to How it works (iOS b219bb0 KachatClaimsButton).
+  const claimsButton = () => (isLive() ? live.claimsButtonHtml() : "");
+  const bindClaims = () => { const b = $("#claims"); if (b) b.onclick = () => live.openClaimsList(); };
+
   // Mainnet (or before the testnet registry is ready): the mockups.
-  const mockPage = () => (page === "reclaimable" ? reclaimablePage() : page === "activity" ? activityPage() : marketPage());
+  const mockPage = () => (page === "available" ? availablePage() : page === "activity" ? activityPage() : marketPage());
   // Live, or not launched here (mainnet): the same pages - empty on mainnet (iOS 7227d69). The
   // placeholder pages remain only for a testnet registry that is setting up.
   const livePages = () => isLive() || !kachatLaunched;
@@ -144,6 +152,8 @@ export function showKachatMarket({ onBack }) {
     const scroller = app.querySelector(".km");
     const scroll = scroller?.scrollTop || 0;
     $("#km-status").innerHTML = heroStatus();
+    $("#km-claims").innerHTML = claimsButton();
+    bindClaims();
     $("#km-page").innerHTML = pageHtml();
     paintSearch();
     bindParts();
