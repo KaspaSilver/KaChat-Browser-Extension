@@ -6,10 +6,11 @@
 // contacts of any kind. A deleted entry leaves a tombstone, as on iOS, so a future backup merge
 // can't bring it back.
 //
-// An entry's picture is a photo you assign to it, or else exactly the avatar that address set on
-// its own profile (iOS AddressBookAvatar) - looked up like any other profile here. Assigned photos
-// are your data: kept as small JPEGs (at most 384 px, as iOS) beside the entries, deleted with
-// their entry.
+// The book is strictly local: nothing about a saved address is ever sent anywhere - no profile or
+// avatar lookups (iOS falls back to the address's own profile avatar; here that would hand every
+// saved address to KaChat's indexer, audit EXT-011 - the owner's call: local only). An entry's
+// picture is a photo you assign to it, kept as a small JPEG (at most 384 px, as iOS) beside the
+// entries and deleted with its entry; without one, a placeholder.
 //
 // The Send screens' recipient card shows the saved name of an address and opens the book to pick
 // one (iOS SendKaspaComponents).
@@ -21,7 +22,6 @@ import { isValidKaspaAddress, networkOfAddress, NETWORK } from "./net.js";
 import { scanQr } from "./camera.js";
 import * as dock from "./dock.js";
 import * as wallet from "./wallet.js";
-import { kachatProfiles, kachatSocial } from "./kachat-names.js";
 
 const ENTRIES_PREFIX = "kachat_address_book_wallet_";
 const DELETED_PREFIX = "kachat_address_book_deleted_wallet_";
@@ -141,32 +141,10 @@ const IMPORT_FILE = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none"
 const PLUS = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>';
 const SCAN = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3"/><rect x="8" y="8" width="8" height="8" rx="1"/></svg>';
 
-/** The profile avatar each address set for itself (null: none, or not looked up yet). */
-const profileAvatars = new Map();
-const lookingUp = new Set();
-
-/** Looks up the avatar `address` set on its own profile, then repaints. */
-async function lookUpAvatar(address) {
-  if (profileAvatars.has(address) || lookingUp.has(address)) return;
-  lookingUp.add(address);
-  let url = null;
-  try {
-    const rt = await kachatProfiles();
-    const profile = (await rt.registry.identity(address))?.profile;
-    if (profile?.avatar) url = (await kachatSocial().profile(profile.avatar))?.avatar ?? null;
-  } catch { url = null; }
-  lookingUp.delete(address);
-  profileAvatars.set(address, url);
-  if (url) changed();
-}
-
-/** An entry's picture (iOS AddressBookAvatar): your photo, else the avatar its profile set. */
+/** An entry's picture: the photo you assigned to it, else a placeholder. Local only - no lookups. */
 function avatarHtml(address, size = 40) {
-  const a = normalize(address);
-  const own = photos[a];
-  if (!own) lookUpAvatar(a);
-  const src = own || profileAvatars.get(a);
-  return `<span class="ab-avatar" style="width:${size}px;height:${size}px">${src ? `<img src="${esc(src)}" alt="" referrerpolicy="no-referrer" />` : PERSON}</span>`;
+  const src = photos[normalize(address)];
+  return `<span class="ab-avatar" style="width:${size}px;height:${size}px">${src ? `<img src="${esc(src)}" alt="" />` : PERSON}</span>`;
 }
 
 /** A picked image file as the JPEG an entry keeps: at most 384 px on its longer side, quality 0.8. */
@@ -346,7 +324,6 @@ export function openEditor({ existing = null, address = "", name = "", onSaved =
           <label class="bar-text strong ab-file">${photo ? "Change Photo" : "Choose Photo"}<input type="file" id="ab-photo" accept="image/*" hidden /></label>
           ${photo ? '<button class="bar-text danger-text" id="ab-photo-remove">Remove Photo</button>' : ""}
         </div>
-        <div class="form-footer center-text">Without a photo of your own, this shows the avatar they set on their profile.</div>
       </div>
       <div class="form-section">
         <div class="form-header">Name</div>

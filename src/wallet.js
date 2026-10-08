@@ -60,7 +60,8 @@ export async function newRecoveryPhrase(wordCount = 24) {
  */
 export async function previewMainAddress(phrase, passphrase = "", family = "kaspaStandard") {
   try {
-    const derived = await importMnemonicWithFamily(await kaspa(), phrase, passphrase, { family, index: 0 });
+    // NFKD, as the account will be stored and as iOS derives it (audit EXT-010)
+    const derived = await importMnemonicWithFamily(await kaspa(), phrase, String(passphrase || "").normalize("NFKD"), { family, index: 0 });
     return derived.address;
   } catch {
     return null;
@@ -729,7 +730,7 @@ async function cacheSpendingAddress(accountId, index, address) {
 export async function spendingAddressRange(start, count) {
   const account = await activeAccountSecrets();
   const k = await kaspa();
-  const master = new k.XPrv(new k.Mnemonic(account.mnemonic).toSeed(account.passphrase || ""));
+  const master = new k.XPrv(new k.Mnemonic(account.mnemonic).toSeed(String(account.passphrase || "").normalize("NFKD")));
   const result = {};
   for (let index = start; index < start + count; index += 1) {
     const key = master.derivePath(spendingDerivationPath(index)).toPrivateKey().toString();

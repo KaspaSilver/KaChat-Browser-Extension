@@ -90,6 +90,13 @@ export async function showApproval(id) {
   setInterval(() => { ext.runtime.sendMessage({ type: "approval-ping" }).catch(() => {}); }, 20_000);
 
   let answered = false;
+  // An approved payment on its way: closing the window now must not tell the site "rejected" - the
+  // browser asks "Leave site?" first, and the worker answers "may have been sent" (audit EXT-012).
+  let sending = false;
+  const markSending = (on) => {
+    sending = on;
+    ext.runtime.sendMessage({ type: "approval-sending", id, sending: on }).catch(() => {});
+  };
   const respond = (result) => {
     answered = true;
     ext.runtime.sendMessage({ type: "approval-result", id, result }).catch(() => {});
@@ -100,11 +107,15 @@ export async function showApproval(id) {
     ext.runtime.sendMessage({ type: "approval-result", id, error: true }).catch(() => {});
     setTimeout(() => window.close(), 150);
   };
-  window.addEventListener("beforeunload", () => { if (!answered) ext.runtime.sendMessage({ type: "approval-result", id, error: true }).catch(() => {}); });
+  window.addEventListener("beforeunload", (event) => {
+    if (answered) return;
+    if (sending) { event.preventDefault(); event.returnValue = ""; return; }
+    ext.runtime.sendMessage({ type: "approval-result", id, error: true }).catch(() => {});
+  });
 
   const proceed = () => {
     if (request.kind === "connect") return showConnect(request, respond, reject);
-    if (request.kind === "sendKaspa") return showSendApproval(request, respond, reject);
+    if (request.kind === "sendKaspa") return showSendApproval(request, respond, reject, markSending);
     if (request.kind === "signMessage") return showSignApproval(request, respond, reject);
     return reject();
   };
@@ -228,7 +239,7 @@ async function connectionFor(request, reject) {
 
 // --- send Kaspa -------------------------------------------------------------------------------
 
-async function showSendApproval(request, respond, reject) {
+async function showSendApproval(request, respond, reject, markSending = () => {}) {
   const connection = await connectionFor(request, reject);
   if (!connection) return;
   const [to, sompiText, priorityFeeText] = request.params;
@@ -265,6 +276,7 @@ async function showSendApproval(request, respond, reject) {
     $("#ok").onclick = async () => {
       state.sending = true;
       state.error = "";
+      markSending(true);
       paint();
       try {
         const tip = Math.max(0, state.fee - state.sdkBase) + Number(priorityFee) / 1e8;
@@ -279,6 +291,7 @@ async function showSendApproval(request, respond, reject) {
         respond(txid);
       } catch (error) {
         state.sending = false;
+        markSending(false);
         state.error = String(error?.message || error);
         paint();
       }

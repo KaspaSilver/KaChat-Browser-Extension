@@ -30,12 +30,14 @@ async function armAutoLock() {
   await ext.alarms.create(ALARM, { delayInMinutes: await autoLockMinutes() });
 }
 
+// Locking removes the unlock key only: the site-tab registry (also in storage.session) has to
+// outlive a lock, or open dApp tabs stop hearing account and network events (audit EXT-009).
+const UNLOCK_KEY = "kachat.unlockKey";
+
 async function lockNow() {
   await ext.alarms.clear(ALARM);
-  await ext.storage.session.clear();
+  await ext.storage.session.remove(UNLOCK_KEY);
 }
-
-const UNLOCK_KEY = "kachat.unlockKey";
 const NETWORK_MIRROR_KEY = "kachat.network"; // net.js mirrors the pages' choice here (no localStorage in a worker)
 
 async function onTestnet() {
@@ -48,6 +50,9 @@ async function connectionsKey() {
 const MAX_MESSAGE_LENGTH = 4096;
 
 const rejected = () => ({ error: { code: 4001, message: "The request was rejected in KaChat Wallet." } });
+// The approval window went away while it was sending an approved payment: it may have reached the
+// network, so this is never "rejected" (audit EXT-012) - the site must check before asking again.
+const maybeSent = () => ({ error: { code: 4002, message: "The payment may have been sent. Check your wallet before trying again." } });
 const unauthorized = () => ({ error: { code: 4100, message: "Connect first: call kachat.requestAccounts()." } });
 const invalid = (message) => ({ error: { code: -32602, message } });
 
@@ -127,7 +132,8 @@ async function handleSiteRequest(method, params, origin) {
   const open = connection && (await isUnlocked());
   switch (method) {
     case "getNetwork":
-      return { result: (await onTestnet()) ? "testnet-10" : "mainnet" };
+      // Only a connected site learns the network (audit EXT-013): anyone else could fingerprint it.
+      return { result: connection ? ((await onTestnet()) ? "testnet-10" : "mainnet") : null };
     case "getAccounts":
       return { result: open ? [connection.address] : [] };
     case "requestAccounts":
@@ -198,7 +204,15 @@ ext.runtime.onMessage.addListener((message, sender, sendResponse) => {
     case "approval-result": {
       if (!fromExtensionPage(sender)) return false;
       const entry = approvals.get(message.id);
-      if (entry) entry.resolve(message.error ? rejected() : { result: message.result });
+      if (entry) entry.resolve(message.error ? (entry.sending ? maybeSent() : rejected()) : { result: message.result });
+      return false;
+    }
+    case "approval-sending": {
+      // An approved payment is being built and submitted from the approval window.
+      if (!fromExtensionPage(sender)) return false;
+      const entry = approvals.get(message.id);
+      // (a send that failed before reaching the node clears it again)
+      if (entry) entry.sending = message.sending !== false;
       return false;
     }
     case "approval-ping":
@@ -209,9 +223,9 @@ ext.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 });
 
-// Closing the approval window is a rejection.
+// Closing the approval window is a rejection - unless it was already sending an approved payment.
 ext.windows?.onRemoved?.addListener((windowId) => {
-  for (const entry of approvals.values()) if (entry.windowId === windowId) entry.resolve(rejected());
+  for (const entry of approvals.values()) if (entry.windowId === windowId) entry.resolve(entry.sending ? maybeSent() : rejected());
 });
 
 ext.alarms.onAlarm.addListener((alarm) => {
@@ -255,21 +269,35 @@ ext.runtime.onInstalled?.addListener(lockStorageToExtension);
 // the origin comes from the browser, never the page. Kept in storage.session (extension-only).
 const SITE_TABS_KEY = "kachat.siteTabs";
 
+// Every change to the registry goes through one chain, so tabs saying hello together (a browser
+// restore, several dApp tabs opened at once) never overwrite each other (audit EXT-009).
+let siteTabsChain = Promise.resolve();
+function updateSiteTabs(change) {
+  siteTabsChain = siteTabsChain.then(async () => {
+    const map = (await ext.storage.session.get(SITE_TABS_KEY))[SITE_TABS_KEY] || {};
+    if (change(map) === false) return;
+    await ext.storage.session.set({ [SITE_TABS_KEY]: map });
+  }).catch(() => {});
+  return siteTabsChain;
+}
+
 async function rememberSiteTab(sender) {
   const origin = siteOrigin(sender);
   const tabId = sender?.tab?.id;
   if (!origin || tabId == null) return;
-  const map = (await ext.storage.session.get(SITE_TABS_KEY))[SITE_TABS_KEY] || {};
-  if (map[tabId] === origin) return;
-  map[tabId] = origin;
-  await ext.storage.session.set({ [SITE_TABS_KEY]: map });
+  await updateSiteTabs((map) => {
+    if (map[tabId] === origin) return false;
+    map[tabId] = origin;
+    return true;
+  });
 }
 
-ext.tabs?.onRemoved?.addListener(async (tabId) => {
-  const map = (await ext.storage.session.get(SITE_TABS_KEY))[SITE_TABS_KEY] || {};
-  if (!(tabId in map)) return;
-  delete map[tabId];
-  await ext.storage.session.set({ [SITE_TABS_KEY]: map });
+ext.tabs?.onRemoved?.addListener((tabId) => {
+  updateSiteTabs((map) => {
+    if (!(tabId in map)) return false;
+    delete map[tabId];
+    return true;
+  });
 });
 
 async function tellSite(origin, event, payload) {

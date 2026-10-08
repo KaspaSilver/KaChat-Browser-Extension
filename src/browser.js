@@ -38,6 +38,11 @@ export async function setSession(key, value) {
   await sessionArea.set({ [key]: value });
 }
 
+export async function removeSession(key) {
+  if (!sessionArea) return;
+  await sessionArea.remove(key);
+}
+
 export async function clearSession() {
   if (!sessionArea) return;
   await sessionArea.clear();

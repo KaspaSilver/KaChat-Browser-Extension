@@ -32,7 +32,12 @@
   // storage - it can't: storage is limited to the extension's own pages (audit EXT-006).
   const EVENTS = new Set(["accountsChanged", "disconnect", "networkChanged"]);
   // Introduces this tab to the background, which keeps which tabs show which site.
-  try { Promise.resolve(api.runtime.sendMessage({ type: "site-hello" })).catch(() => {}); } catch { /* reloaded */ }
+  const hello = () => { try { Promise.resolve(api.runtime.sendMessage({ type: "site-hello" })).catch(() => {}); } catch { /* reloaded */ } };
+  hello();
+  // a tab restored from the back/forward cache, or shown again, says hello again so the wallet
+  // still knows it (audit EXT-009)
+  addEventListener("pageshow", (event) => { if (event.persisted) hello(); });
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") hello(); });
   api.runtime.onMessage.addListener((message, sender) => {
     if (sender?.id !== api.runtime.id || message?.type !== "kachat-site-event") return false;
     if (message.origin !== origin || !EVENTS.has(message.event)) return false;

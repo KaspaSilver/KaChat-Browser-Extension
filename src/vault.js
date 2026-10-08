@@ -14,7 +14,7 @@
 //
 // All crypto is WebCrypto (crypto.subtle), available in every extension page and worker.
 
-import { getLocal, setLocal, removeLocal, getSession, setSession, clearSession, localArea } from "./browser.js";
+import { getLocal, setLocal, removeLocal, getSession, setSession, removeSession, clearSession, localArea } from "./browser.js";
 
 const VAULT_KEY = "kachat.vault.v1";
 const SESSION_KEY = "kachat.unlockKey";
@@ -131,18 +131,35 @@ export async function unlock(password) {
   }
   await setSession(SESSION_KEY, toBase64(keyBytes));
   await publishAccountIds(payload);
-  return publicView(payload);
+  return publicView(await migratePassphrases(payload));
 }
 
 export async function lock() {
-  await clearSession();
+  // the unlock key only: the background's site-tab registry stays (audit EXT-009)
+  await removeSession(SESSION_KEY);
 }
 
 /** The decrypted vault. Callers that only need names and ids should use `readAccounts`. */
 async function readPayload() {
   const vault = await getLocal(VAULT_KEY);
   if (!vault) throw new Error("No wallet has been set up yet.");
-  return open(vault, await sessionKeyBytes());
+  return migratePassphrases(await open(vault, await sessionKeyBytes()));
+}
+
+// BIP39 derives the seed from the NFKD form of the passphrase, as iOS does; the Kaspa WASM uses the
+// bytes it is given. A passphrase with accented or other non-ASCII letters (typed in NFC) therefore
+// opened a different, empty wallet here than on iPhone (audit EXT-010). Every passphrase is now
+// kept in NFKD form: an account stored before is switched once to the standard (iPhone) addresses
+// - the owner's call - and the addresses cached for it are dropped so they are derived again.
+const nfkd = (text) => String(text || "").normalize("NFKD");
+
+async function migratePassphrases(payload) {
+  const changed = payload.accounts.filter((a) => a.passphrase && a.passphrase !== nfkd(a.passphrase));
+  if (!changed.length) return payload;
+  for (const account of changed) account.passphrase = nfkd(account.passphrase);
+  await writePayload(payload);
+  await removeLocal(changed.flatMap((a) => [`kachat.addresses.${a.id}`, `kachat.addresses.${a.id}.testnet`])).catch(() => {});
+  return payload;
 }
 
 async function writePayload(payload) {
@@ -164,7 +181,8 @@ function normalizeAccount(account) {
   return {
     name: String(account?.name || "").trim() || "Account 1",
     mnemonic,
-    passphrase: String(account?.passphrase || ""),
+    // NFKD, as BIP39 and iOS derive the seed from (audit EXT-010)
+    passphrase: nfkd(account?.passphrase),
     family: account?.family || "kaspaStandard",
     identityIndex: Math.max(0, Math.floor(Number(account?.identityIndex) || 0)),
     // Imported accounts can pick a different chatting address (iOS ChattingAddressPickerView).

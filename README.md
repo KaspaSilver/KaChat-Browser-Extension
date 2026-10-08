@@ -62,7 +62,7 @@ where they overlap. Listen for `kachat#initialized` if your script can run first
 ```js
 const [address] = await window.kachat.requestAccounts();       // asks the user to connect
 await window.kachat.getAccounts();                              // [] until connected + unlocked
-await window.kachat.getNetwork();                               // "mainnet"
+await window.kachat.getNetwork();                               // "mainnet" once connected, else null
 await window.kachat.getPublicKey();                             // compressed public key hex
 await window.kachat.getBalance();                               // { confirmed, unconfirmed, total } in sompi
 const txid = await window.kachat.sendKaspa(to, 150000000, { priorityFee: 0 });  // asks the user
@@ -73,7 +73,8 @@ window.kachat.on("disconnect", () => {});
 window.kachat.on("networkChanged", (network) => {});   // "mainnet" | "testnet-10"
 ```
 
-Errors carry a `code`: `4001` rejected by the user, `4100` not connected, `4200` unsupported
+Errors carry a `code`: `4001` rejected by the user, `4002` the approval window closed while an
+approved payment was sending (it may have been sent: check before asking again), `4100` not connected, `4200` unsupported
 method, `-32002` a request from this site is already waiting, `-32602` bad parameters, `4900`
 wallet unavailable. The address a site sees is the chosen account's chatting address
 (`m/44'/111111'/0'/0/0` for most wallets - the same address KasWare shows for that phrase);
