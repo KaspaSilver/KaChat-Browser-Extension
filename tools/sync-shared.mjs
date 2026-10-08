@@ -1,10 +1,11 @@
-// Refreshes shared/ from a KaChat-Desktop checkout. The wallet's engine (addresses, signing,
+// Refreshes shared/ from a KaChat-Desktop checkout - from its committed HEAD, never its working
+// tree, so work the Desktop session hasn't committed yet is never picked up. The wallet's engine (addresses, signing,
 // nodes, KNS, prices), the KasSigner KSPT code and the Kaspa WASM SDK are KaChat-Desktop's;
 // this repo carries copies so it builds on its own. Run it when the desktop engine changes,
 // then build, test and commit shared/ with the commit it came from in the message.
 //
 //   npm run sync-shared [-- /path/to/KaChat-Desktop]     (default: ../KaChat-Desktop)
-import { copyFileSync, existsSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
@@ -22,10 +23,14 @@ function sync(dir) {
   for (const entry of readdirSync(`${root}shared/${dir}`, { withFileTypes: true })) {
     if (entry.name === "README.md") continue;
     if (entry.isDirectory()) { sync(`${dir}/${entry.name}`); continue; }
-    copyFileSync(`${desktop}/${dir}/${entry.name}`, `${root}shared/${dir}/${entry.name}`);
+    // the committed file, byte for byte (the WASM too)
+    const committed = execFileSync("git", ["show", `HEAD:${dir}/${entry.name}`], { cwd: desktop, maxBuffer: 64 * 1024 * 1024 });
+    writeFileSync(`${root}shared/${dir}/${entry.name}`, committed);
     copied += 1;
   }
 }
 for (const dir of ["engine", "ui", "kaspa"]) sync(dir);
+const dirty = execFileSync("git", ["status", "--porcelain", "--", "engine", "ui/kspt.js", "ui/bip39-english.js", "kaspa"], { cwd: desktop }).toString().trim();
+if (dirty) console.log("note: KaChat-Desktop has uncommitted changes in synced folders - left out (copied from HEAD):\n" + dirty);
 const commit = execFileSync("git", ["rev-parse", "--short", "HEAD"], { cwd: desktop }).toString().trim();
 console.log(`copied ${copied} files from KaChat-Desktop ${commit}`);
