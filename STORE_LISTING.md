@@ -80,7 +80,7 @@ the user's approval.
   those requests; they do not read or change page content, and the wallet uses this access for
   nothing else. Every request needs the user's approval in the wallet.
 - Optional host permissions `x.com`, `api.fxtwitter.com`, `www.youtube.com`, `discord.com`,
-  `api.github.com`, `t.me`, `kick.com`, `www.twitch.tv`, `www.instagram.com`, `www.tiktok.com`,
+  `api.github.com`, `t.me`, `www.twitch.tv`, `www.instagram.com`, `www.tiktok.com`,
   `www.facebook.com`, `www.linkedin.com` - requested only when the user taps Allow in Edit KaChat
   Profile: the wallet reads the public profile pages the user linked, to show that profile's
   picture, banner or bio. Nothing is read from those sites until then.

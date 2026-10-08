@@ -16,6 +16,7 @@ import { showDomains } from "./domains.js";
 import { showKachatMarket, kachatWordmark } from "./market.js";
 import { watchRegistrations, scheduleLapse, showLiveNameDetail } from "./kachat-live.js";
 import * as bell from "./bell.js";
+import * as addressBook from "./address-book.js";
 import { startKachatNamesNotifier } from "./kachat-notifier.js";
 import { kachatLive, kachatNames, kachatLabelOf, forgetKachatSigner, kachatSocial, ownKachatProfile } from "./kachat-names.js";
 import { showKachatProfileEditor } from "./kachat-profile.js";
@@ -59,6 +60,12 @@ dock.showsDock("home", "manage-chat", "manage-list", "manage-spending", "domains
 dock.registerTab("profile", () => showHome());
 dock.registerTab("cold", () => showColdStorage());
 dock.registerTab("portfolio", () => showPortfolio());
+dock.registerTab("book", () => addressBook.showAddressBook());
+// The Address Book's Send KAS: Send Kaspa from the chatting address, to the saved address.
+addressBook.setAddressBookSend((address, onClose) => {
+  const main = homeState?.addresses?.main;
+  if (main) showSend({ source: { kind: "main" }, fromAddress: main, recipient: address, onClose });
+});
 
 setHandlers({
   home: () => showHome(),
@@ -113,6 +120,8 @@ async function showHome() {
   const spending = await wallet.spendingState(account.id);
   // The bell keeps a feed per account (its chatting address) and network.
   bell.useAccount(cached?.main || null);
+  // One Address Book per wallet (iOS 00767a4).
+  addressBook.useWallet(cached?.main || null);
   homeState = {
     account,
     currency,
@@ -446,6 +455,7 @@ async function refreshHome() {
     if (!s.addresses || s.addresses.accountId !== s.account.id || !s.addresses.spending?.[s.spending.maxIndex]) {
       s.addresses = await wallet.deriveAddresses();
       bell.useAccount(s.addresses.main);
+      addressBook.useWallet(s.addresses.main);
       s.kns = wallet.cachedKns(s.addresses.main);
       s.otherNames = cachedOwnedNames(s.addresses.main);
       paintHomeIfShowing(s);

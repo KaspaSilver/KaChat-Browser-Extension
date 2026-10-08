@@ -1024,3 +1024,34 @@ button.kl-tile:not(:disabled), .kl-tile-split { cursor: pointer; }
 .kl-grace-copy { display: flex; flex-direction: column; gap: 2px; }
 .kl-grace-copy .kl-countdown { font-weight: 600; }
 .underline-tabs button { white-space: nowrap; }
+
+/* The Address Book (iOS 00767a4 / cda0d99 AddressBookView) */
+.ab-screen { display: flex; flex-direction: column; gap: 10px; padding: 4px 16px 16px; overflow-y: auto; flex: 1; }
+.ab-search { display: flex; align-items: center; gap: 8px; background: var(--panel); border-radius: 12px; padding: 9px 12px; }
+.ab-search input { flex: 1; background: transparent; border: 0; padding: 0; color: var(--text); font-size: 15px; outline: none; }
+.ab-list { display: flex; flex-direction: column; background: var(--panel); border-radius: 14px; overflow: hidden; }
+.ab-list > p { padding: 16px; margin: 0; }
+.ab-row { display: flex; align-items: center; gap: 12px; padding: 10px 14px; background: transparent; color: var(--text); text-align: left; font-weight: 400; border-radius: 0; border-bottom: .5px solid var(--line); }
+.ab-row:last-child { border-bottom: 0; }
+.ab-row .tx-meta { flex: 1; min-width: 0; }
+.ab-avatar { flex: none; display: inline-flex; align-items: center; justify-content: center; border-radius: 50%; overflow: hidden; background: var(--panel-2); color: var(--muted); }
+.ab-avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.ab-avatar svg { width: 62%; height: 62%; }
+.ab-empty { display: flex; flex-direction: column; align-items: center; gap: 10px; text-align: center; padding: 48px 20px; }
+.ab-empty svg { width: 40px; height: 40px; }
+.ab-empty p { margin: 0; }
+.ab-head { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 8px 0 4px; }
+.ab-name { font-size: 22px; font-weight: 700; text-align: center; overflow-wrap: anywhere; }
+.ab-note { margin: 0; white-space: pre-wrap; }
+.ab-address { padding: 12px 14px; overflow-wrap: anywhere; user-select: text; }
+.ab-actions { display: flex; flex-direction: column; }
+.ab-action { display: flex; align-items: center; gap: 12px; padding: 12px 14px; background: transparent; color: var(--kaspa); text-align: left; font-weight: 500; border-radius: 0; border-bottom: .5px solid var(--line); }
+.ab-action:last-child { border-bottom: 0; }
+.ab-action.danger-text { color: var(--danger); }
+.ab-photo-section { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+.ab-photo-buttons { display: flex; gap: 14px; }
+.ab-file { cursor: pointer; color: var(--kaspa); }
+.ab-address-row { display: flex; align-items: center; gap: 6px; }
+.ab-address-row input { flex: 1; min-width: 0; font-size: 13px; }
+.ab-note-input { width: 100%; box-sizing: border-box; resize: vertical; font: inherit; }
+.ab-saved { gap: 5px; font-weight: 600; }

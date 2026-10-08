@@ -174,7 +174,7 @@ export async function kachatLabelOf(address) {
 /** Every site a profile lookup reads (pictures themselves load as plain images). */
 export const SOCIAL_ORIGINS = [
   "https://x.com/*", "https://api.fxtwitter.com/*", "https://www.youtube.com/*", "https://discord.com/*",
-  "https://api.github.com/*", "https://t.me/*", "https://kick.com/*", "https://www.twitch.tv/*",
+  "https://api.github.com/*", "https://t.me/*", "https://www.twitch.tv/*",
   "https://www.instagram.com/*", "https://www.tiktok.com/*", "https://www.facebook.com/*", "https://www.linkedin.com/*",
 ];
 

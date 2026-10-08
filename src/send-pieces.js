@@ -4,6 +4,7 @@
 // fee card (network fee, speed, coin control) and a slide-to-send button. Used by Send Kaspa
 // (send.js) and KasSigner's send (cold-send.js). Change these rather than one screen.
 
+import { addressBookButtonHtml, savedNameHtml, openAddressBookPicker } from "./address-book.js";
 import { esc, ICONS } from "./ui.js";
 import { KAS_UNIT } from "./net.js";
 
@@ -62,6 +63,7 @@ export function recipientCardHtml({ input = "", lockedAddress = null, status = {
         <input id="recipient" class="sk-recipient mono" value="${esc(input)}" placeholder="kaspa:qr... or domain" autocomplete="off" autocapitalize="off" spellcheck="false" />
         <button class="icon plain accent" id="paste" aria-label="Paste" title="Paste">${ICONS.clipboard}</button>
         <button class="icon plain accent" id="scan" aria-label="Scan QR" title="Scan QR">${SCAN}</button>
+        ${addressBookButtonHtml()}
       </div>
       ${shownAddress ? `
         <div class="sk-resolution">
@@ -71,6 +73,7 @@ export function recipientCardHtml({ input = "", lockedAddress = null, status = {
             <span class="mono tiny muted ellipsis">${esc(shownAddress)}</span>
           </span>
         </div>` : ""}
+      ${shownAddress ? savedNameHtml(shownAddress) : ""}
       ${line}
       ${extraHtml}
     </div>`;
@@ -269,4 +272,10 @@ export function bindSlideButton(root, onAction) {
   track.addEventListener("keydown", (event) => {
     if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onAction(); }
   });
+}
+
+/** The recipient card's Address Book button: pick a saved address (iOS 00767a4). */
+export function bindAddressBookButton(root, onPick) {
+  const button = root.querySelector("#address-book");
+  if (button) button.onclick = () => openAddressBookPicker((entry) => onPick(entry.address));
 }

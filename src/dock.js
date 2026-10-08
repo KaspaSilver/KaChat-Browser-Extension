@@ -1,11 +1,12 @@
-// The dock - iOS MainTabView's tab bar, wallet-only: Storage | Profile | Portfolio.
+// The dock - iOS MainTabView's tab bar, wallet-only: Storage | Profile | Portfolio | Address Book
+// (iOS 00767a4 AppTab.addressBook, dockable).
 // Selected items take the accent, the rest the system grey; labels are 10 pt under 26 pt
 // glyphs. Each tab keeps its own place: switching back returns to the screen you left there
 // (iOS keeps every tab's NavigationStack alive). Tapping the tab you are on does nothing.
 //
 // Screens say whether they sit in a tab (the dock shows) or are a sheet / full-screen flow
-// (it hides) by name: showsDock() lists the Profile tab's screens; any screen named "cold:..."
-// or "portfolio:..." belongs to those tabs.
+// (it hides) by name: showsDock() lists the Profile tab's screens; any screen named "cold:...",
+// "portfolio:..." or "book:..." belongs to those tabs.
 
 import { esc, toast, onRender } from "./ui.js";
 
@@ -14,12 +15,14 @@ const ICON = {
   cold: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true"><path d="M12 2.5l7.5 2.8v5.9c0 4.8-3.2 8.9-7.5 10.4-4.3-1.5-7.5-5.6-7.5-10.4V5.3L12 2.5z"/><rect x="9" y="11" width="6" height="4.8" rx="1"/><path d="M10.3 11V9.6a1.7 1.7 0 0 1 3.4 0V11"/></svg>',
   // chart.pie
   portfolio: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true"><path d="M11 3.1A9 9 0 1 0 20.9 13H11z"/><path d="M14 2.6V10h7.4A8.6 8.6 0 0 0 14 2.6z"/></svg>',
+  // book.closed
+  book: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true"><path d="M5 4.5A2.5 2.5 0 0 1 7.5 2H19v17H7.5A2.5 2.5 0 0 0 5 21.5z"/><path d="M5 21.5A2.5 2.5 0 0 1 7.5 19H19v3H7.5"/></svg>',
   // person.crop.circle
   profile: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="12" cy="12" r="9.5"/><circle cx="12" cy="9.5" r="3.3"/><path d="M5.6 18.6c1.4-2.3 3.7-3.5 6.4-3.5s5 1.2 6.4 3.5"/></svg>',
 };
 
 // Profile sits in the middle, between the two wallet tools (the user's order).
-const TABS = [["cold", "Storage"], ["profile", "Profile"], ["portfolio", "Portfolio"]];
+const TABS = [["cold", "Storage"], ["profile", "Profile"], ["portfolio", "Portfolio"], ["book", "Address Book"]];
 
 const roots = {};
 const last = {};
@@ -53,6 +56,7 @@ export function selectTab(id) {
 function belongsToTab(screen) {
   if (/^cold:/.test(screen)) return "cold";
   if (/^portfolio:/.test(screen)) return "portfolio";
+  if (/^book:/.test(screen)) return "book";
   if (profileScreens.has(screen)) return "profile";
   return null;
 }

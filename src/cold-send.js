@@ -24,7 +24,7 @@ import { SF, shortAddress } from "./cold-common.js";
 import { KAS_UNIT } from "./net.js";
 import { sompiFromUserText, sanitizeAmountInput } from "./amounts.js";
 import {
-  recipientCardHtml, amountState, amountEntryHtml, fitAmountInput, pillHtml, feeControlsHtml,
+  recipientCardHtml, bindAddressBookButton, amountState, amountEntryHtml, fitAmountInput, pillHtml, feeControlsHtml,
   slideButtonHtml, bindSlideButton, trimmedKas,
 } from "./send-pieces.js";
 import {
@@ -383,6 +383,7 @@ export function showColdSend(opts) {
         paintForm();
       },
     });
+    bindAddressBookButton(app, (address) => recipientChanged(address));
     const paste = $("#paste");
     if (paste) paste.onclick = async () => {
       try {

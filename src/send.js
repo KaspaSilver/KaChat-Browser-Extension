@@ -16,7 +16,7 @@ import { scanQr } from "./camera.js";
 import { sompiFromUserText, sanitizeAmountInput, sompiToKasNumber } from "./amounts.js";
 import { KAS_UNIT } from "./net.js";
 import {
-  FEE_TIERS, recipientCardHtml, amountState, amountEntryHtml, fitAmountInput, pillHtml, feeControlsHtml,
+  FEE_TIERS, recipientCardHtml, bindAddressBookButton, amountState, amountEntryHtml, fitAmountInput, pillHtml, feeControlsHtml,
   coinSummary, slideButtonHtml, bindSlideButton, trimmedKas, CHEVRON_DOWN,
 } from "./send-pieces.js";
 
@@ -314,6 +314,7 @@ export function showSend(opts) {
         paint();
       },
     });
+    bindAddressBookButton(app, (address) => { state.recipientInput = address; resolveRecipient(); });
     const paste = $("#paste");
     if (paste) paste.onclick = async () => {
       try {
