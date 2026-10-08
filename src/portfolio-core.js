@@ -1012,6 +1012,15 @@ function swiftDouble(value) {
   return String(v);
 }
 
+/** The export's file name: the name you gave the portfolio ("Long Term 2026-10-08....csv"), so
+ *  it is recognizable; "KaChat Portfolio" if it has none (iOS 87b2a0b). Characters a file name
+ *  can't hold are dropped. */
+function exportBaseName() {
+  const name = store.data.portfolios.find((p) => p.id === store.data.activeId)?.name ?? "";
+  const cleaned = String(name).replace(/[\/\\:?*"<>|\u0000-\u001f\u007f]/g, "").trim();
+  return cleaned ? cleaned.slice(0, 60) : "KaChat Portfolio";
+}
+
 /** { filename, csv } for the active portfolio, oldest first; null when it is empty. */
 export function buildCsv() {
   const rows = [...scopedTransactions()].sort((a, b) => a.timestamp - b.timestamp);
@@ -1026,7 +1035,7 @@ export function buildCsv() {
     csv += `"${date}","KAS","${tx.type}","${swiftDouble(perKas)}","${swiftDouble(amount)}","${swiftDouble(tx.fiatValue)}","0.00","USD","${notes}"\n`;
   }
   const stamp = new Date().toISOString().replace(/\.\d{3}Z$/, "Z").replace(/:/g, "-");
-  return { filename: `kachat-portfolio-${stamp}.csv`, csv };
+  return { filename: `${exportBaseName()} ${stamp}.csv`, csv };
 }
 
 /**

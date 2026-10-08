@@ -14,8 +14,8 @@
 // The Send screens' recipient card shows the saved name of an address and opens the book to pick
 // one (iOS SendKaspaComponents).
 
-import { app, esc, render, $, toast, ICONS, navHeader, showSheet } from "./ui.js";
-import { getLocal, setLocal } from "./browser.js";
+import { app, esc, render, $, toast, ICONS, navHeader, showSheet, showAlert, isTab, onRender } from "./ui.js";
+import { getLocal, setLocal, ext } from "./browser.js";
 import { openPanel } from "./kachat-ui.js";
 import { isValidKaspaAddress, networkOfAddress, NETWORK } from "./net.js";
 import { scanQr } from "./camera.js";
@@ -136,6 +136,8 @@ const SEND = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke
 const SHARE = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12M7.5 7.5L12 3l4.5 4.5"/><path d="M5 12v8h14v-8"/></svg>';
 const PENCIL = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16.5 3.5l4 4L8 20H4v-4z"/></svg>';
 const TRASH = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6.5 7l1 13h9l1-13"/></svg>';
+const IMPORT_EXPORT = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2.5v10"/><path d="M8.5 6L12 2.5 15.5 6"/><path d="M8 9H6a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-8a1 1 0 0 0-1-1h-2"/></svg>';
+const IMPORT_FILE = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12M7.5 10.5L12 15l4.5-4.5"/><path d="M5 15v5h14v-5"/></svg>';
 const PLUS = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>';
 const SCAN = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3"/><rect x="8" y="8" width="8" height="8" rx="1"/></svg>';
 
@@ -207,7 +209,7 @@ function rowsHtml(list) {
 function paintList() {
   const list = search(view.query);
   render(`
-    ${dock.tabTopHtml("Address Book", { rightHtml: `<button class="icon plain accent" id="ab-add" aria-label="Add Address" title="Add Address">${PLUS}</button>` })}
+    ${dock.tabTopHtml("Address Book", { rightHtml: `<button class="icon plain accent" id="ab-io" aria-label="Import or export" title="Import or export">${IMPORT_EXPORT}</button><button class="icon plain accent" id="ab-add" aria-label="Add Address" title="Add Address">${PLUS}</button>` })}
     <section class="ab-screen">
       ${entries.length ? `
         <label class="ab-search">
@@ -226,6 +228,7 @@ function paintList() {
   dock.bindTabTop();
   dock.remember(() => showAddressBook());
   $("#ab-add").onclick = () => openEditor({ onSaved: (e) => showDetail(e.address) });
+  $("#ab-io").onclick = showImportExport;
   const empty = $("#ab-add-empty");
   if (empty) empty.onclick = () => openEditor({ onSaved: (e) => showDetail(e.address) });
   const input = $("#ab-search");
@@ -468,4 +471,144 @@ export function addressBookButtonHtml() {
 export function savedNameHtml(address) {
   const entry = entryFor(address);
   return entry ? `<div class="sk-status accent ab-saved">${BOOK_FILL}<span>${esc(entry.name)}</span></div>` : "";
+}
+
+// --- Import / export (iOS 87b2a0b; files only) -------------------------------------------------
+//
+// The export is plain JSON that any KaChat (iOS, Android, Desktop) and any wallet can read:
+// { type: "kachat-address-book", version: 1, exportedAt, walletAddress, entries } with each
+// entry's photo (base64 JPEG) attached. Import adds every address not saved here (even one deleted
+// since - importing is asking for it back) and updates one already saved only from a newer edit.
+
+const EXPORT_KIND = "kachat-address-book";
+const IMPORT_PARAM = "book";
+
+/** "Import or Export" (iOS's half sheet, without Nextcloud). */
+function showImportExport() {
+  showSheet({
+    title: "Import or Export",
+    cancel: false,
+    rows: [
+      { label: "Import File", subtitle: "Add addresses from an Address Book export.", icon: IMPORT_FILE, onClick: importFile },
+      { label: "Export File", subtitle: "Save this Address Book, with its photos, to a file.", icon: SHARE, onClick: exportFile },
+    ],
+  });
+}
+
+const toIso = (ms) => new Date(Number(ms) || Date.now()).toISOString();
+const fromIso = (value) => {
+  const t = typeof value === "number" ? value : Date.parse(value);
+  return Number.isFinite(t) ? t : Date.now();
+};
+
+function exportFile() {
+  if (!entries.length) { toast("Nothing to export yet. Add an address first."); return; }
+  const file = {
+    type: EXPORT_KIND,
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    walletAddress: walletKey,
+    entries: entries.map((e) => {
+      const photo = photos[e.address]?.split(",")[1];
+      return {
+        id: e.id, address: e.address, name: e.name, note: e.note || "",
+        createdAt: toIso(e.createdAt), updatedAt: toIso(e.updatedAt),
+        ...(photo ? { photo } : {}),
+      };
+    }),
+  };
+  const stamp = new Date().toISOString().replace(/\.\d{3}Z$/, "Z").replace(/:/g, "-");
+  try {
+    const url = URL.createObjectURL(new Blob([JSON.stringify(file, null, 2)], { type: "application/json" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `KaChat Address Book ${stamp}.json`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10_000);
+  } catch {
+    toast("Export failed. Couldn't write the file.");
+  }
+}
+
+/** Imports an export's text: returns { added, updated }; throws when it isn't one. */
+async function importText(text) {
+  if (!walletKey) throw new Error("Open a wallet first.");
+  let file = null;
+  try { file = JSON.parse(text); } catch { file = null; }
+  if (!file || file.type !== EXPORT_KIND || !Array.isArray(file.entries)) throw new Error("That file isn't a KaChat Address Book export.");
+  const valid = file.entries.filter((e) => e && String(e.name ?? "").trim() && isValidKaspaAddress(normalize(e.address)));
+  if (!valid.length) throw new Error("That Address Book export has no addresses.");
+  let added = 0;
+  let updated = 0;
+  for (const incoming of valid) {
+    const address = normalize(incoming.address);
+    const updatedAt = fromIso(incoming.updatedAt);
+    const photo = typeof incoming.photo === "string" && incoming.photo ? `data:image/jpeg;base64,${incoming.photo}` : null;
+    const existing = entries.find((e) => e.address === address);
+    if (existing) {
+      if (!(updatedAt > Number(existing.updatedAt || 0))) continue;
+      Object.assign(existing, { name: String(incoming.name).trim(), note: String(incoming.note ?? "").trim(), updatedAt });
+      if (photo) photos[address] = photo; else delete photos[address];
+      updated += 1;
+    } else {
+      const id = typeof incoming.id === "string" && !entries.some((e) => e.id === incoming.id) ? incoming.id : crypto.randomUUID();
+      entries.push({ id, address, name: String(incoming.name).trim(), note: String(incoming.note ?? "").trim(), createdAt: fromIso(incoming.createdAt), updatedAt });
+      if (photo) photos[address] = photo;
+      added += 1;
+    }
+    delete deleted[address];
+  }
+  entries.sort(byName);
+  await persist();
+  if (added + updated > 0) changed();
+  return { added, updated };
+}
+
+// In the toolbar popup a file picker takes focus away and the popup closes under it, so the import
+// happens in the tab view: the popup offers to open it there, straight on this sheet.
+function importFile() {
+  if (!isTab) {
+    showAlert({
+      title: "Import File",
+      message: "Picking a file closes this popup. Open KaChat Wallet in a tab to import the Address Book there.",
+      confirmLabel: "Open in Tab",
+      cancelLabel: "Cancel",
+      onConfirm: async () => {
+        await ext.tabs.create({ url: ext.runtime.getURL(`popup.html?view=tab&${IMPORT_PARAM}=import`) });
+        window.close();
+      },
+    });
+    return;
+  }
+  const input = document.createElement("input");
+  input.type = "file";
+  input.accept = ".json,application/json";
+  input.onchange = async () => {
+    const file = input.files?.[0];
+    if (!file) return;
+    try {
+      const { added, updated } = await importText(await file.text());
+      toast(added + updated ? `Imported: ${added} added, ${updated} updated.` : "Already up to date. Every address in the file is saved.");
+    } catch (error) {
+      toast(error?.message || "Couldn't read that file.");
+    }
+  };
+  input.click();
+}
+
+// The tab opened by "Open in Tab" lands on the Address Book with Import or Export up, once the
+// wallet is unlocked and the Profile tab has drawn.
+if (isTab && new URLSearchParams(location.search).get(IMPORT_PARAM) === "import") {
+  let done = false;
+  onRender((screen) => {
+    if (done || screen !== "home") return;
+    done = true;
+    setTimeout(() => {
+      dock.selectTab("book");
+      history.replaceState(null, "", location.pathname + "?view=tab");
+      setTimeout(showImportExport, 50);
+    }, 0);
+  });
 }
