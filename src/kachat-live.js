@@ -22,6 +22,8 @@ import { KachatNamesRegistry } from "../shared/engine/kachat-names/registry.js";
 import { Status, Profile, SocialKind, SocialPlatform, SocialSource } from "../shared/engine/kachat-names/registry-state.js";
 import { normalize, unhex32, p2pkScript, bytesEqual, yearMs, tier } from "../shared/engine/kachat-names/codec.js";
 import { isRegistryUpgrading, registryUpgradingMessage } from "../shared/engine/kachat-names/service.js";
+import { scanQr } from "./camera.js";
+import { addressBookButtonHtml, savedNameHtml, openAddressBookPicker } from "./address-book.js";
 
 // --- Amounts (iOS KaspaUnit.amount / signed / parseSompi) ----------------------------------
 
@@ -880,102 +882,116 @@ export function bindLivePage(container, nav) {
 
 // --- Offers (iOS KachatOfferAction / KachatOfferRow) ---------------------------------------
 
-/** "Expires in 2d 4h", from the DAA score the offer becomes refundable at (10 per second). */
-function offerExpiresIn(offer) {
-  const daa = hub.virtualDaa ?? runtimeActions()?.virtualDaa;
-  if (daa == null || offer.refundable(daa)) return null;
-  const seconds = Number(offer.refundAfter - daa) / Number(DAA_PER_SECOND);
-  const m = Math.max(1, Math.round(seconds / 60));
-  const text = m >= 1440 ? `${Math.floor(m / 1440)}d ${Math.floor((m % 1440) / 60)}h` : m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${m}m`;
-  return `Expires in ${text}`;
-}
 
-/** iOS KachatOfferRow (ba07975): the owner accepts with a click on the row or Accept, or declines
- *  from the menu; an expired offer goes back to its buyer on its own; one made to an earlier owner
- *  is declined and pulled back by the buyer's app. */
-function offerRowHtml(offer, { isBuyer, isOwner, declined = false, nameInfo = null }) {
+/** An offer's state, shared by its tile and its sheet (iOS 7f50e84 KachatOfferState): the owner
+ *  can accept it (not expired, not made to an earlier owner, and the name still active - an
+ *  expired name would reach the buyer only to be claimed again; iOS 71128c4); an expired one goes
+ *  back to its buyer on its own; one made to an earlier owner is declined and pulled back. */
+function offerState(offer, { isBuyer, isOwner, declined = false, nameInfo = null }) {
   const actions = runtimeActions();
   const daa = hub.virtualDaa ?? actions?.virtualDaa;
   const refundable = daa != null && offer.refundable(daa);
   const returning = Boolean(actions?.returningOffers?.has(offer.id));
   const withdrawing = Boolean(actions?.withdrawingOffers?.has(offer.id));
-  // ...and the name itself still active: an expired name would reach the buyer only to be
-  // reclaimed (iOS 71128c4, IOS-055)
   const nameActive = Boolean(nameInfo && statusOf(nameInfo) === Status.active);
   const acceptable = isOwner && !refundable && !declined && nameActive;
-  const who = isBuyer ? "Your offer" : (addressOf(offer.buyer) ? shortAddress(addressOf(offer.buyer)) : "");
-  let state = "";
-  if (declined || withdrawing) {
-    state = `<span class="tiny kl-orange">${isBuyer ? "Declined - the name changed hands, returning to you" : "Declined - made to an earlier owner"}</span>`;
-  } else if (refundable) {
-    state = `<span class="tiny kl-orange">${returning || isOwner ? (isBuyer ? "Expired - returning to you" : "Expired - returning to the buyer") : "Expired - refundable now"}</span>`;
-  } else {
-    const left = offerExpiresIn(offer);
-    if (left) state = `<span class="muted tiny">${esc(left)}</span>`;
-  }
-  let trailing = "";
-  if (isBuyer) trailing = `<button class="icon plain accent" data-offer-menu="${esc(offer.id)}" aria-label="Offer actions">${SYMBOLS.ellipsisCircle}</button>`;
-  else if (acceptable) {
-    trailing = `<button class="icon plain accent" data-offer-owner-menu="${esc(offer.id)}" aria-label="Offer actions">${SYMBOLS.ellipsisCircle}</button>
-      <button class="km-prominent small-button" data-offer-accept="${esc(offer.id)}">Accept</button>`;
-  } else if (refundable && !returning) trailing = `<button class="km-bordered small-button" data-offer-refund="${esc(offer.id)}">Refund</button>`;
+  let statusText = null;
+  if (declined || withdrawing) statusText = isBuyer ? "Declined - the name changed hands, returning to you" : "Declined - made to an earlier owner";
+  else if (refundable) statusText = returning || isOwner ? (isBuyer ? "Expired - returning to you" : "Expired - returning to the buyer") : "Expired - refundable now";
+  return {
+    offer, nameInfo, isBuyer, isOwner, acceptable, refundable, returning,
+    canRefund: refundable && !returning,
+    dim: refundable || declined || withdrawing,
+    statusText,
+    timeLeft: statusText ? null : offerTimeLeft(offer),
+    buyerAddress: addressOf(offer.buyer),
+  };
+}
+
+/** "2d 4h" until the offer becomes refundable (10 DAA per second), or null. */
+function offerTimeLeft(offer) {
+  const daa = hub.virtualDaa ?? runtimeActions()?.virtualDaa;
+  if (daa == null || offer.refundable(daa)) return null;
+  const seconds = Number(offer.refundAfter - daa) / Number(DAA_PER_SECOND);
+  const m = Math.max(1, Math.round(seconds / 60));
+  return m >= 1440 ? `${Math.floor(m / 1440)}d ${Math.floor((m % 1440) / 60)}h` : m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${m}m`;
+}
+
+// The offers on screen, by id: a tile opens its sheet with the state it was drawn with.
+const offerTiles = new Map();
+
+/** An offer as a square tile, two per row (iOS 7f50e84 KachatOfferTile): the amount, who made it
+ *  or "Your offer", the name (in My Offers), and the time left or its expired / declined state. */
+function offerTileHtml(offer, opts) {
+  const st = offerState(offer, opts);
+  offerTiles.set(offer.id, st);
+  const who = st.isBuyer ? "Your offer" : (st.buyerAddress ? shortAddress(st.buyerAddress) : "");
   return `
-    <div class="km-row kl-offer ${refundable || declined || withdrawing ? "kl-dim" : ""} ${acceptable ? "kl-clickable" : ""}" ${acceptable ? `data-offer-row="${esc(offer.id)}"` : ""}>
-      <span class="accent km-icon">${SYMBOLS.hand}</span>
-      <span class="tx-meta">
-        ${offer.name ? `<span class="strong small">${esc(offer.name)}.kachat</span>` : ""}
-        <span class="muted tiny">${esc(who)}</span>
-        ${state}
-      </span>
-      <span class="strong small">${esc(amount(offer.amount))}</span>
-      ${trailing}
-    </div>`;
+    <button class="km-card kl-tile kl-offer-tile ${st.dim ? "kl-dim" : ""}" data-offer-tile="${esc(offer.id)}">
+      <span class="accent">${SYMBOLS.hand}</span>
+      <span class="kl-tile-price">${esc(amount(offer.amount))}</span>
+      <span class="muted tiny ellipsis kl-offer-who">${esc(who)}</span>
+      ${opts.showName && offer.name ? `<span class="tiny strong ellipsis">${esc(offer.name)}.kachat</span>` : ""}
+      ${st.statusText ? `<span class="tiny kl-orange">${esc(st.statusText)}</span>` : st.timeLeft ? `<span class="muted tiny">Expires in ${esc(st.timeLeft)}</span>` : ""}
+    </button>`;
 }
 
-function bindOfferRows(container, offers, name) {
-  const find = (id) => offers.find((o) => o.id === id);
-  for (const b of container.querySelectorAll("[data-offer-menu]")) {
-    b.onclick = () => {
-      const offer = find(b.dataset.offerMenu);
-      if (!offer) return;
-      const refundable = hub.virtualDaa != null && offer.refundable(hub.virtualDaa);
-      offerMenu(offer, refundable);
-    };
+const offerGridHtml = (offers, optsFor) => nameGridHtml(offers.map((o) => offerTileHtml(o, optsFor(o))).join(""));
+
+/** A tap on a tile opens its sheet. */
+function bindOfferRows(container) {
+  for (const tile of container.querySelectorAll("[data-offer-tile]")) {
+    tile.onclick = () => { const st = offerTiles.get(tile.dataset.offerTile); if (st) openOfferDetail(st); };
   }
-  for (const b of container.querySelectorAll("[data-offer-accept]")) b.onclick = (event) => { event.stopPropagation(); const o = find(b.dataset.offerAccept); if (o && name) openOfferAction("accept", o, name); };
-  // A click anywhere on an acceptable row opens the accept flow (the buttons inside keep their own).
-  for (const row of container.querySelectorAll("[data-offer-row]")) {
-    row.onclick = (event) => {
-      if (event.target.closest("button")) return;
-      const o = find(row.dataset.offerRow);
-      if (o && name) openOfferAction("accept", o, name);
-    };
-  }
-  for (const b of container.querySelectorAll("[data-offer-owner-menu]")) {
-    b.onclick = (event) => {
-      event.stopPropagation();
-      const o = find(b.dataset.offerOwnerMenu);
-      if (!o) return;
-      showSheet({
-        title: o.name ? `${o.name}.kachat` : "Offer",
-        subtitle: amount(o.amount),
-        rows: [{ label: "Decline", subtitle: "Sends the offer back to the buyer.", icon: SYMBOLS.release, danger: true, onClick: () => openOfferAction("decline", o) }],
-      });
-    };
-  }
-  for (const b of container.querySelectorAll("[data-offer-refund]")) b.onclick = () => { const o = find(b.dataset.offerRefund); if (o) openOfferAction("refund", o); };
 }
 
-function offerMenu(offer, refundable) {
-  // iOS Menu { Withdraw, Refund (when refundable) } - here as a small sheet.
-  showSheet({
-    title: offer.name ? `${offer.name}.kachat` : "Your offer",
-    subtitle: amount(offer.amount),
-    rows: [
-      { label: "Withdraw", subtitle: "Takes the offer back.", icon: SYMBOLS.release, onClick: () => openOfferAction("withdraw", offer) },
-      ...(refundable ? [{ label: "Refund", subtitle: "Returns the offer to you now that it passed its refund time.", icon: SYMBOLS.renew, onClick: () => openOfferAction("refund", offer) }] : []),
-    ],
+/** The offer as a half sheet (iOS 7f50e84 KachatOfferDetailSheet): the amount, who made it (tap to
+ *  copy), the time left, and what this wallet can do - Accept / Decline for the name's owner,
+ *  Withdraw (and Refund once expired) for the buyer, Refund for anyone once expired. */
+function openOfferDetail(st) {
+  const { offer } = st;
+  const name = offer.name || st.nameInfo?.name || null;
+  const rows = [];
+  if (st.acceptable) {
+    rows.push({ label: "Accept", subtitle: "The name goes to the buyer and the offer comes to you.", icon: SYMBOLS.seal, onClick: () => openOfferAction("accept", offer, st.nameInfo) });
+    rows.push({ label: "Decline", subtitle: "Sends the offer back to the buyer.", icon: SYMBOLS.release, danger: true, onClick: () => openOfferAction("decline", offer) });
+  } else if (st.isBuyer) {
+    rows.push({ label: "Withdraw", subtitle: "Takes the offer back.", icon: SYMBOLS.release, onClick: () => openOfferAction("withdraw", offer) });
+    if (st.canRefund) rows.push({ label: "Refund", subtitle: "Returns the offer to you now that it passed its refund time.", icon: SYMBOLS.renew, onClick: () => openOfferAction("refund", offer) });
+  } else if (st.canRefund) {
+    rows.push({ label: "Refund", subtitle: "Sends the expired offer back to its buyer.", icon: SYMBOLS.renew, onClick: () => openOfferAction("refund", offer) });
+  }
+  const note = rows.length ? "" : st.isOwner ? "This offer can't be accepted any more." : "Only the name's owner can accept or decline this offer.";
+  const from = st.isBuyer
+    ? '<span class="strong">You</span>'
+    : st.buyerAddress ? `<button class="kl-owner-copy" data-copy-buyer title="Copies the address"><span class="mono tiny">${esc(shortAddress(st.buyerAddress))}</span><span data-copy-icon>${ICONS.copy}</span></button>` : "";
+  const sheet = showSheet({
+    title: "Offer",
+    cancelSubtitle: "Close",
+    headerHtml: `
+      <div class="kl-offer-head">
+        <span class="accent">${SYMBOLS.hand}</span>
+        <div class="kl-offer-amount">${esc(amount(offer.amount))}</div>
+        ${name ? `<div class="muted small">${esc(name)}.kachat</div>` : ""}
+      </div>
+      <div class="kl-offer-facts">
+        <div class="form-row between"><span>From</span>${from}</div>
+        ${st.timeLeft ? `<div class="form-row between"><span>Expires in</span><span class="muted">${esc(st.timeLeft)}</span></div>` : ""}
+        ${st.statusText ? `<div class="form-row tiny kl-orange">${esc(st.statusText)}</div>` : ""}
+      </div>
+      ${note ? `<p class="muted small center-text">${esc(note)}</p>` : ""}`,
+    rows,
   });
+  const copy = document.querySelector(".sheet [data-copy-buyer]");
+  if (copy) {
+    copy.onclick = async (event) => {
+      event.stopPropagation();
+      try { await navigator.clipboard.writeText(st.buyerAddress); } catch { return; }
+      const icon = copy.querySelector("[data-copy-icon]");
+      if (icon) icon.innerHTML = ICONS.checkmark || "✓";
+    };
+  }
+  return sheet;
 }
 
 function openOfferAction(kind, offer, name = null) {
@@ -1104,7 +1120,7 @@ function openTxSheet({ title, confirmTitle, doneTitle = "Transaction sent", warn
 
   async function confirm() {
     if (!state.plan || state.sending) return;
-    if (warning && !(await confirmAlert({ title, message: warning, confirmLabel: confirmTitle }))) return;
+    // No second prompt after the confirm (iOS e67074c): the warning stays on screen above it.
     if (!(await confirmPassword())) return;
     const op = operation();
     if (!op) return;
@@ -1446,7 +1462,7 @@ function openTransferSheet(info) {
     if (!statusEl) return;
     statusEl.innerHTML = state.resolving
       ? '<span class="spinner small-spin"></span>'
-      : state.resolved ? `<span class="mono tiny muted break">${esc(state.resolved.address)}</span>`
+      : state.resolved ? `<span class="mono tiny muted break">${esc(state.resolved.address)}</span>${savedNameHtml(state.resolved.address)}`
       : state.error ? `<span class="tiny error-text">${esc(state.error)}</span>` : "";
   };
   const resolve = async (text, token, changed) => {
@@ -1487,7 +1503,12 @@ function openTransferSheet(info) {
       <div class="form-section">
         <div class="form-header">New owner</div>
         <div class="form-card">
-          <div class="form-row"><input class="plain-input" id="kl-to" placeholder="kaspatest:... or name.kachat" autocomplete="off" autocapitalize="off" spellcheck="false" /></div>
+          <div class="form-row kl-to-row">
+            <input class="plain-input" id="kl-to" placeholder="kaspatest:... or name.kachat" autocomplete="off" autocapitalize="off" spellcheck="false" />
+            <button class="icon plain accent" id="kl-to-paste" aria-label="Paste" title="Paste">${ICONS.clipboard}</button>
+            <button class="icon plain accent" id="kl-to-scan" aria-label="Scan QR" title="Scan QR">${ICONS.qr}</button>
+            ${addressBookButtonHtml()}
+          </div>
           <div class="form-row kl-resolve" id="kl-to-status"></div>
         </div>
         <div class="form-footer">A testnet address, or a .kachat name - it's resolved to the address shown.</div>
@@ -1506,6 +1527,18 @@ function openTransferSheet(info) {
           changed();
         }, 400);
       };
+      // The Send screens' recipient buttons beside the field (iOS bfe7ef9): Paste, Scan QR (a
+      // ?query is dropped) and the Address Book.
+      const fill = (text) => { input.value = String(text || "").trim().split("?")[0]; input.oninput(); };
+      panel.querySelector("#kl-to-paste").onclick = async () => {
+        try { fill(await navigator.clipboard.readText()); } catch { toast("Clipboard unavailable - paste with ⌘V instead."); }
+      };
+      panel.querySelector("#kl-to-scan").onclick = async () => {
+        const code = await scanQr({ title: "Scan QR Code", hint: "Point camera at a Kaspa address QR code" });
+        if (code) fill(code);
+      };
+      const book = panel.querySelector("#address-book");
+      if (book) book.onclick = () => openAddressBookPicker((entry) => fill(entry.address));
     },
   });
 }
@@ -1656,9 +1689,9 @@ export async function showLiveNameDetail({ info: initial, onBack }) {
     const owner = canActAsOwner();
     const indexer = registry()?.source?.kind === "indexer";
     return `
-      ${sectionHeader("Offers", owner ? "Tap an offer to accept it. Expired offers go back to their buyers." : null)}
+      ${sectionHeader("Offers", owner ? "Tap an offer to accept or decline it. Expired offers go back to their buyers." : null)}
       ${state.offers.length
-        ? `<div class="km-card km-list">${state.offers.map((o) => offerRowHtml(o, { isBuyer: isMine(o.buyer), isOwner: owner && indexer, declined: o.isDeclined(state.info.owner), nameInfo: state.info })).join("")}</div>`
+        ? offerGridHtml(state.offers, (o) => ({ isBuyer: isMine(o.buyer), isOwner: owner && indexer, declined: o.isDeclined(state.info.owner), nameInfo: state.info }))
         : '<div class="km-card km-empty-card muted small">No open offers.</div>'}
       ${registry()?.source?.kind === "chain" ? '<p class="muted small kl-pad">Offers from others appear once a names indexer is connected.</p>' : ""}`;
   };
@@ -1704,7 +1737,7 @@ export async function showLiveNameDetail({ info: initial, onBack }) {
     // free (released or reclaimed, or expired past grace): claim it on the gap it sits in, or the one
     // its reclaim reopens - the driver frees the old record first (iOS f420343 / eea52b2)
     on("kl-claim-free", () => { if (isFree() && state.freeGap) openClaimSheet({ name: info.name, gap: state.freeGap }); });
-    bindOfferRows(app, state.offers, info);
+    bindOfferRows(app);
   };
 
   const delist = () => {
@@ -2000,7 +2033,7 @@ export function liveDomainsTab({ address, repaint, forAddress = false }) {
   const offers = !forAddress && !upgrading && entry.offers.length ? `
     <div class="kl-domains-offers">
       ${sectionHeader("My Offers", "Offers you made. Withdraw one any time; once it expires it comes back to you on its own.")}
-      <div class="km-card km-list">${entry.offers.map((o) => offerRowHtml(o, { isBuyer: true, isOwner: false })).join("")}</div>
+      ${offerGridHtml(entry.offers, () => ({ isBuyer: true, isOwner: false, showName: true }))}
     </div>` : "";
   return {
     html: html + offers,
@@ -2013,7 +2046,7 @@ export function liveDomainsTab({ address, repaint, forAddress = false }) {
           if (info) nav.openName(info);
         };
       }
-      if (offers) bindOfferRows(container, entry.offers, null);
+      if (offers) bindOfferRows(container);
     },
   };
 }
