@@ -56,10 +56,12 @@ async function boot() {
 
 // The Profile tab's screens keep the dock; sheets and full-screen flows (send, keys, QR) don't.
 dock.showsDock("home", "manage-chat", "manage-list", "manage-spending", "domains", "domain-detail",
-  "settings", "licenses", "kachat-market", "kachat-listing", "identity-picker", "identity-detail");
+  "settings", "licenses", "kachat-name", "identity-picker", "identity-detail");
 dock.registerTab("profile", () => showHome());
 dock.registerTab("cold", () => showColdStorage());
 dock.registerTab("portfolio", () => showPortfolio());
+// the .kachat marketplace, its own tab left of Profile
+dock.registerTab("kachat", () => showKachatMarket());
 dock.registerTab("book", () => addressBook.showAddressBook());
 // The Address Book's Send KAS: Send Kaspa from the chatting address, to the saved address.
 addressBook.setAddressBookSend((address, onClose) => {
@@ -370,7 +372,7 @@ function paintHome() {
   };
   $("#manage-spending").onclick = () => showManageAddresses({ onBack: showHome });
   $("#domains").onclick = () => { if (main) showDomains({ address: main, onBack: showHome }); };
-  $("#kachat-names").onclick = () => showKachatMarket({ onBack: showHome });
+  $("#kachat-names").onclick = () => dock.selectTab("kachat");
   $("#edit-kachat-profile").onclick = () => showKachatProfileEditor({ onSaved: () => refreshHome() });
   // Claim Testnet Kaspa (testnet only): the faucet opens in a tab; a wallet open in its own tab
   // watches the chatting balance for a minute, the popup checks it next time it opens.
@@ -471,7 +473,7 @@ function openBell() {
         const found = rt ? await rt.registry.lookup(name) : null;
         if (found?.kind === "registered") return showLiveNameDetail({ info: found.info, onBack: showHome });
       } catch { /* the marketplace then */ }
-      showKachatMarket({ onBack: showHome });
+      dock.selectTab("kachat");
     },
   });
 }

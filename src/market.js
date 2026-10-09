@@ -16,6 +16,7 @@
 import { app, esc, render, $, ICONS, navHeader } from "./ui.js";
 import { SYMBOLS, kachatWordmark, openPanel } from "./kachat-ui.js";
 import { kachatLive, kachatLaunched } from "./kachat-names.js";
+import * as dock from "./dock.js";
 import * as live from "./kachat-live.js";
 
 export { kachatWordmark };
@@ -27,11 +28,13 @@ const header = (title, detail) => `
 
 let page = "market"; // kept while you go into a listing and back, like iOS @State
 
-export function showKachatMarket({ onBack }) {
+/** The .kachat tab's first screen (its own place in the dock): no Back. */
+export function showKachatMarket({ onBack = null } = {}) {
   const state = { search: "" };
   const back = () => showKachatMarket({ onBack });
   const isLive = () => kachatLive && live.hub.isLive;
-  const nav = { openName: (info) => { live.hub.onChange = null; live.showLiveNameDetail({ info, onBack: back }); } };
+  // a name opened here stays in the .kachat tab
+  const nav = { openName: (info) => { live.hub.onChange = null; live.showLiveNameDetail({ info, onBack: back, screen: "kachat:name" }); } };
 
   const searchResult = () => {
     const typed = state.search.trim().toLowerCase();
@@ -80,7 +83,7 @@ export function showKachatMarket({ onBack }) {
     const scroll = app.querySelector(".km")?.scrollTop || 0;
     render(`
       <header class="navbar">
-        <button class="nav-back" id="back" aria-label="Back">${ICONS.back}<span>Back</span></button>
+        ${onBack ? `<button class="nav-back" id="back" aria-label="Back">${ICONS.back}<span>Back</span></button>` : "<span></span>"}
         <div class="nav-title">.kachat</div>
         <div class="nav-right km-nav-actions">
           <span id="km-claims">${claimsButton()}</span>
@@ -105,10 +108,11 @@ export function showKachatMarket({ onBack }) {
             `<button role="tab" data-page="${id}" aria-selected="${id === page}">${title}</button>`).join("")}
         </div>
         <div class="km-page" id="km-page">${pageHtml()}</div>
-      </section>`, "kachat-market");
+      </section>`, "kachat:market");
+    dock.remember(back);
     const scroller = app.querySelector(".km");
     if (scroller) scroller.scrollTop = scroll;
-    $("#back").onclick = onBack;
+    if (onBack) $("#back").onclick = onBack;
     $("#how").onclick = () => showHowItWorks(isLive());
     bindClaims();
     const search = $("#search");
@@ -154,7 +158,7 @@ export function showKachatMarket({ onBack }) {
   };
   // Live updates redraw the parts in place, so typing in the search field keeps its focus.
   const paintParts = () => {
-    if (app.dataset.screen !== "kachat-market") return;
+    if (app.dataset.screen !== "kachat:market") return;
     const scroller = app.querySelector(".km");
     const scroll = scroller?.scrollTop || 0;
     $("#km-status").innerHTML = heroStatus();
@@ -249,7 +253,7 @@ function showListing({ onBack }) {
         <div>${SYMBOLS.lock}<span>An offer locks your KAS on chain until the seller accepts it, you withdraw it, or it expires.</span></div>
         <div>${SYMBOLS.bubbles}<span>Messages go to the seller like any KaChat chat.</span></div>
       </div>
-    </section>`, "kachat-listing");
+    </section>`, "kachat:listing");
   $("#back").onclick = onBack;
   // Buy Now and Make an Offer open their sheets so the flow can be looked at; their final
   // buttons are disabled until names launch.

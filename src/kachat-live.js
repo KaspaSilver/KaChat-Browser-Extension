@@ -25,6 +25,7 @@ import { Status, Profile, SocialKind, SocialPlatform, SocialSource } from "../sh
 import { normalize, unhex32, p2pkScript, bytesEqual, yearMs, tier } from "../shared/engine/kachat-names/codec.js";
 import { isRegistryUpgrading, registryUpgradingMessage } from "../shared/engine/kachat-names/service.js";
 import { scanQr } from "./camera.js";
+import * as dock from "./dock.js";
 import { addressBookButtonHtml, savedNameHtml, openAddressBookPicker } from "./address-book.js";
 
 // --- Amounts (iOS KaspaUnit.amount / signed / parseSompi) ----------------------------------
@@ -1729,7 +1730,7 @@ function openTransferSheet(info) {
  * can do with it - buy or make an offer; or, for their own names, renew, list, transfer, release
  * and make it their primary name. Offers and history below.
  */
-export async function showLiveNameDetail({ info: initial, onBack }) {
+export async function showLiveNameDetail({ info: initial, onBack, screen = "kachat-name" }) {
   const rt = await runtime().catch(() => null);
   // Which of this wallet's addresses holds the name (iOS 881ada6): the chatting address, a spending
   // address or a KasSigner address - null for someone else's.
@@ -1739,7 +1740,8 @@ export async function showLiveNameDetail({ info: initial, onBack }) {
      *  one claiming an expired name reopens (registry.claimGap, iOS eea52b2): Claim uses it */
     freeGap: null,
   };
-  const here = () => app.dataset.screen === "kachat-name" && app.dataset.kachatName === state.info.name;
+  // "kachat:name" when opened from the marketplace (it stays in the .kachat tab), else a Profile-tab screen
+  const here = () => app.dataset.screen === screen && app.dataset.kachatName === state.info.name;
   /** Held by the chatting address: the identity, so Set as Primary applies. */
   const isChatting = () => state.heldBy?.kind === "chatting" || (!state.heldBy && isMine(state.info.owner));
   /** Held by an address this wallet can sign for: every owner action. */
@@ -1896,7 +1898,8 @@ export async function showLiveNameDetail({ info: initial, onBack }) {
              ${ownerCard()}
              ${offersSection()}`}
         ${historySection()}
-      </section>`, "kachat-name");
+      </section>`, screen);
+    if (screen.startsWith("kachat:")) dock.remember(() => showLiveNameDetail({ info: state.info, onBack, screen }));
     app.dataset.kachatName = state.info.name;
     const scroller = app.querySelector(".km");
     if (scroller) scroller.scrollTop = scroll;

@@ -12,7 +12,7 @@
 //
 // Left out on purpose: inscribing and profile editing. Profiles are moving to .kachat names.
 
-import { remember } from "./dock.js";
+import { remember, selectTab } from "./dock.js";
 import * as wallet from "./wallet.js";
 import { app, esc, render, $, toast, showAlert, ICONS, navHeader } from "./ui.js";
 import * as names from "./names.js";
@@ -128,7 +128,8 @@ export function showDomains({ address, onBack }) {
     if (selectedTab === "kachat" && liveTab) liveTab.bind(app, { openName: (info) => showLiveNameDetail({ info, onBack: back }) });
     // Inscribe (iOS e4da63d): the .kachat marketplace; a new name shows here on the way back.
     const inscribe = $("#inscribe");
-    if (inscribe) inscribe.onclick = () => showKachatMarket({ onBack: () => { kachatRegistry()?.refresh(); back(); } });
+    // the marketplace is its own tab (claiming lands back in Your Domains on its own: the registry refreshes)
+    if (inscribe) inscribe.onclick = () => selectTab("kachat");
     bindSwipe($("#domains-body"));
   };
 
