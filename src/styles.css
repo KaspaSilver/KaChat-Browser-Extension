@@ -1067,3 +1067,16 @@ button.kl-tile:not(:disabled), .kl-tile-split { cursor: pointer; }
 .kl-offer-facts .form-row { padding: 10px 14px; }
 .kl-to-row { display: flex; align-items: center; gap: 4px; }
 .kl-to-row input { flex: 1; min-width: 0; }
+
+/* .kachat sheets in the Send style (iOS e426432): busy notice, warning card, the receipt's steps */
+.kl-send-sheet { display: flex; flex-direction: column; gap: 12px; }
+.kl-busy-notice { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border-radius: 12px; background: rgba(255,159,10,.12); border: 1px solid rgba(255,159,10,.3); }
+.kl-busy-notice svg { width: 18px; height: 18px; flex: none; }
+.kl-busy-copy { display: flex; flex-direction: column; gap: 2px; font-size: 13px; }
+.kl-warning-card { display: flex; gap: 8px; align-items: flex-start; padding: 10px 12px; border-radius: 12px; background: rgba(255,69,58,.12); border: 1px solid rgba(255,69,58,.35); color: #ff6961; font-size: 13px; line-height: 1.4; }
+.kl-warning-card svg { width: 16px; height: 16px; flex: none; margin-top: 1px; }
+.kl-receipt-steps { width: 100%; background: #2c2c2e; border-radius: 12px; padding: 4px 12px; box-sizing: border-box; }
+.kl-receipt-step { display: flex; align-items: center; gap: 10px; padding: 8px 0; font-size: 14px; color: var(--muted); }
+.kl-receipt-step.on { color: var(--text); }
+.kl-receipt-step-icon { display: inline-flex; width: 18px; justify-content: center; }
+.kl-receipt-step-icon svg { width: 18px; height: 18px; }

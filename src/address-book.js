@@ -515,7 +515,8 @@ async function importText(text) {
   let file = null;
   try { file = JSON.parse(text); } catch { file = null; }
   if (!file || file.type !== EXPORT_KIND || !Array.isArray(file.entries)) throw new Error("That file isn't a KaChat Address Book export.");
-  const valid = file.entries.filter((e) => e && String(e.name ?? "").trim() && isValidKaspaAddress(normalize(e.address)));
+  // only the running network's addresses (iOS 218dc42, IOS-063): a mainnet book never takes testnet ones
+  const valid = file.entries.filter((e) => e && String(e.name ?? "").trim() && !invalidReason(normalize(e.address)));
   if (!valid.length) throw new Error("That Address Book export has no addresses.");
   let added = 0;
   let updated = 0;

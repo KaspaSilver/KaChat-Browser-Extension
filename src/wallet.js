@@ -1243,6 +1243,40 @@ export function namesNodeMethods() {
       return out;
     },
     utxosForRegistry: (addresses) => methods.getUtxosWithCovenants(addresses),
+    /** The node's own fee estimate (GetFeeEstimate; iOS e426432): `{ priority: { feerate,
+     *  seconds }, normal: { feerate, seconds } }` - the priority bucket and the first normal one.
+     *  Throws when no node answers; the .kachat actions then fall back to the REST API. */
+    async getFeeEstimate() {
+      const response = await withRpc(async (node) => {
+        if (typeof node?.getFeeEstimate !== "function") throw new Error("This node client has no GetFeeEstimate.");
+        return node.getFeeEstimate({});
+      });
+      const estimate = response?.estimate ?? response;
+      const bucket = (b) => {
+        const feerate = Number(b?.feerate);
+        const seconds = Number(b?.estimatedSeconds ?? b?.estimated_seconds ?? 0);
+        return Number.isFinite(feerate) && feerate > 0 ? { feerate, seconds: Number.isFinite(seconds) ? seconds : 0 } : null;
+      };
+      const priority = bucket(estimate?.priorityBucket ?? estimate?.priority_bucket);
+      if (!priority) throw new Error("The node sent no fee estimate.");
+      const normalList = estimate?.normalBuckets ?? estimate?.normal_buckets;
+      const normal = (Array.isArray(normalList) ? bucket(normalList[0]) : null) ?? priority;
+      return { priority, normal };
+    },
+    /** The mempool entry of `txId`, or null when no node holds it (or none answers). */
+    async getMempoolEntry(txId) {
+      const id = String(txId || "").trim().toLowerCase();
+      if (!/^[0-9a-f]{64}$/.test(id)) return null;
+      try {
+        const response = await withRpc(async (node) => {
+          if (typeof node?.getMempoolEntry !== "function") return null;
+          return node.getMempoolEntry({ transactionId: id, includeOrphanPool: true, filterTransactionPool: false });
+        });
+        return response?.mempoolEntry || response?.entry || null;
+      } catch {
+        return null;
+      }
+    },
     async submitRpcTransaction(transaction) {
       const response = await withRpc((node) => node.submitTransaction({ transaction, allowOrphan: false }));
       return String(response?.transactionId ?? "");

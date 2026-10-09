@@ -11,12 +11,13 @@
 
 import { app, esc, render, $, toast, ICONS, navHeader, unitText, showSheet } from "./ui.js";
 import { KAS_UNIT } from "./net.js";
-import { sompiFromUserText } from "./amounts.js";
+import { sompiFromUserText, sanitizeAmountInput } from "./amounts.js";
 import * as vault from "./vault.js";
 import * as wallet from "./wallet.js";
 import { kachatNames, kachatProfiles, kachatRegistry, kachatLaunched, prepareSigner } from "./kachat-names.js";
 import { SYMBOLS, openPanel, kachatWordmark, showTileSheet } from "./kachat-ui.js";
-import { Operation, Stage, isOpen, needsDriving, KachatNamesActions } from "../shared/engine/kachat-names/actions.js";
+import { Operation, Stage, isOpen, needsDriving, KachatNamesActions, FeeTier, FeeChoice, TxStage } from "../shared/engine/kachat-names/actions.js";
+import { feeControlsHtml, slideButtonHtml, bindSlideButton } from "./send-pieces.js";
 import { paramsExpiresSoonMs } from "../shared/engine/kachat-names/manifest.js";
 import { KachatNamesRegistry } from "../shared/engine/kachat-names/registry.js";
 import { Status, Profile, SocialKind, SocialPlatform, SocialSource } from "../shared/engine/kachat-names/registry-state.js";
@@ -328,35 +329,96 @@ export function confirmAlert({ title, message, confirmLabel, cancelLabel = "Canc
 
 // --- A finished transaction (iOS KachatTxDone / KachatTxDoneSheet) --------------------------
 
+/** What the receipt says under its title for each stage (iOS KachatTxDoneSheet.stageText). */
+function txStageText(stage) {
+  switch (stage) {
+    case TxStage.accepted: return "It's in a block. Updating KaChat Wallet...";
+    case TxStage.shown: return "Done. It shows in KaChat Wallet now.";
+    case TxStage.dropped: return "The network hasn't taken it. Nothing was spent if it never lands - try again with a faster fee.";
+    default: return "Waiting for the network to put it in a block. Usually a few seconds; longer when it's busy.";
+  }
+}
+
+const CIRCLE = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="9"/></svg>';
+
+/** One step of the receipt: done (a green check), active (a spinner) or still to come (a circle). */
+function txStepHtml(text, { done = false, active = false } = {}) {
+  const icon = done ? `<span class="kl-green">${ICONS.checkFill}</span>` : active ? '<span class="spinner small-spin"></span>' : `<span class="muted">${CIRCLE}</span>`;
+  return `<div class="kl-receipt-step ${done || active ? "on" : ""}"><span class="kl-receipt-step-icon">${icon}</span><span>${esc(text)}</span></div>`;
+}
+
 /**
- * The half sheet every finished name transaction shows: what happened, the transaction id (tap
- * to copy) and View in Explorer - the explorer picked in Settings, testnet-10's on testnet.
- * `onClose` runs when it goes away (the action sheet under it closes with it, as on iOS).
+ * The receipt every name transaction (and profile save) ends on (iOS KachatTxDoneSheet, e426432),
+ * in the Send receipt's style: its progress followed on a node (actions.follow) - a spinner until
+ * it lands, then a check; steps Sent to the network / In a block / Updated in KaChat Wallet;
+ * dropped says so and suggests a faster fee - and the transaction id (click to copy) with View in
+ * Explorer. Closing it early is fine: the change still lands. `accepted`: already known to be in a
+ * block (a registration the driver saw land). A transaction `perform` didn't send (a profile save)
+ * is followed here. `onClose` runs when it goes away.
  */
-export function showTxDone({ txId, title = "Transaction sent", onClose = () => {} }) {
+export function showTxDone({ txId, title = "Transaction sent", onClose = () => {}, accepted = false }) {
   document.querySelector(".kl-done-backdrop")?.remove();
   const backdrop = document.createElement("div");
   backdrop.className = "sheet-backdrop kl-done-backdrop";
-  backdrop.innerHTML = `
-    <div class="sheet kl-done" role="dialog" aria-modal="true" aria-label="${esc(title)}">
-      <div class="sheet-grabber"></div>
-      <span class="kl-green kl-done-icon">${SYMBOLS.sent}</span>
-      <div class="kl-done-title">${esc(title)}</div>
-      <p class="muted small center-text">It shows here once the network accepts it, usually within seconds.</p>
-      <button class="kl-txid" id="kl-copy-tx" title="Copy">
-        <span class="mono tiny ellipsis">${esc(txId)}</span><span class="kl-copy-icon">${ICONS.copy || ""}</span>
-      </button>
-      <a class="km-prominent kl-full kl-explorer" href="${esc(wallet.explorerTxUrl(txId))}" target="_blank" rel="noopener noreferrer">View in Explorer</a>
-      <button class="bar-text strong" data-done>Done</button>
-    </div>`;
-  const close = () => { backdrop.remove(); document.removeEventListener("keydown", onKey); onClose(); };
+  let actions = runtimeActions();
+  const stage = () => actions?.txStage?.(txId) ?? (accepted ? TxStage.shown : TxStage.sent);
+  const body = () => {
+    const st = stage();
+    const inBlock = st === TxStage.accepted || st === TxStage.shown;
+    const icon = st === TxStage.shown ? `<span class="kl-green kl-done-icon">${SYMBOLS.sent}</span>`
+      : st === TxStage.dropped ? `<span class="kl-orange kl-done-icon">${SYMBOLS.warning}</span>`
+        : '<span class="kl-done-icon"><span class="spinner"></span></span>';
+    return `
+      <div class="sheet kl-done" role="dialog" aria-modal="true" aria-label="${esc(title)}">
+        <div class="sheet-grabber"></div>
+        ${icon}
+        <div class="kl-done-title">${esc(title)}</div>
+        <p class="muted small center-text">${esc(txStageText(st))}</p>
+        <div class="kl-receipt-steps">
+          ${txStepHtml("Sent to the network", { done: true })}
+          ${txStepHtml("In a block", { done: inBlock, active: !inBlock && st !== TxStage.dropped })}
+          ${txStepHtml("Updated in KaChat Wallet", { done: st === TxStage.shown, active: st === TxStage.accepted })}
+        </div>
+        <button class="kl-txid" id="kl-copy-tx" title="Copy">
+          <span class="mono tiny ellipsis">${esc(txId)}</span><span class="kl-copy-icon">${ICONS.copy || ""}</span>
+        </button>
+        <a class="km-prominent kl-full kl-explorer" href="${esc(wallet.explorerTxUrl(txId))}" target="_blank" rel="noopener noreferrer">View in Explorer</a>
+        <button class="bar-text strong" data-done>Done</button>
+      </div>`;
+  };
+  const paintBody = () => {
+    backdrop.innerHTML = body();
+    backdrop.querySelector("#kl-copy-tx").onclick = async () => {
+      try { await navigator.clipboard.writeText(txId); toast("Transaction ID copied"); } catch { /* clipboard refused */ }
+    };
+  };
+  let unsubscribe = null;
+  let last = null;
+  const close = () => {
+    backdrop.remove();
+    document.removeEventListener("keydown", onKey);
+    try { unsubscribe?.(); } catch { /* gone */ }
+    onClose();
+  };
   const onKey = (event) => { if (event.key === "Escape") close(); };
   document.addEventListener("keydown", onKey);
   backdrop.addEventListener("click", (event) => { if (event.target === backdrop || event.target.closest("[data-done]")) close(); });
-  backdrop.querySelector("#kl-copy-tx").onclick = async () => {
-    try { await navigator.clipboard.writeText(txId); toast("Transaction ID copied"); } catch { /* clipboard refused */ }
-  };
+  paintBody();
+  last = stage();
   document.body.appendChild(backdrop);
+  // Follow it: names where the registry runs, profile saves on every network.
+  (async () => {
+    actions = (await runtime().catch(() => null))?.actions ?? (await kachatProfiles().catch(() => null))?.actions ?? null;
+    if (!actions || !backdrop.isConnected) return;
+    unsubscribe = actions.subscribe?.(() => {
+      const st = stage();
+      if (st !== last && backdrop.isConnected) { last = st; paintBody(); }
+    }) ?? null;
+    if (!accepted && actions.txStage?.(txId) == null) {
+      try { actions.follow?.(txId, null); } catch { /* shows as sent */ }
+    }
+    if (stage() !== last) { last = stage(); paintBody(); }
+  })();
 }
 
 // --- The runtime ---------------------------------------------------------------------------
@@ -603,7 +665,7 @@ function registrationCardHtml(r) {
 
 /** The finished registration (or cancelled commit) as the done sheet shows it, or null. */
 function finishedTx(r) {
-  if (r.stage === Stage.registered && r.registerTxId) return { txId: r.registerTxId, title: "Name registered" };
+  if (r.stage === Stage.registered && r.registerTxId) return { txId: r.registerTxId, title: "Name registered", accepted: true };
   if (r.stage === Stage.cancelled && r.cancelTxId) return { txId: r.cancelTxId, title: "Commit cancelled" };
   return null;
 }
@@ -1042,56 +1104,93 @@ const labeledRow = (title, value, bold = false) =>
  *   operation(): the Operation for the current inputs, or null
  *   inputsHtml / bindInputs(panel, changed): the sheet's own fields; `changed()` rebuilds
  */
+/**
+ * Every action's sheet, in the Send screens' style (iOS KachatTxSheet, e426432): its inputs, what it
+ * costs (built against live UTXOs at the fee shown, nothing sent), the network fee with Normal /
+ * Fast / Priority or a custom amount - a notice when the network is busy, which then starts it on
+ * Fast unless you chose - the balance after, the warning of a destructive action in red, and slide
+ * to confirm: the slide is the confirmation (iOS e67074c), then the password, then the transaction,
+ * sent at the fee shown. Ends on the receipt, which follows it into a block.
+ */
 function openTxSheet({ title, confirmTitle, doneTitle = "Transaction sent", warning = null, footer = null, rows = [], operation, inputsHtml = "", bindInputs = null, onDone = () => {}, onFinished = null, back = null }) {
-  const state = { plan: null, planError: null, building: false, sending: false, txId: null, sendError: null, token: 0, balance: null };
+  const state = {
+    plan: null, planError: null, building: false, sending: false, txId: null, sendError: null, token: 0, balance: null,
+    // the fee: a speed, or a typed total (sompi); `touched` once you chose - a busy network no
+    // longer moves it for you
+    fee: { tier: FeeTier.normal, custom: null, touched: false, editing: false },
+    busy: false,
+  };
   let handle = null;
   const rowsNow = () => (typeof rows === "function" ? rows() : rows);
   const footerNow = () => (typeof footer === "function" ? footer() : footer);
+  const feeChoice = () => (state.fee.custom != null ? FeeChoice.customTotal(state.fee.custom) : FeeChoice.tier(state.fee.tier));
 
   const planHtml = () => {
     const p = state.plan;
-    let costs = "";
-    if (p) {
-      costs = `${p.priceFee > 0n ? labeledRow("Price (to miners)", amount(p.priceFee)) : ""}
-        ${labeledRow("Network fee", amount(p.networkFee))}
-        ${myKey ? balanceRows(balanceChange(p, myKey)) : ""}`;
-    } else if (state.building) {
-      costs = '<div class="form-row between"><span>Network fee</span><span class="spinner small-spin"></span></div>';
-    }
-    const list = rowsNow().map((r) => labeledRow(r.title, r.value)).join("") + costs;
+    const price = p && p.priceFee > 0n ? labeledRow("Price (to miners)", amount(p.priceFee)) : "";
+    const list = rowsNow().map((r) => labeledRow(r.title, r.value)).join("") + price;
     const foot = state.planError ? `<span class="error-text">${esc(state.planError)}</span>` : footerNow() ? esc(footerNow()) : "";
-    const confirm = state.txId
-      ? `<div class="form-row kl-sent">
-          <span class="kl-green kl-sent-title">${SYMBOLS.sent}<span>Sent</span></span>
-          <span class="mono tiny muted break">${esc(state.txId)}</span>
-          <span class="muted tiny">It shows here once the network accepts it, usually within seconds.</span>
-        </div>`
-      : `<button class="form-row km-form-button ${warning ? "danger-text" : ""}" id="kl-confirm" ${state.plan && !state.sending ? "" : "disabled"}>
-          ${state.sending ? '<span class="spinner small-spin"></span>' : esc(confirmTitle)}
-        </button>`;
+    const pill = p && myKey ? `<div class="sk-pills"><span class="sk-pill">${esc(balancePill(balanceChange(p, myKey)))}</span></div>` : "";
     return `
-      <div class="form-section">
+      ${list || foot ? `<div class="form-section">
         ${list ? `<div class="form-card">${list}</div>` : ""}
         ${foot ? `<div class="form-footer">${unitText(foot)}</div>` : ""}
-      </div>
-      ${warning ? `<div class="form-section"><div class="form-card"><div class="form-row kl-warning">${SYMBOLS.warning}<span>${esc(warning)}</span></div></div></div>` : ""}
-      <div class="form-section">
-        <div class="form-card">${confirm}</div>
-        ${state.sendError ? `<div class="form-footer error-text">${esc(state.sendError)}</div>` : ""}
-      </div>`;
+      </div>` : ""}
+      ${state.busy && !state.txId ? `
+        <div class="kl-busy-notice" role="status">
+          <span class="kl-orange">${SYMBOLS.warning}</span>
+          <span class="kl-busy-copy"><strong>The network is busy</strong><span class="muted tiny">At Normal this may wait a while. Fast or Priority pays a little more to get into a block sooner.</span></span>
+        </div>` : ""}
+      ${state.txId ? "" : feeControlsHtml({
+        tier: state.fee.tier, custom: state.fee.custom != null, editing: state.fee.editing,
+        customText: p ? plain(p.networkFee) : "", estimating: state.building, feeText: p ? amount(p.networkFee) : null, showsCoinControl: false,
+      })}
+      ${pill}
+      ${warning ? `<div class="kl-warning-card" role="note">${SYMBOLS.warning}<span>${esc(warning)}</span></div>` : ""}
+      ${state.txId
+        ? `<div class="form-section"><div class="form-card"><div class="form-row kl-sent">
+            <span class="kl-green kl-sent-title">${SYMBOLS.sent}<span>Sent</span></span>
+            <span class="mono tiny muted break">${esc(state.txId)}</span>
+          </div></div></div>`
+        : slideButtonHtml({ title: confirmTitle, busy: state.sending, enabled: Boolean(state.plan) && !state.building && !state.fee.editing })}
+      ${state.sendError ? `<p class="error-text small center-text">${esc(state.sendError)}</p>` : ""}`;
   };
 
-  // Names always spend from, and pay back to, the chatting address: show its real balance and
-  // what it will be once this is sent (iOS 8ecc38c).
-  const balanceRows = (change) => (state.balance != null
-    ? labeledRow("Chatting address balance", amount(state.balance)) + labeledRow("Balance after", amount(state.balance + change > 0n ? state.balance + change : 0n), true)
-    : labeledRow("Balance change", signed(change), true));
+  // Names always spend from, and pay back to, the chatting address: what it holds once this is
+  // sent (iOS 8ecc38c).
+  const balancePill = (change) => (state.balance != null
+    ? `Balance after: ${amount(state.balance + change > 0n ? state.balance + change : 0n)}`
+    : `Balance change: ${signed(change)}`);
 
   const paint = () => {
     if (!handle?.isOpen()) return;
     const host = handle.panel.querySelector("[data-plan]");
     host.innerHTML = unitText(planHtml());
-    host.querySelector("#kl-confirm")?.addEventListener("click", confirm);
+    for (const b of host.querySelectorAll("[data-tier]")) b.onclick = () => chooseTier(b.dataset.tier);
+    const feeButton = host.querySelector("#fee");
+    if (feeButton) feeButton.onclick = () => { state.fee.editing = true; paint(); host.querySelector("#custom-fee")?.select(); };
+    const custom = host.querySelector("#custom-fee");
+    if (custom) {
+      custom.oninput = () => { const clean = sanitizeAmountInput(custom.value); if (clean !== custom.value) custom.value = clean; };
+      custom.onkeydown = (event) => { if (event.key === "Enter") commitCustomFee(); };
+      host.querySelector("#fee-ok").onclick = commitCustomFee;
+    }
+    bindSlideButton(host, confirm);
+  };
+
+  /** A speed replaces a typed fee. */
+  const chooseTier = (tier) => {
+    if (state.sending || state.txId || !Object.values(FeeTier).includes(tier)) return;
+    state.fee = { tier, custom: null, touched: true, editing: false };
+    rebuild();
+  };
+  /** A typed total - more than zero, else the speed stays. */
+  const commitCustomFee = () => {
+    const value = parseSompi(handle.panel.querySelector("#custom-fee")?.value ?? "");
+    state.fee.editing = false;
+    state.fee.touched = true;
+    if (value != null && value > 0n) state.fee.custom = value;
+    rebuild();
   };
 
   const rebuild = () => {
@@ -1102,11 +1201,13 @@ function openTxSheet({ title, confirmTitle, doneTitle = "Transaction sent", warn
     state.building = Boolean(op);
     paint();
     if (!op) return;
+    const fee = feeChoice();
     setTimeout(async () => {
       if (token !== state.token) return;
       try {
         await prepareSigner(op);
-        const plan = await (await runtime()).actions.plan(op);
+        // built at the fee shown, as it will be sent (iOS e426432)
+        const plan = await (await runtime()).actions.plan(op, { fee });
         if (token !== state.token) return;
         state.plan = plan;
       } catch (error) {
@@ -1119,19 +1220,20 @@ function openTxSheet({ title, confirmTitle, doneTitle = "Transaction sent", warn
   };
 
   async function confirm() {
-    if (!state.plan || state.sending) return;
-    // No second prompt after the confirm (iOS e67074c): the warning stays on screen above it.
+    if (!state.plan || state.sending || state.building) return;
+    // The slide is the confirmation: no second prompt (iOS e67074c) - the warning is the red card.
     if (!(await confirmPassword())) return;
     const op = operation();
     if (!op) return;
+    const fee = feeChoice();
     state.sending = true;
     state.sendError = null;
     paint();
     try {
       await prepareSigner(op);
-      // never pays more than the price shown (the price record can change at any time; iOS 4f5d95e)
+      // never pays more than the price shown (iOS 4f5d95e), at the fee shown (iOS e426432)
       const maxPrice = typeof state.plan?.priceFee === "bigint" ? state.plan.priceFee : null;
-      const id = await (await runtime()).actions.perform(op, { maxPrice });
+      const id = await (await runtime()).actions.perform(op, { maxPrice, fee });
       state.txId = id;
       handle.setBar({ trailing: "Done" });
       onDone(id);
@@ -1156,13 +1258,24 @@ function openTxSheet({ title, confirmTitle, doneTitle = "Transaction sent", warn
   let wentBack = false;
   handle = openPanel({
     title, leading: back ? "Back" : "Cancel", full: true,
-    body: `<div data-inputs class="kl-inputs">${inputsHtml}</div><div data-plan></div>`,
+    body: `<div data-inputs class="kl-inputs">${inputsHtml}</div><div data-plan class="kl-send-sheet"></div>`,
     onClose: () => { if (wentBack && !state.txId && !state.sending) back?.(); },
   });
   if (back) handle.panel.querySelector(".panel-bar > [data-close]")?.addEventListener("click", () => { wentBack = true; });
   bindInputs?.(handle.panel, rebuild);
   rebuild();
   chattingBalance().then((balance) => { state.balance = balance; paint(); });
+  // A busy network starts on Fast unless you already chose (iOS e426432).
+  runtime().then((rt) => rt.actions.refreshFeeEstimate?.()).then((estimate) => {
+    if (!handle.isOpen() || state.txId) return;
+    state.busy = Boolean(estimate?.isBusy);
+    if (state.busy && !state.fee.touched && state.fee.custom == null && state.fee.tier === FeeTier.normal) {
+      state.fee.tier = FeeTier.fast;
+      rebuild();
+    } else {
+      paint();
+    }
+  }).catch(() => { /* the fee card still prices Normal */ });
   return handle;
 }
 
@@ -1205,7 +1318,9 @@ const amountField = (id) => `
 // --- Claim (iOS KachatClaimSheet) ----------------------------------------------------------
 
 function openClaimSheet(target) {
-  const state = { years: 1n, quote: null, quoteError: null, starting: false, startError: null, token: 0 };
+  // the fee speed of both the commit now and the registration later (iOS e426432); `touched` once
+  // you chose - a busy network then no longer moves it to Fast
+  const state = { years: 1n, quote: null, quoteError: null, starting: false, startError: null, token: 0, feeTier: FeeTier.normal, quoteTier: null, feeTouched: false, busy: false };
   const yearOptions = Array.from({ length: Math.max(1, maxYears()) }, (_, i) => [i + 1, yearsText(i + 1)]);
   const step = (n, text) => `<div class="form-row kl-step"><span class="kl-step-n">${n}</span><span class="small">${esc(text)}</span></div>`;
   let handle = null;
@@ -1220,8 +1335,7 @@ function openClaimSheet(target) {
         ${labeledRow("Registry deposit (returned on release)", amount(q.gapDeposit))}
         ${labeledRow("Commit (returned at registration)", amount(q.commit))}
         ${labeledRow("Network fees", amount(q.networkFee))}
-        ${labeledRow("Total", amount(q.total), true)}
-        ${labeledRow("Available", amount(q.spendable))}`;
+        ${labeledRow("Total", amount(q.total), true)}`;
     } else if (state.quoteError) {
       rows = `<div class="form-row error-text">${esc(state.quoteError)}</div>`;
     } else {
@@ -1231,11 +1345,22 @@ function openClaimSheet(target) {
       ? '<span class="error-text">Not enough KAS on your chatting address for this name.</span>'
       : "The price goes to the miners - KaChat takes nothing. The bond and the deposit come back when you release the name.";
     return `
+      ${state.busy ? `
+        <div class="kl-busy-notice" role="status">
+          <span class="kl-orange">${SYMBOLS.warning}</span>
+          <span class="kl-busy-copy"><strong>The network is busy</strong><span class="muted tiny">At Normal this may wait a while. Fast or Priority pays a little more to get into a block sooner.</span></span>
+        </div>` : ""}
+      <div class="form-section">
+        <div class="form-header">Network fee</div>
+        <div class="form-card"><div class="form-row">${segmented("fee", [[FeeTier.normal, "Normal"], [FeeTier.fast, "Fast"], [FeeTier.priority, "Priority"]], state.feeTier)}</div></div>
+        <div class="form-footer">Claiming sends two transactions: the commit now, the registration about a minute later. Both use this speed.</div>
+      </div>
       <div class="form-section">
         <div class="form-header">Cost</div>
         <div class="form-card">${rows}</div>
         <div class="form-footer">${unitText(foot)}</div>
       </div>
+      ${q ? `<div class="sk-pills"><span class="sk-pill">Available: ${esc(amount(q.spendable))}</span></div>` : ""}
       <div class="form-section">
         <div class="form-header">How claiming works</div>
         <div class="form-card">
@@ -1246,31 +1371,31 @@ function openClaimSheet(target) {
             : `The name is yours for the time you paid, at most ${periods(maxYears())} ahead. From ${duration(params()?.renewWindowMs ?? 0n)} before it expires you can renew it.`)}
         </div>
       </div>
-      <div class="form-section">
-        <div class="form-card">
-          <button class="form-row km-form-button" id="kl-claim" ${state.quote?.affordable && !state.starting ? "" : "disabled"}>
-            ${state.starting ? '<span class="spinner small-spin"></span>' : `Claim ${esc(target.name)}.kachat`}
-          </button>
-        </div>
-        ${state.startError ? `<div class="form-footer error-text">${esc(state.startError)}</div>` : ""}
-      </div>`;
+      ${slideButtonHtml({ title: `Claim ${target.name}.kachat`, busy: state.starting, enabled: Boolean(state.quote?.affordable) && state.quoteTier === state.feeTier })}
+      ${state.startError ? `<p class="error-text small center-text">${esc(state.startError)}</p>` : ""}`;
   };
 
   const paint = () => {
     if (!handle?.isOpen()) return;
     const host = handle.panel.querySelector("[data-cost]");
     host.innerHTML = unitText(costHtml());
-    host.querySelector("#kl-claim")?.addEventListener("click", start);
+    bindSegmented(host, "fee", (value) => {
+      state.feeTouched = true;
+      if (value !== state.feeTier) { state.feeTier = value; requote(); }
+    });
+    bindSlideButton(host, start);
   };
 
   const requote = async () => {
     const token = ++state.token;
     state.quote = null;
     state.quoteError = null;
+    state.quoteTier = null;
+    const tier = state.feeTier;
     paint();
     try {
-      const q = await (await runtime()).actions.quote({ name: target.name, years: state.years, gap: target.gap });
-      if (token === state.token) state.quote = q;
+      const q = await (await runtime()).actions.quote({ name: target.name, years: state.years, gap: target.gap, feeTier: tier });
+      if (token === state.token) { state.quote = q; state.quoteTier = tier; }
     } catch (error) {
       if (token === state.token) state.quoteError = errorText(error);
     }
@@ -1280,14 +1405,15 @@ function openClaimSheet(target) {
   async function start() {
     // the price shown is the most the registration will ever pay (iOS 4f5d95e, IOS-054)
     const q = state.quote;
-    if (!q?.affordable || state.starting || BigInt(q.years) !== state.years) return;
+    const tier = state.quoteTier;
+    if (!q?.affordable || state.starting || BigInt(q.years) !== state.years || tier !== state.feeTier) return;
     if (!(await confirmPassword())) return;
     if (!handle?.isOpen() || state.quote !== q) return;
     state.starting = true;
     state.startError = null;
     paint();
     try {
-      const commitTxId = await (await runtime()).actions.startRegistration({ name: target.name, years: BigInt(q.years), maxPrice: q.price });
+      const commitTxId = await (await runtime()).actions.startRegistration({ name: target.name, years: BigInt(q.years), maxPrice: q.price, feeTier: tier });
       // the claim becomes its progress half sheet; closing that leaves the claim running (iOS b219bb0)
       const pending = runtimeActions()?.pending ?? [];
       const started = pending.find((x) => x.commitTxId === commitTxId) ?? [...pending].reverse().find((x) => x.name === target.name && isOpen(x));
@@ -1311,10 +1437,16 @@ function openClaimSheet(target) {
           <div class="form-row">${segmented("years", yearOptions, 1)}</div>
         </div>
       </div>
-      <div data-cost></div>`,
+      <div data-cost class="kl-send-sheet"></div>`,
   });
   bindSegmented(handle.panel, "years", (value) => { state.years = BigInt(value); requote(); });
   requote();
+  // A busy network starts on Fast unless you already chose (iOS e426432).
+  runtime().then((rt) => rt.actions.refreshFeeEstimate?.()).then((estimate) => {
+    if (!handle.isOpen()) return;
+    state.busy = Boolean(estimate?.isBusy);
+    if (state.busy && !state.feeTouched && state.feeTier === FeeTier.normal) { state.feeTier = FeeTier.fast; requote(); } else paint();
+  }).catch(() => { /* priced at Normal */ });
 }
 
 // --- Sheets with inputs --------------------------------------------------------------------
