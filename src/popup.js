@@ -138,6 +138,43 @@ async function showHome() {
   refreshHome();
 }
 
+// --- Expired .kachat names (iOS 6ac48a7): a dismissible banner while any is in its grace period ---
+
+const GRACE_DISMISSED_KEY = "kachat_grace_banner_dismissed";
+const graceDismissed = () => { try { return localStorage.getItem(GRACE_DISMISSED_KEY) || ""; } catch { return ""; } };
+
+function graceBannerHtml(s) {
+  const grace = s.graceNames || [];
+  if (!kachatLive || !grace.length || graceDismissed() === s.graceKey) return "";
+  const one = grace.length === 1;
+  const ends = one ? new Date(grace[0].endsAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "";
+  return `
+    <div class="grace-banner" id="grace-banner" role="button" tabindex="0">
+      <span class="grace-icon">${ICONS.warning}</span>
+      <span class="grace-text">
+        <span class="strong small">${one ? "One of your .kachat domains expired" : `${grace.length} of your .kachat domains expired`}</span>
+        <span class="muted tiny">${esc(one ? `Renew ${grace[0].info.name}.kachat before its grace period ends on ${ends} to keep it.` : "Renew them before their grace periods end to keep them.")}</span>
+      </span>
+      <button class="icon plain" id="grace-dismiss" aria-label="Dismiss">${ICONS.xCircle}</button>
+    </div>`;
+}
+
+function bindGraceBanner(s) {
+  const banner = $("#grace-banner");
+  if (!banner) return;
+  // one name opens it; several open Your Domains (its .kachat tab lists them)
+  banner.onclick = () => {
+    const grace = s.graceNames || [];
+    if (grace.length === 1) showLiveNameDetail({ info: grace[0].info, onBack: showHome });
+    else if (s.addresses?.main) showDomains({ address: s.addresses.main, onBack: showHome });
+  };
+  $("#grace-dismiss").onclick = (event) => {
+    event.stopPropagation();
+    try { localStorage.setItem(GRACE_DISMISSED_KEY, s.graceKey || ""); } catch { /* shows again next time */ }
+    banner.remove();
+  };
+}
+
 function spendingTotal(balances) {
   if (!balances) return null;
   return Object.values(balances.spending || {}).reduce((sum, value) => sum + BigInt(value || 0n), 0n);
@@ -198,6 +235,7 @@ function paintHome() {
                <button class="icon plain" id="edit-name" aria-label="Rename account">${ICONS.pencilCircle}</button>`}
         </div>
 
+        ${graceBannerHtml(s)}
         <div class="glass hero">
           ${social.banner
             ? `<div class="fit-banner" style="--placeholder: 140px"><img src="${esc(social.banner)}" alt="" referrerpolicy="no-referrer" /></div>`
@@ -249,7 +287,7 @@ function paintHome() {
           <div class="list-row"><span>Version</span><span class="muted">${esc(version)}</span></div>
           <a class="list-row" href="https://linktr.ee/Kachat_" target="_blank" rel="noopener noreferrer"><span>Website</span><span class="muted">linktr.ee/Kachat_</span></a>
           <a class="list-row" href="mailto:kaspasilver@gmail.com"><span>Support Email</span><span class="muted">kaspasilver@gmail.com</span></a>
-          <button class="list-row" id="donate"><span>Donate</span><span class="muted">kachat.kas</span></button>
+          <button class="list-row" id="donate"><span>Donate</span><span class="muted">kachat.kachat</span></button>
           <button class="list-row" id="licenses"><span>Open Source Licenses</span>${ICONS.chevron}</button>
         </div>
       </section>
@@ -259,6 +297,7 @@ function paintHome() {
   $("#balance").onclick = () => { if (mainSompi != null) copyText(wallet.formatKas(mainSompi, 8), "Balance"); };
   $("#lock").onclick = lockWallet;
   $("#bell").onclick = openBell;
+  bindGraceBanner(s);
   const expand = $("#expand");
   if (expand) expand.onclick = async () => { await ext.tabs.create({ url: ext.runtime.getURL("popup.html?view=tab") }); window.close(); };
   if (main) $("#share").onclick = () => copyText(profileLinkFor(main), "Profile link");
@@ -357,9 +396,9 @@ function paintHome() {
       onClick: logOut,
     }],
   });
-  // iOS Donate resolves kachat.kas and opens a payment to it; here, the Send screen from the
-  // chatting address with kachat.kas filled in.
-  $("#donate").onclick = () => { if (main) showSend({ source: mainSource, fromAddress: main, recipient: "kachat.kas", title: "Donate to KaChat", onClose: showHome }); };
+  // iOS Donate (e7cc0d5): the Send screen with kachat.kachat filled in; it resolves like any typed
+  // name (.kachat first), and where it isn't registered Other domains offers kachat elsewhere.
+  $("#donate").onclick = () => { if (main) showSend({ source: mainSource, fromAddress: main, recipient: "kachat.kachat", title: "Donate to KaChat", onClose: showHome }); };
   $("#licenses").onclick = () => showLicenses({ onBack: showHome });
 }
 
@@ -413,6 +452,8 @@ function addressActionRowHtml(kind, title, address, balanceText, totalText) {
 
 /** Repaints just the bell's dot when the feed changes. */
 bell.onBellChange(() => {
+  // the Profile tab's red dot follows the bell from any tab (iOS 28d9d68)
+  dock.setBadge("profile", bell.unreadCount() > 0);
   const button = app.querySelector("#bell");
   if (!button) return;
   button.outerHTML = bell.bellButtonHtml();
@@ -483,6 +524,11 @@ async function refreshHome() {
             const countHeld = async () => {
               const held = await rt.registry.heldNames(key).catch(() => null);
               if (!held || s.addresses?.main !== main) return;
+              // the ones expired and in grace: the Profile banner (iOS 6ac48a7)
+              const graceMs = rt.registry.graceMs;
+              const grace = held.filter((n) => n.status(graceMs) === "grace").map((n) => ({ info: n, endsAt: Number(n.expiresAt + graceMs) }));
+              const graceKey = grace.map((g) => `${g.info.name}:${g.info.expiresAt}`).join(",");
+              if (s.graceKey !== graceKey) { s.graceKey = graceKey; s.graceNames = grace; paintHomeIfShowing(s); }
               if (s.kachatCount !== held.length) { s.kachatCount = held.length; paintHomeIfShowing(s); }
               // a name that lapses while the wallet is open comes off the count right then
               scheduleLapse("count", held, countHeld);

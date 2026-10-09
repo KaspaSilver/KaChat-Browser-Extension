@@ -118,18 +118,20 @@ async function resolveKaspaNames(label) {
   return { tld: "kaspa", display, address: outcome.status === "found" ? outcome.body?.address || null : null, failed: outcome.status === "failed" };
 }
 
-/** .kachat (testnet only): the owner of an ACTIVE name - a name in grace or lapsed does not
- *  resolve (KACHAT_NAMES.md section 4). Same rules as the registry: a-z, 0-9, hyphen. */
+/** .kachat: the owner of a name that is active or in its grace period - a name in grace keeps
+ *  resolving to its owner (iOS f7c371a); one past grace does not. Same rules as the registry:
+ *  a-z, 0-9, hyphen. Always listed first; where the registry isn't live yet (mainnet before its
+ *  launch) it is listed as "Coming soon" and resolves nothing (iOS 6ac48a7). */
 async function resolveKachat(label) {
-  const registry = kachatRegistry();
-  if (!registry) return null;
   const canonical = kachatNormalize(label);
   if (!kachatIsValid(canonical)) return null;
   const display = `${canonical}.kachat`;
+  const registry = kachatRegistry();
+  if (!registry) return { tld: "kachat", display, address: null, failed: false, notLive: true };
   try {
     await registry.refreshIfStale();
     const found = await registry.lookup(canonical);
-    const active = found.kind === "registered" && found.info.status(registry.graceMs) === Status.active;
+    const active = found.kind === "registered" && found.info.status(registry.graceMs) !== Status.lapsed;
     return { tld: "kachat", display, address: active ? KachatNamesRegistry.addressOf(found.info.owner) : null, failed: false };
   } catch (error) {
     console.info("[KaChat Wallet] .kachat lookup failed:", error?.message || error);
@@ -256,7 +258,7 @@ export function otherDomainsHtml({ resolutions, selectedTld, open }) {
         <button type="button" class="other-domain" data-pick-tld="${r.tld}" ${r.address ? "" : "disabled"}>
           <span class="tx-meta">
             <span class="${r.address ? "strong" : "muted"}">${esc(r.display)}</span>
-            <span class="mono tiny muted ellipsis">${esc(r.address || (r.failed ? "Couldn't check" : "Not registered"))}</span>
+            <span class="mono tiny muted ellipsis">${esc(r.address || (r.notLive ? "Coming soon" : r.failed ? "Couldn't check" : "Not registered"))}</span>
           </span>
           ${r.address ? `<span class="accent">${ICONS.arrowRightCircleOutline}</span>` : ""}
         </button>`).join("")}</div>` : ""}

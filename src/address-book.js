@@ -20,6 +20,7 @@ import { getLocal, setLocal, ext } from "./browser.js";
 import { openPanel } from "./kachat-ui.js";
 import { isValidKaspaAddress, networkOfAddress, NETWORK } from "./net.js";
 import { scanQr } from "./camera.js";
+import { looksLikeName, resolveEverywhere, primaryResolution, notFoundMessage, otherDomainsHtml, bindOtherDomains, splitTypedName } from "./names.js";
 import * as dock from "./dock.js";
 import * as wallet from "./wallet.js";
 
@@ -305,6 +306,51 @@ export function openEditor({ existing = null, address = "", name = "", onSaved =
     note: existing?.note ?? "",
     photo: undefined, // undefined unchanged, string set, null removed
     error: "",
+    // a typed domain, resolved .kachat first (iOS 6ac48a7): what the entry saves is its address
+    resolved: null, resolutions: [], resolving: false, resolveError: "", othersOpen: false, token: 0,
+  };
+  let resolveTimer = null;
+  const resolveTyped = () => {
+    clearTimeout(resolveTimer);
+    const typed = form.address.trim();
+    const token = ++form.token;
+    form.resolved = null;
+    form.resolutions = [];
+    form.resolveError = "";
+    form.resolving = false;
+    if (!typed || /^kaspa(test)?:/i.test(typed) || !looksLikeName(typed)) { paintStatus(); return; }
+    form.resolving = true;
+    paintStatus();
+    resolveTimer = setTimeout(async () => {
+      let results = [];
+      try { results = await resolveEverywhere(typed); } catch { results = []; }
+      if (token !== form.token) return;
+      form.resolving = false;
+      form.resolutions = results;
+      const primary = primaryResolution(results, typed);
+      if (primary) form.resolved = { address: primary.address, domain: primary.display };
+      else form.resolveError = notFoundMessage(typed);
+      paintStatus();
+    }, 350);
+  };
+  /** The line under the address field: the typed domain's address, or why it has none. */
+  const paintStatus = () => {
+    const host = handle?.panel.querySelector("[data-ab-resolve]");
+    if (!host) return;
+    host.innerHTML = form.resolving
+      ? '<span class="spinner small-spin"></span>'
+      : form.resolved ? `<span class="tiny accent">${esc(form.resolved.domain)}</span><span class="mono tiny muted break">${esc(form.resolved.address)}</span>`
+      : form.resolveError ? `<span class="tiny error-text">${esc(form.resolveError)}</span>` : "";
+    if (form.resolutions.length) {
+      host.insertAdjacentHTML("beforeend", otherDomainsHtml({ resolutions: form.resolutions, selectedTld: form.resolved ? splitTypedName(form.resolved.domain).tld : null, open: form.othersOpen }));
+      bindOtherDomains(host, {
+        onToggle: () => { form.othersOpen = !form.othersOpen; paintStatus(); },
+        onPick: (tld) => {
+          const pick = form.resolutions.find((r) => r.tld === tld && r.address);
+          if (pick) { form.resolved = { address: pick.address, domain: pick.display }; form.othersOpen = false; paintStatus(); }
+        },
+      });
+    }
   };
   const currentPhoto = () => (form.photo === undefined ? (existing ? photos[existing.address] : null) : form.photo);
   let handle = null;
@@ -333,10 +379,11 @@ export function openEditor({ existing = null, address = "", name = "", onSaved =
         <div class="form-header">Address</div>
         <div class="form-card">
           <div class="form-row ab-address-row">
-            <input id="ab-address" class="mono" value="${esc(form.address)}" placeholder="${NETWORK === "testnet" ? "kaspatest:" : "kaspa:"}..." autocomplete="off" autocapitalize="off" spellcheck="false" ${existing ? "readonly" : ""} />
+            <input id="ab-address" class="mono" value="${esc(form.address)}" placeholder="${NETWORK === "testnet" ? "kaspatest" : "kaspa"}:... or domain" autocomplete="off" autocapitalize="off" spellcheck="false" ${existing ? "readonly" : ""} />
             ${existing ? "" : `<button class="icon plain accent" id="ab-paste" aria-label="Paste" title="Paste">${ICONS.clipboard}</button>
             <button class="icon plain accent" id="ab-scan" aria-label="Scan QR" title="Scan QR">${SCAN}</button>`}
           </div>
+          ${existing ? "" : '<div class="form-row kl-resolve" data-ab-resolve></div>'}
         </div>
       </div>
       <div class="form-section">
@@ -351,10 +398,11 @@ export function openEditor({ existing = null, address = "", name = "", onSaved =
         <button class="form-row km-form-button danger-text" id="ab-remove">Remove from Address Book</button>
       </div></div>` : ""}`;
     const bind = (id, fn) => { const el = host.querySelector(`#${id}`); if (el) fn(el); };
+    paintStatus();
     bind("ab-name", (el) => { el.oninput = () => { form.name = el.value; }; });
     bind("ab-note", (el) => { el.oninput = () => { form.note = el.value; }; });
-    bind("ab-address", (el) => { el.oninput = () => { form.address = el.value; }; el.onchange = paint; });
-    bind("ab-paste", (el) => { el.onclick = async () => { try { form.address = (await navigator.clipboard.readText()).trim(); } catch { toast("Clipboard unavailable - paste with ⌘V instead."); } paint(); }; });
+    bind("ab-address", (el) => { el.oninput = () => { form.address = el.value; resolveTyped(); }; });
+    bind("ab-paste", (el) => { el.onclick = async () => { try { form.address = (await navigator.clipboard.readText()).trim(); } catch { toast("Clipboard unavailable - paste with ⌘V instead."); } paint(); resolveTyped(); }; });
     bind("ab-scan", (el) => {
       el.onclick = async () => {
         const code = await scanQr({ title: "Scan QR Code", hint: "Point camera at a Kaspa address QR code" });
@@ -362,6 +410,7 @@ export function openEditor({ existing = null, address = "", name = "", onSaved =
         // a payment URI's address, without its ?amount=...
         form.address = String(code).trim().split("?")[0];
         paint();
+        resolveTyped();
       };
     });
     bind("ab-photo", (el) => {
@@ -376,7 +425,10 @@ export function openEditor({ existing = null, address = "", name = "", onSaved =
     bind("ab-save", (el) => {
       el.onclick = async () => {
         try {
-          const saved = await save({ address: form.address, name: form.name, note: form.note, photo: form.photo });
+          if (form.resolving) return;
+          // a typed domain saves the address it resolved to
+          const address = form.resolved?.address || form.address;
+          const saved = await save({ address, name: form.name, note: form.note, photo: form.photo });
           handle.close();
           onSaved(saved);
         } catch (error) {

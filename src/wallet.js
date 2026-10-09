@@ -17,7 +17,8 @@ import {
 } from "../shared/engine/wallet.js";
 import { createRpc, probeRpc, disconnectRpc, getNodeRegistrySnapshot, PUBLIC_NODE_SEEDS } from "../shared/engine/rpc.js";
 import { getEndpoint } from "../shared/engine/endpoints.js";
-import { getBalance, sendKaspa, sendMaxKaspa, sweepAllToSelf, estimateSendFeeDetail, estimateOnchainFeeDetail } from "../shared/engine/transactions.js";
+import { getBalance, sendKaspa, sendMaxKaspa, sweepAllToSelf, estimateSendFeeDetail, estimateOnchainFeeDetail, submitConfirmingAcceptance } from "../shared/engine/transactions.js";
+import { checkedUtxoAnswer } from "../shared/engine/amounts.js";
 import { calculateMass, calculateFee, fetchQuotedFeeRateSompiPerGram } from "../shared/ui/kspt.js";
 import { looksLikeName, resolveEverywhere, primaryResolution, notFoundMessage, ownsAnyName, ownedNamesOfMany } from "./names.js";
 import { fetchKasPrice, peekKasPrice } from "../shared/engine/prices.js";
@@ -1237,7 +1238,8 @@ export function namesNodeMethods() {
       const list = [...new Set((addresses || []).map(String).filter(Boolean))];
       const out = [];
       for (let start = 0; start < list.length; start += 50) {
-        const response = await withRpc((node) => node.getUtxosByAddresses(list.slice(start, start + 50)));
+        // a node answering amounts above the Kaspa supply is refused (iOS 283cd28, IOS-020)
+        const response = await withRpc(async (node) => checkedUtxoAnswer(await node.getUtxosByAddresses(list.slice(start, start + 50))));
         for (const e of response?.entries || []) out.push(plainUtxo(e));
       }
       return out;
@@ -1277,9 +1279,21 @@ export function namesNodeMethods() {
         return null;
       }
     },
-    async submitRpcTransaction(transaction) {
-      const response = await withRpc((node) => node.submitTransaction({ transaction, allowOrphan: false }));
-      return String(response?.transactionId ?? "");
+    /** Submits an SDK transaction; a submit whose answer was lost but whose transaction the
+     *  network has counts as sent (iOS 9139e88, IOS-014): `expectedTxId` (the core's own id) is
+     *  looked up before it fails. */
+    async submitRpcTransaction(transaction, { expectedTxId = null } = {}) {
+      let localId = expectedTxId ? String(expectedTxId) : null;
+      if (!localId) {
+        try { localId = transaction?.id ? String(transaction.id) : null; } catch { localId = null; }
+      }
+      return submitConfirmingAcceptance({
+        withRpc,
+        submit: (node, { allowOrphan = false } = {}) => node.submitTransaction({ transaction, allowOrphan }),
+        txid: localId,
+        label: "Transaction submit",
+        log: (...parts) => console.info("[KaChat Wallet]", ...parts),
+      });
     },
     /** The fee (BigInt sompi) of a 0.2 KAS self-transfer from the bound address carrying
      *  `payloadBytes` of payload (optionally only from `selectedOutpoints`); null when unknown.

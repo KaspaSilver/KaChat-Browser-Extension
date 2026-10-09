@@ -25,6 +25,8 @@ const ICON = {
 const TABS = [["cold", "Storage"], ["profile", "Profile"], ["portfolio", "Portfolio"], ["book", "Address Book"]];
 
 const roots = {};
+// Tabs showing a red dot (iOS 28d9d68: Profile, whenever the bell has something unread).
+const badges = new Set();
 const last = {};
 let current = "profile";
 let enabled = false;
@@ -63,6 +65,16 @@ function belongsToTab(screen) {
 
 const dockEl = document.getElementById("dock");
 
+/** Shows or hides a tab's red dot, at once if the dock is up. */
+export function setBadge(id, on) {
+  if (on === badges.has(id)) return;
+  if (on) badges.add(id); else badges.delete(id);
+  const item = dockEl?.querySelector(`[data-dock="${id}"]`);
+  if (!item) return;
+  item.querySelector(".dock-dot")?.remove();
+  if (on) item.insertAdjacentHTML("beforeend", '<span class="dock-dot"></span>');
+}
+
 onRender((screen) => {
   const tab = enabled ? belongsToTab(screen) : null;
   const visible = Boolean(tab);
@@ -73,7 +85,7 @@ onRender((screen) => {
   if (!visible) return;
   dockEl.innerHTML = TABS.map(([id, label]) => `
     <button class="dock-item" data-dock="${id}" role="tab" aria-selected="${id === current}" aria-label="${esc(label)}">
-      ${ICON[id]}<span>${esc(label)}</span>
+      ${ICON[id]}<span>${esc(label)}</span>${badges.has(id) ? '<span class="dock-dot"></span>' : ""}
     </button>`).join("");
   for (const button of dockEl.querySelectorAll("[data-dock]")) button.onclick = () => selectTab(button.dataset.dock);
 });

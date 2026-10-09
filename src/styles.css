@@ -1080,3 +1080,9 @@ button.kl-tile:not(:disabled), .kl-tile-split { cursor: pointer; }
 .kl-receipt-step.on { color: var(--text); }
 .kl-receipt-step-icon { display: inline-flex; width: 18px; justify-content: center; }
 .kl-receipt-step-icon svg { width: 18px; height: 18px; }
+.kl-notopen-row { display: flex; gap: 8px; align-items: flex-start; }
+.dock-item { position: relative; }
+.dock-dot { position: absolute; top: 5px; left: calc(50% + 9px); width: 8px; height: 8px; border-radius: 50%; background: #ff3b30; }
+.grace-banner { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-radius: 16px; background: rgba(255,159,10,.12); border: 1px solid rgba(255,159,10,.3); cursor: pointer; margin-bottom: 12px; }
+.grace-icon { color: #ff9f0a; display: inline-flex; flex: none; }
+.grace-text { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }

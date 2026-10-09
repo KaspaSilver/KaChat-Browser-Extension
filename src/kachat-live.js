@@ -10,7 +10,8 @@
 // Left out on purpose: iOS's Message button on a name's owner (the wallet has no chats).
 
 import { app, esc, render, $, toast, ICONS, navHeader, unitText, showSheet } from "./ui.js";
-import { KAS_UNIT } from "./net.js";
+import { KAS_UNIT, IS_TESTNET } from "./net.js";
+import { looksLikeName, resolveEverywhere, primaryResolution, otherDomainsHtml, bindOtherDomains, splitTypedName } from "./names.js";
 import { sompiFromUserText, sanitizeAmountInput } from "./amounts.js";
 import * as vault from "./vault.js";
 import * as wallet from "./wallet.js";
@@ -193,11 +194,13 @@ const isMine = (key) => Boolean(myKey && key && bytesEqual(myKey, key));
 const EVENT_ICONS = {
   register: SYMBOLS.atPlus, transfer: SYMBOLS.arrows, list: SYMBOLS.tag, delist: SYMBOLS.tagSlash,
   sale: SYMBOLS.cart, offer_accepted: SYMBOLS.cart, renew: SYMBOLS.renew, extend: SYMBOLS.calendarPlus, release: SYMBOLS.release, reclaim: SYMBOLS.reclaim,
+  // a name carried over from the previous registry (registry v5, iOS dd836cb)
+  import: SYMBOLS.arrowDownDoc,
 };
 const EVENT_TITLES = {
   register: "Registered", transfer: "Transferred", list: "Listed", delist: "Delisted", sale: "Sold",
   offer_accepted: "Offer accepted", offer_accept: "Offer accepted", renew: "Renewed", extend: "Extended", release: "Released",
-  reclaim: "Reclaimed", offer: "Offer made", offer_withdraw: "Offer withdrawn", offer_refund: "Offer refunded", offer_decline: "Offer declined",
+  reclaim: "Reclaimed", import: "Moved to the new registry", offer: "Offer made", offer_withdraw: "Offer withdrawn", offer_refund: "Offer refunded", offer_decline: "Offer declined",
 };
 
 /** Why a typed name is not a name. */
@@ -1115,6 +1118,8 @@ const labeledRow = (title, value, bold = false) =>
 function openTxSheet({ title, confirmTitle, doneTitle = "Transaction sent", warning = null, footer = null, rows = [], operation, inputsHtml = "", bindInputs = null, onDone = () => {}, onFinished = null, back = null }) {
   const state = {
     plan: null, planError: null, building: false, sending: false, txId: null, sendError: null, token: 0, balance: null,
+    // the fee rate the plan was built at: the send uses exactly this (iOS 7e2b6cd, IOS-061)
+    planFeerate: null,
     // the fee: a speed, or a typed total (sompi); `touched` once you chose - a busy network no
     // longer moves it for you
     fee: { tier: FeeTier.normal, custom: null, touched: false, editing: false },
@@ -1196,6 +1201,7 @@ function openTxSheet({ title, confirmTitle, doneTitle = "Transaction sent", warn
   const rebuild = () => {
     const token = ++state.token;
     state.plan = null;
+    state.planFeerate = null;
     state.planError = null;
     const op = operation();
     state.building = Boolean(op);
@@ -1207,9 +1213,10 @@ function openTxSheet({ title, confirmTitle, doneTitle = "Transaction sent", warn
       try {
         await prepareSigner(op);
         // built at the fee shown, as it will be sent (iOS e426432)
-        const plan = await (await runtime()).actions.plan(op, { fee });
+        const built = await (await runtime()).actions.planWithRate(op, { fee });
         if (token !== state.token) return;
-        state.plan = plan;
+        state.plan = built.plan;
+        state.planFeerate = built.feerate;
       } catch (error) {
         if (token !== state.token) return;
         state.planError = errorText(error);
@@ -1233,7 +1240,9 @@ function openTxSheet({ title, confirmTitle, doneTitle = "Transaction sent", warn
       await prepareSigner(op);
       // never pays more than the price shown (iOS 4f5d95e), at the fee shown (iOS e426432)
       const maxPrice = typeof state.plan?.priceFee === "bigint" ? state.plan.priceFee : null;
-      const id = await (await runtime()).actions.perform(op, { maxPrice, fee });
+      // ...at exactly the rate it was built at, never a bigger network fee (iOS 7e2b6cd, IOS-061)
+      const maxNetworkFee = typeof state.plan?.networkFee === "bigint" ? state.plan.networkFee : null;
+      const id = await (await runtime()).actions.perform(op, { maxPrice, fee, exactFeerate: state.planFeerate ?? null, maxNetworkFee });
       state.txId = id;
       handle.setBar({ trailing: "Done" });
       onDone(id);
@@ -1241,7 +1250,7 @@ function openTxSheet({ title, confirmTitle, doneTitle = "Transaction sent", warn
     } catch (error) {
       state.sendError = errorText(error);
       // the price moved: build the plan again so the new price shows and is confirmed again
-      if (error?.code === "priceChanged" && handle?.isOpen()) {
+      if ((error?.code === "priceChanged" || error?.code === "feeChanged") && handle?.isOpen()) {
         state.sending = false;
         const shown = state.sendError;
         rebuild();
@@ -1320,7 +1329,8 @@ const amountField = (id) => `
 function openClaimSheet(target) {
   // the fee speed of both the commit now and the registration later (iOS e426432); `touched` once
   // you chose - a busy network then no longer moves it to Fast
-  const state = { years: 1n, quote: null, quoteError: null, starting: false, startError: null, token: 0, feeTier: FeeTier.normal, quoteTier: null, feeTouched: false, busy: false };
+  // notOpen: registry v5 before its migration deadline - why claiming waits, and until when (iOS dd836cb)
+  const state = { years: 1n, quote: null, quoteError: null, notOpen: null, starting: false, startError: null, token: 0, feeTier: FeeTier.normal, quoteTier: null, feeTouched: false, busy: false };
   const yearOptions = Array.from({ length: Math.max(1, maxYears()) }, (_, i) => [i + 1, yearsText(i + 1)]);
   const step = (n, text) => `<div class="form-row kl-step"><span class="kl-step-n">${n}</span><span class="small">${esc(text)}</span></div>`;
   let handle = null;
@@ -1336,6 +1346,8 @@ function openClaimSheet(target) {
         ${labeledRow("Commit (returned at registration)", amount(q.commit))}
         ${labeledRow("Network fees", amount(q.networkFee))}
         ${labeledRow("Total", amount(q.total), true)}`;
+    } else if (state.notOpen) {
+      rows = labeledRow("Total", "-");
     } else if (state.quoteError) {
       rows = `<div class="form-row error-text">${esc(state.quoteError)}</div>`;
     } else {
@@ -1345,6 +1357,11 @@ function openClaimSheet(target) {
       ? '<span class="error-text">Not enough KAS on your chatting address for this name.</span>'
       : "The price goes to the miners - KaChat takes nothing. The bond and the deposit come back when you release the name.";
     return `
+      ${state.notOpen ? `
+        <div class="form-section">
+          <div class="form-card"><div class="form-row kl-notopen-row"><span class="kl-orange">${SYMBOLS.clock}</span><span class="small">${esc(state.notOpen)}</span></div></div>
+          <div class="form-footer">Every name from the old registry comes over with the same owner and expiry first.</div>
+        </div>` : ""}
       ${state.busy ? `
         <div class="kl-busy-notice" role="status">
           <span class="kl-orange">${SYMBOLS.warning}</span>
@@ -1390,6 +1407,7 @@ function openClaimSheet(target) {
     const token = ++state.token;
     state.quote = null;
     state.quoteError = null;
+    state.notOpen = null;
     state.quoteTier = null;
     const tier = state.feeTier;
     paint();
@@ -1397,7 +1415,10 @@ function openClaimSheet(target) {
       const q = await (await runtime()).actions.quote({ name: target.name, years: state.years, gap: target.gap, feeTier: tier });
       if (token === state.token) { state.quote = q; state.quoteTier = tier; }
     } catch (error) {
-      if (token === state.token) state.quoteError = errorText(error);
+      if (token === state.token) {
+        if (error?.code === "registrationNotOpen") state.notOpen = errorText(error);
+        else state.quoteError = errorText(error);
+      }
     }
     if (token === state.token) paint();
   };
@@ -1588,17 +1609,43 @@ function openListSheet(info) {
 }
 
 function openTransferSheet(info) {
-  const state = { resolved: null, error: null, resolving: false, token: 0 };
+  const state = { resolved: null, resolutions: [], othersOpen: false, error: null, resolving: false, token: 0 };
   let statusEl = null;
+  let refreshPlan = () => {};
   const showStatus = () => {
     if (!statusEl) return;
     statusEl.innerHTML = state.resolving
       ? '<span class="spinner small-spin"></span>'
-      : state.resolved ? `<span class="mono tiny muted break">${esc(state.resolved.address)}</span>${savedNameHtml(state.resolved.address)}`
+      : state.resolved ? `${state.resolved.domain ? `<span class="tiny kl-green">${esc(state.resolved.domain)}</span>` : ""}<span class="mono tiny muted break">${esc(state.resolved.address)}</span>${savedNameHtml(state.resolved.address)}`
       : state.error ? `<span class="tiny error-text">${esc(state.error)}</span>` : "";
+    // the other services' answers for a typed name (iOS OtherDomainsDropdown)
+    if (state.resolutions.length) {
+      statusEl.insertAdjacentHTML("beforeend", otherDomainsHtml({ resolutions: state.resolutions, selectedTld: state.resolved?.domain ? splitTypedName(state.resolved.domain).tld : null, open: state.othersOpen }));
+      bindOtherDomains(statusEl, {
+        onToggle: () => { state.othersOpen = !state.othersOpen; showStatus(); },
+        onPick: (tld) => {
+          const pick = state.resolutions.find((r) => r.tld === tld && r.address);
+          if (!pick) return;
+          state.error = null;
+          state.resolved = null;
+          setResolved(pick.address, pick.display);
+          state.othersOpen = false;
+          showStatus();
+          refreshPlan();
+        },
+      });
+    }
+  };
+  /** A resolved address must be a Schnorr P2PK one - only those can own a name. */
+  const setResolved = (address, domain = null) => {
+    const key = KachatNamesRegistry.keyOf(String(address).toLowerCase());
+    if (!key) { state.error = "That name's address can't own a .kachat name."; return; }
+    try { KachatNamesActions.validateKey(key, ""); } catch { state.error = "That name's address can't own a .kachat name."; return; }
+    state.resolved = { address: String(address).toLowerCase(), key, domain };
   };
   const resolve = async (text, token, changed) => {
     state.resolved = null;
+    state.resolutions = [];
     state.error = null;
     const t = text.trim().toLowerCase();
     if (!t) return;
@@ -1609,18 +1656,17 @@ function openTransferSheet(info) {
       state.resolved = { address: t, key };
       return;
     }
-    const name = normalize(t);
-    if (invalidReason(name)) { state.error = "Enter an address or a .kachat name."; return; }
+    // Any domain, .kachat first, like every address field (iOS 6ac48a7).
+    if (!looksLikeName(t)) { state.error = "Enter an address or a domain."; return; }
     state.resolving = true;
     showStatus();
     try {
-      const found = await registry().lookup(name);
+      const results = await resolveEverywhere(t);
       if (token !== state.token) return;
-      if (found.kind === "registered" && statusOf(found.info) === Status.active && addressOf(found.info.owner)) {
-        state.resolved = { address: addressOf(found.info.owner), key: found.info.owner };
-      } else {
-        state.error = "No active .kachat name by that name.";
-      }
+      state.resolutions = results;
+      const primary = primaryResolution(results, t);
+      if (!primary) state.error = "No domain found by that name.";
+      else setResolved(primary.address, primary.display);
     } catch {
       state.error = "Couldn't look that name up.";
     }
@@ -1636,18 +1682,19 @@ function openTransferSheet(info) {
         <div class="form-header">New owner</div>
         <div class="form-card">
           <div class="form-row kl-to-row">
-            <input class="plain-input" id="kl-to" placeholder="kaspatest:... or name.kachat" autocomplete="off" autocapitalize="off" spellcheck="false" />
+            <input class="plain-input" id="kl-to" placeholder="${IS_TESTNET ? "kaspatest" : "kaspa"}:... or domain" autocomplete="off" autocapitalize="off" spellcheck="false" />
             <button class="icon plain accent" id="kl-to-paste" aria-label="Paste" title="Paste">${ICONS.clipboard}</button>
             <button class="icon plain accent" id="kl-to-scan" aria-label="Scan QR" title="Scan QR">${ICONS.qr}</button>
             ${addressBookButtonHtml()}
           </div>
           <div class="form-row kl-resolve" id="kl-to-status"></div>
         </div>
-        <div class="form-footer">A testnet address, or a .kachat name - it's resolved to the address shown.</div>
+        <div class="form-footer">An address or a domain - .kachat names are looked up first, and it's resolved to the address shown.</div>
       </div>`,
     bindInputs(panel, changed) {
       const input = panel.querySelector("#kl-to");
       statusEl = panel.querySelector("#kl-to-status");
+      refreshPlan = changed;
       let timer = null;
       input.oninput = () => {
         clearTimeout(timer);

@@ -774,7 +774,7 @@ function showAddAddress(preset = null) {
           <button class="link-button" id="pf-addr-scan">${SF.qrViewfinder(16)}<span>Scan QR</span></button>
         </div>
       </div>
-      <div class="form-footer">Enter a Kaspa address or a KNS domain like name.kas. Every received transaction on this address becomes a buy, every sent transaction becomes a sell, priced at that day's historical K&#x41;S price. Re-adding the same address later only imports transactions found since the last import.</div>
+      <div class="form-footer">Enter a Kaspa address or a domain like name.kachat (.kachat names are looked up first). Every received transaction on this address becomes a buy, every sent transaction becomes a sell, priced at that day's historical K&#x41;S price. Re-adding the same address later only imports transactions found since the last import.</div>
     </div>`;
   const bar = () => ({
     leading: { label: "Cancel", disabled: s.importing, onClick: () => panel.close() },

@@ -524,7 +524,7 @@ export function showManageAddresses({ onBack }) {
     const busy = state.busy === "generate";
     return [
       { label: "Generate New Spending Address", subtitle: "Reveals the next unused address in this wallet.", icon: SF.plusCircle, busy, disabled: discovering, onClick: generate },
-      { label: "Discover Addresses", subtitle: "Finds addresses holding a balance or a KNS domain.", icon: SF.magnifier, disabled: discovering, keepOpen: true, onClick: discover },
+      { label: "Discover Addresses", subtitle: "Finds addresses holding a balance or a domain.", icon: SF.magnifier, disabled: discovering, keepOpen: true, onClick: discover },
       { label: "Address Visibility", subtitle: "Check off every address you want on the list, in one sitting.", icon: SF.checklist, disabled: discovering, onClick: () => showVisibility({ onBack: back }) },
       { label: "Send All Kaspa To Primary", subtitle: "Sweeps every other address into your primary spending address.", icon: SF.upToLine, disabled: discovering, onClick: () => showConsolidate({ list: state.list, onBack: back }) },
     ];
@@ -1002,7 +1002,7 @@ function showIdentityDetail({ row, current, onBack, onChanged }) {
       <p class="muted tiny center-text">Tap the address to copy it</p>
       <div class="glass list"><div class="list-row"><span>Balance</span><span>${esc(wallet.formatKas(row.balanceSompi, 8))} KAS</span></div></div>
       ${row.domains?.length ? `
-        <div class="section-header">KNS Domains (${row.domains.length})</div>
+        <div class="section-header">.kas Names (${row.domains.length})</div>
         ${row.domains.map((d) => `<div class="domain-card small-card"><span class="domain-name">${esc(d.fullName)}</span>${String(d.fullName).toLowerCase() === String(row.primaryDomain || "").toLowerCase() ? '<span class="domain-badge">Primary</span>' : ""}</div>`).join("")}` : ""}
       ${row.otherNames?.length ? `
         <div class="section-header">.k and .kaspa Names (${row.otherNames.length})</div>

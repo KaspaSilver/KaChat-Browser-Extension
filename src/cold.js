@@ -622,7 +622,7 @@ function showAccount({ accountId, onBack }) {
     const discovering = Boolean(state.discovery);
     return [
       { label: "Generate More Addresses", subtitle: "Reveals the next unused address in this account.", icon: SF.plusCircle, busy: state.busy === "generate", disabled: discovering, onClick: generate },
-      { label: "Discover Addresses", subtitle: "Finds addresses holding a balance or a KNS domain.", icon: SF.magnifier, disabled: discovering, keepOpen: true, onClick: discover },
+      { label: "Discover Addresses", subtitle: "Finds addresses holding a balance or a domain.", icon: SF.magnifier, disabled: discovering, keepOpen: true, onClick: discover },
       { label: "Address Visibility", subtitle: "Check off every address you want on the list, in one sitting.", icon: SF.checklist, disabled: discovering, onClick: () => showVisibility({ accountId, onDone: back }) },
     ];
   };
