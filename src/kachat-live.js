@@ -11,7 +11,7 @@
 
 import { app, esc, render, $, toast, ICONS, navHeader, unitText, showSheet } from "./ui.js";
 import { KAS_UNIT, IS_TESTNET } from "./net.js";
-import { looksLikeName, resolveEverywhere, primaryResolution, otherDomainsHtml, bindOtherDomains, splitTypedName } from "./names.js";
+import { looksLikeName, resolveEverywhere, primaryResolution, notFoundMessage, otherDomainsHtml, bindOtherDomains, splitTypedName } from "./names.js";
 import { sompiFromUserText, sanitizeAmountInput } from "./amounts.js";
 import * as vault from "./vault.js";
 import * as wallet from "./wallet.js";
@@ -1648,6 +1648,7 @@ function openTransferSheet(info) {
     state.resolved = null;
     state.resolutions = [];
     state.error = null;
+    state.othersOpen = false;
     const t = text.trim().toLowerCase();
     if (!t) return;
     if (t.startsWith("kaspatest:") || t.startsWith("kaspa:")) {
@@ -1666,7 +1667,8 @@ function openTransferSheet(info) {
       if (token !== state.token) return;
       state.resolutions = results;
       const primary = primaryResolution(results, t);
-      if (!primary) state.error = "No domain found by that name.";
+      // one shared message; what the name is elsewhere opens by itself (iOS 5a5122d)
+      if (!primary) { state.error = notFoundMessage(t, results); state.othersOpen = results.some((r) => r.address); }
       else setResolved(primary.address, primary.display);
     } catch {
       state.error = "Couldn't look that name up.";

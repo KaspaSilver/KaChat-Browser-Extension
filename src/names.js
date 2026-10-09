@@ -151,17 +151,23 @@ export async function resolveEverywhere(input) {
   return RESOLUTION_ORDER.map((tld) => results.find((r) => r.tld === tld)).filter(Boolean);
 }
 
-/** The answer a typed name gets: the service named by its ending, else the first that resolves. */
+/** The answer a typed name gets: the service named by its ending, else .kachat - and only .kachat
+ *  (iOS 5a5122d). A bare name never falls through to another service on its own (on mainnet
+ *  "testing" became testing.kas while .kachat isn't live there): what it is on .kas, .k or .kaspa
+ *  waits under "Other domains" for you to pick. */
 export function primaryResolution(results, typed) {
-  const explicit = splitTypedName(typed).tld;
-  if (explicit) return results.find((r) => r.tld === explicit && r.address) || null;
-  return results.find((r) => r.address) || null;
+  const wanted = splitTypedName(typed).tld || "kachat";
+  return results.find((r) => r.tld === wanted && r.address) || null;
 }
 
-/** "No .k domain found" when an ending was typed, else "No domain found". */
-export function notFoundMessage(typed) {
-  const explicit = splitTypedName(typed).tld;
-  return explicit ? `No ${service(explicit).suffix} domain found` : "No domain found";
+/** The one not-found message every address field shows (iOS 5a5122d): "No .kas domain found" for
+ *  a typed ending, else the .kachat one - "No .kachat domain found", or ".kachat names aren't live
+ *  on this network yet" where its registry isn't. */
+export function notFoundMessage(typed, results = []) {
+  const wanted = splitTypedName(typed).tld || "kachat";
+  const kachatNotLive = !service("kachat").live || (results || []).some((r) => r.tld === "kachat" && r.notLive);
+  if (wanted === "kachat" && kachatNotLive) return ".kachat names aren't live on this network yet";
+  return `No ${service(wanted).suffix} domain found`;
 }
 
 // --- names an address owns on .k and .kaspa -------------------------------------------------

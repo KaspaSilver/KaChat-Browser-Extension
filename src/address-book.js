@@ -329,7 +329,7 @@ export function openEditor({ existing = null, address = "", name = "", onSaved =
       form.resolutions = results;
       const primary = primaryResolution(results, typed);
       if (primary) form.resolved = { address: primary.address, domain: primary.display };
-      else form.resolveError = notFoundMessage(typed);
+      else { form.resolveError = notFoundMessage(typed, results); form.othersOpen = results.some((r) => r.address); }
       paintStatus();
     }, 350);
   };

@@ -473,7 +473,7 @@ export async function resolveRecipient(input) {
     const resolutions = await resolveEverywhere(text);
     const primary = primaryResolution(resolutions, text);
     if (!primary) {
-      const error = new Error(notFoundMessage(text));
+      const error = new Error(notFoundMessage(text, resolutions));
       error.resolutions = resolutions;
       throw error;
     }

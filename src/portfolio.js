@@ -16,7 +16,7 @@ import * as wallet from "./wallet.js";
 import * as dock from "./dock.js";
 import { ext } from "./browser.js";
 import { scanQr } from "./camera.js";
-import { looksLikeName, resolveEverywhere, primaryResolution } from "./names.js";
+import { looksLikeName, resolveEverywhere, primaryResolution, notFoundMessage } from "./names.js";
 import * as core from "./portfolio-core.js";
 import { sparklineSvg } from "./portfolio-charts.js";
 import { SF, openPanel, pfToast, bindPullToRefresh, changeBadge, fitText } from "./portfolio-ui.js";
@@ -733,7 +733,7 @@ function showAddAddress(preset = null) {
   const statusHtml = () => {
     if (!s.input || s.resolving) return "";
     if (s.resolved) return `<div class="pf-status good">${SF.checkCircleFill(13)}<span>Resolves to ${esc(short(s.resolved.address))}</span></div>`;
-    if (s.notFound) return '<div class="pf-status muted">Domain not found</div>';
+    if (s.notFound) return `<div class="pf-status muted">${esc(notFoundMessage(s.input, s.results || []))}</div>`;
     if (looksRaw(s.input)) {
       return validRaw(s.input)
         ? `<div class="pf-status good">${SF.checkCircleFill(13)}<span>Valid address</span></div>`
@@ -796,7 +796,9 @@ function showAddAddress(preset = null) {
       setTimeout(async () => {
         if (mine !== seq) return;
         let winner = null;
-        try { winner = primaryResolution(await resolveEverywhere(s.input), s.input); } catch { winner = null; }
+        let results = [];
+        try { results = await resolveEverywhere(s.input); winner = primaryResolution(results, s.input); } catch { winner = null; }
+        s.results = results;
         if (mine !== seq) return; // the field moved on while this was in flight
         s.resolving = false;
         s.resolved = winner?.address ? { address: winner.address, display: winner.display } : null;
