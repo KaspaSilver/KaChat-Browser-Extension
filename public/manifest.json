@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "KaChat Wallet",
   "short_name": "KaChat",
-  "version": "0.1.0",
+  "version": "5.2",
   "description": "Kaspa wallet by KaChat: your KaChat accounts, balances and domains (.kas, .k, .kaspa) in the browser, and a wallet Kaspa websites can connect to.",
   "icons": {
     "16": "icons/kachat-16.png",
