@@ -15,7 +15,8 @@
 
 import { app, esc, render, $, ICONS, navHeader } from "./ui.js";
 import { SYMBOLS, kachatWordmark, openPanel } from "./kachat-ui.js";
-import { kachatLive, kachatLaunched } from "./kachat-names.js";
+import { kachatLive, kachatLaunched, kachatPublicLaunchMs, kachatPubliclyOpen, kachatLaunchText } from "./kachat-names.js";
+import { IS_TESTNET } from "./net.js";
 import * as dock from "./dock.js";
 import * as live from "./kachat-live.js";
 
@@ -95,6 +96,7 @@ export function showKachatMarket({ onBack = null } = {}) {
           ${kachatWordmark(64)}
           <div id="km-status">${heroStatus()}</div>
         </div>
+        ${!kachatPubliclyOpen() ? countdownHtml() : `
         <div class="km-search">
           <label class="km-card km-search-field">
             <span class="muted">${ICONS.search}</span>
@@ -107,7 +109,7 @@ export function showKachatMarket({ onBack = null } = {}) {
           ${[["market", "Marketplace"], ["available", "Available"], ["expired", "Expired"], ["activity", "Activity"]].map(([id, title]) =>
             `<button role="tab" data-page="${id}" aria-selected="${id === page}">${title}</button>`).join("")}
         </div>
-        <div class="km-page" id="km-page">${pageHtml()}</div>
+        <div class="km-page" id="km-page">${pageHtml()}</div>`}
       </section>`, "kachat:market");
     dock.remember(back);
     const scroller = app.querySelector(".km");
@@ -115,6 +117,7 @@ export function showKachatMarket({ onBack = null } = {}) {
     if (onBack) $("#back").onclick = onBack;
     $("#how").onclick = () => showHowItWorks(isLive());
     bindClaims();
+    if (!kachatPubliclyOpen()) { tickCountdown(); return; }
     const search = $("#search");
     search.oninput = () => {
       state.search = search.value;
@@ -136,7 +139,8 @@ export function showKachatMarket({ onBack = null } = {}) {
   const livePages = () => isLive() || !kachatLaunched;
   const pageHtml = () => (livePages() ? live.livePageHtml(page) : mockPage());
   const heroStatus = () => {
-    if (isLive()) return live.testnetBadge();
+    // the Testnet badge on testnet only; mainnet is live as it is (iOS ef6b21e)
+    if (isLive()) return IS_TESTNET ? live.testnetBadge() : "";
     // The bundled manifest is for the previous registry: a calm "Setting up", no error (iOS d2e0673).
     if (kachatLive && live.hub.upgrading) {
       return `<div class="kl-badges">${live.testnetBadge()}<span class="coming-pill kl-setting-up">${SYMBOLS.hammer}<span>Setting up</span></span></div>
@@ -157,8 +161,33 @@ export function showKachatMarket({ onBack = null } = {}) {
     if (isLive()) live.bindSearchResult($("#search-result"), nav);
   };
   // Live updates redraw the parts in place, so typing in the search field keeps its focus.
+  // Mainnet before its public opening (iOS c6ebf74): a live countdown instead of search and the
+  // pages; at the moment it opens by itself.
+  const countdownHtml = () => `
+    <div class="km-card km-countdown">
+      <div class="muted small">Names open in</div>
+      <div class="km-countdown-units">
+        ${[["d", "Days"], ["h", "Hours"], ["m", "Minutes"], ["s", "Seconds"]].map(([k, label]) => `
+          <div class="km-countdown-unit"><span class="km-countdown-value" data-cd="${k}">--</span><span class="muted tiny">${label}</span></div>`).join("")}
+      </div>
+      <div class="strong small">${esc(kachatLaunchText())}</div>
+      <p class="muted small center-text">Then anyone can search and claim a .kachat name here.</p>
+    </div>`;
+  const tickCountdown = () => {
+    if (app.dataset.screen !== "kachat:market") return;
+    const left = Math.max(0, Math.floor((kachatPublicLaunchMs - Date.now()) / 1000));
+    if (left <= 0) { paint(); return; }
+    const set = (k, v) => { const el = app.querySelector(`[data-cd="${k}"]`); if (el) el.textContent = String(v); };
+    set("d", Math.floor(left / 86_400));
+    set("h", Math.floor((left % 86_400) / 3_600));
+    set("m", Math.floor((left % 3_600) / 60));
+    set("s", left % 60);
+    setTimeout(tickCountdown, 1000);
+  };
+
   const paintParts = () => {
     if (app.dataset.screen !== "kachat:market") return;
+    if (!kachatPubliclyOpen()) { $("#km-status").innerHTML = heroStatus(); return; }
     const scroller = app.querySelector(".km");
     const scroll = scroller?.scrollTop || 0;
     $("#km-status").innerHTML = heroStatus();
@@ -202,7 +231,7 @@ function showHowItWorks(isLive = false) {
             <span class="tx-meta"><span class="strong small">${esc(title)}</span><span class="muted small">${esc(detail)}</span></span>
           </div>`).join("")}
       </div>
-      <p class="form-footer">${isLive ? "Live on Testnet: names, prices and payments here use TKAS on testnet-10. Mainnet names come after an audit." : "Nothing here is live yet."}</p>`,
+      <p class="form-footer">${!isLive ? "Nothing here is live yet." : IS_TESTNET ? "Live on Testnet: names, prices and payments here use TKAS on testnet-10. Mainnet names are live on Mainnet." : "Live on Mainnet: names, prices and payments here are real KAS."}</p>`,
   });
 }
 

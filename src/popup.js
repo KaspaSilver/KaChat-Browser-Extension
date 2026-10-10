@@ -277,7 +277,7 @@ function paintHome() {
         </button>
         <button class="glass nav-row" id="kachat-names">
           <span class="nav-row-label">${kachatWordmark(22)}<span>Marketplace</span></span>
-          ${kachatLive ? '<span class="kl-testnet">Testnet</span>' : '<span class="coming-pill">Coming soon</span>'}${ICONS.chevron}
+          ${kachatLive ? (IS_TESTNET ? '<span class="kl-testnet">Testnet</span>' : "") : '<span class="coming-pill">Coming soon</span>'}${ICONS.chevron}
         </button>
         <button class="glass nav-row" id="settings">
           <span class="nav-row-label">${ICONS.gear}<span>Settings</span></span>${ICONS.chevron}

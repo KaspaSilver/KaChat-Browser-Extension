@@ -19,7 +19,7 @@ import { getEndpoint } from "../shared/engine/endpoints.js";
 import { dotkCanonical, kaspaNamesCanonical } from "./names-normalize.js";
 import { esc, ICONS } from "./ui.js";
 import { IS_TESTNET, MAINNET_KNS, TESTNET_KNS } from "./net.js";
-import { kachatRegistry } from "./kachat-names.js";
+import { kachatRegistry, kachatLaunched } from "./kachat-names.js";
 import { normalize as kachatNormalize, isValid as kachatIsValid } from "../shared/engine/kachat-names/codec.js";
 import { Status } from "../shared/engine/kachat-names/registry-state.js";
 import { KachatNamesRegistry } from "../shared/engine/kachat-names/registry.js";
@@ -33,7 +33,8 @@ function knsBase() {
 
 // Declaration order is the tab order: KaChat's own names first.
 export const NAME_SERVICES = [
-  { tld: "kachat", suffix: ".kachat", serviceName: "KaChat Names", site: null, siteName: null, api: null, live: IS_TESTNET },
+  // live on both networks since mainnet v1 (iOS ef6b21e)
+  { tld: "kachat", suffix: ".kachat", serviceName: "KaChat Names", site: null, siteName: null, api: null, live: kachatLaunched },
   { tld: "kas", suffix: ".kas", serviceName: "KNS", site: "https://app.knsdomains.org", siteName: "knsdomains.org", api: null, live: true },
   // Testnet-10: dotk has its own API; Kaspa Names publishes no testnet deployment (iOS
   // NameServiceTLD.apiBaseURL).

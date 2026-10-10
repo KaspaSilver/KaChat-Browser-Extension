@@ -29,10 +29,23 @@ const localStorageAdapter = {
 
 /** The .kachat UI and identity: every network (iOS KachatNamesService.isEnabled). */
 export const kachatUi = true;
-/** Whether this network has a live registry the wallet reads and transacts with (iOS isLaunched). */
-export const kachatLaunched = IS_TESTNET;
+/** Whether this network has a live registry the wallet reads and transacts with (iOS isLaunched):
+ *  both networks since mainnet v1 (registry 348bd2c8, iOS ef6b21e). */
+export const kachatLaunched = KachatNamesService.isLaunched;
 /** The registry is live here - the same as `kachatLaunched`. */
 export const kachatLive = kachatLaunched;
+
+/** Mainnet opens to everyone on Friday 2026-10-16 12:00 UTC (8:00 AM Eastern; the owner's launch
+ *  plan, iOS c6ebf74 KachatNamesService.publicLaunchMs): until then no app searches or claims
+ *  names there; names already held stay manageable. Testnet has no such moment. */
+export const kachatPublicLaunchMs = IS_TESTNET ? null : 1_792_152_000_000;
+export function kachatPubliclyOpen(now = Date.now()) {
+  return kachatPublicLaunchMs == null || now >= kachatPublicLaunchMs;
+}
+/** "Friday, October 16 at 8:00 AM" in your own time zone (iOS launchString). */
+export function kachatLaunchText(ms = kachatPublicLaunchMs) {
+  return new Date(ms).toLocaleString(undefined, { weekday: "long", month: "long", day: "numeric", hour: "numeric", minute: "2-digit" });
+}
 
 // The engine object the service and actions hold: the node methods, plus the signer once bound.
 // Made on first use (names.js -> here -> wallet.js -> names.js is an import cycle).
@@ -97,9 +110,9 @@ function base() {
   return { service, registry, actions, engine };
 }
 
-/** The shared registry (no key needed) where it is launched, or null (mainnet). */
+/** The shared registry (no key needed) where it is launched, else null. */
 export function kachatRegistry() {
-  return IS_TESTNET ? base().registry : null;
+  return kachatLaunched ? base().registry : null;
 }
 
 /**
@@ -108,7 +121,7 @@ export function kachatRegistry() {
  * The wallet must be unlocked.
  */
 export async function kachatNames() {
-  if (!IS_TESTNET) return null;
+  if (!kachatLaunched) return null;
   return bind();
 }
 
@@ -131,7 +144,7 @@ async function bind() {
   if (boundAddress !== address) {
     boundAddress = address;
     walletState.keys.clear();
-    if (IS_TESTNET) await loadWalletAddresses();
+    if (kachatLaunched) await loadWalletAddresses();
     // Another account: its own registrations in flight (the driver keys them by wallet address).
     actions.resume();
   }

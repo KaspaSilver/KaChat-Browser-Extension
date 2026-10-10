@@ -15,7 +15,7 @@ import { looksLikeName, resolveEverywhere, primaryResolution, notFoundMessage, o
 import { sompiFromUserText, sanitizeAmountInput } from "./amounts.js";
 import * as vault from "./vault.js";
 import * as wallet from "./wallet.js";
-import { kachatNames, kachatProfiles, kachatRegistry, kachatLaunched, prepareSigner } from "./kachat-names.js";
+import { kachatNames, kachatProfiles, kachatRegistry, kachatLaunched, prepareSigner, kachatPubliclyOpen, kachatLaunchText } from "./kachat-names.js";
 import { SYMBOLS, openPanel, kachatWordmark, showTileSheet } from "./kachat-ui.js";
 import { Operation, Stage, isOpen, needsDriving, KachatNamesActions, FeeTier, FeeChoice, TxStage } from "../shared/engine/kachat-names/actions.js";
 import { feeControlsHtml, slideButtonHtml, bindSlideButton } from "./send-pieces.js";
@@ -1361,7 +1361,7 @@ function openClaimSheet(target) {
       ${state.notOpen ? `
         <div class="form-section">
           <div class="form-card"><div class="form-row kl-notopen-row"><span class="kl-orange">${SYMBOLS.clock}</span><span class="small">${esc(state.notOpen)}</span></div></div>
-          <div class="form-footer">Every name from the old registry comes over with the same owner and expiry first.</div>
+          ${kachatPubliclyOpen() ? '<div class="form-footer">Every name from the old registry comes over with the same owner and expiry first.</div>' : ""}
         </div>` : ""}
       ${state.busy ? `
         <div class="kl-busy-notice" role="status">
@@ -1411,6 +1411,8 @@ function openClaimSheet(target) {
     state.notOpen = null;
     state.quoteTier = null;
     const tier = state.feeTier;
+    // mainnet before its public opening (iOS c6ebf74): a notice, not an error, and no claim
+    if (!kachatPubliclyOpen()) { state.notOpen = `.kachat names open to everyone on ${kachatLaunchText()}.`; paint(); return; }
     paint();
     try {
       const q = await (await runtime()).actions.quote({ name: target.name, years: state.years, gap: target.gap, feeTier: tier });
@@ -1428,6 +1430,7 @@ function openClaimSheet(target) {
     // the price shown is the most the registration will ever pay (iOS 4f5d95e, IOS-054)
     const q = state.quote;
     const tier = state.quoteTier;
+    if (!kachatPubliclyOpen()) return;
     if (!q?.affordable || state.starting || BigInt(q.years) !== state.years || tier !== state.feeTier) return;
     if (!(await confirmPassword())) return;
     if (!handle?.isOpen() || state.quote !== q) return;

@@ -1087,3 +1087,9 @@ button.kl-tile:not(:disabled), .kl-tile-split { cursor: pointer; }
 .grace-icon { color: #ff9f0a; display: inline-flex; flex: none; }
 .grace-text { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
 .domain-foot { position: absolute; bottom: 9px; right: 12px; font-size: 10.5px; font-weight: 600; color: rgba(255,255,255,.85); }
+
+/* Mainnet .kachat before its public opening (iOS c6ebf74) */
+.km-countdown { margin: 0 16px; padding: 18px 14px; display: flex; flex-direction: column; align-items: center; gap: 12px; }
+.km-countdown-units { display: flex; gap: 8px; }
+.km-countdown-unit { display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 60px; padding: 10px 6px; border-radius: 12px; background: var(--panel-2); }
+.km-countdown-value { font-size: 24px; font-weight: 800; font-variant-numeric: tabular-nums; }
