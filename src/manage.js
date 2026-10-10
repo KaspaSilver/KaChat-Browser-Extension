@@ -643,6 +643,15 @@ export function showManageAddresses({ onBack }) {
 
 // --- one spending address: iOS SpendingAddressTransactionHistoryView ---------------------------
 
+/** A spending address's own screen (its history first), by address - what a bell receipt opens
+ *  (iOS 95e2cba); the list when it isn't one of this account's. */
+export async function openSpendingAddress(address, onBack) {
+  let row = null;
+  try { row = (await wallet.spendingList()).rows.find((r) => r.address === String(address).toLowerCase()) || null; } catch { row = null; }
+  if (row) showSpendingAddress({ row, onBack });
+  else showManageAddresses({ onBack });
+}
+
 function showSpendingAddress({ row, onBack }) {
   const source = { kind: "spending", index: row.index };
   const title = row.label;

@@ -113,8 +113,9 @@ function relative(ms) {
 
 /**
  * The bell's sheet: newest first, each row tagged with its source, Clear All. Opening it marks
- * everything seen. A tapped row opens its subject: a receipt the Portfolio, a .kachat row the name.
- *   openWallet(), openName(name)
+ * everything seen. A tapped row opens its subject: a receipt the history of the address it reached
+ * (iOS 95e2cba), a .kachat row the name.
+ *   openWallet(address|null), openName(name)
  */
 export function showBell({ openWallet, openName }) {
   let handle = null;
@@ -146,7 +147,8 @@ export function showBell({ openWallet, openName }) {
         if (!entry) return;
         handle.close();
         if (entry.source === "kachat" && entry.targetId) openName(entry.targetId);
-        else if (entry.source === "wallet") openWallet();
+        // a receipt opens the history of the address it reached; rows saved before that, Portfolio
+        else if (entry.source === "wallet") openWallet(entry.targetId || null);
       };
     }
   };
@@ -235,6 +237,8 @@ export async function checkReceipts(addresses, { force = false } = {}) {
             title: `Received ${formatKas(toAddress)} ${KAS_UNIT}`,
             body: `${label} ${shortAddress(address)}`,
             timestamp: Number(tx.block_time) || stamp,
+            // the address it reached: the row opens its history (iOS 95e2cba)
+            targetId: address,
           });
         }
       }
@@ -245,6 +249,7 @@ export async function checkReceipts(addresses, { force = false } = {}) {
           title: `Balance increased by ${formatKas(delta)} ${KAS_UNIT}`,
           body: `${label} ${shortAddress(address)}`,
           timestamp: stamp,
+          targetId: address,
         });
       }
     }

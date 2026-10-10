@@ -9,7 +9,7 @@ import {
   app, isTab, esc, render, $, toast, copyText, settings, noteActivity, ICONS, showQr, showQrPending, showSheet,
 } from "./ui.js";
 import { showSend } from "./send.js";
-import { showManageAddress, showManageAddresses } from "./manage.js";
+import { showManageAddress, showManageAddresses, openSpendingAddress } from "./manage.js";
 import { cachedOwnedNames, ownedNames, otherNamesCount } from "./names.js";
 import { showWelcome, showUnlock, enterApp, setHandlers, setLoggedOut } from "./onboarding.js";
 import { showDomains } from "./domains.js";
@@ -25,7 +25,10 @@ import { faucetCardHtml, startFaucetClaim, noteFaucetBalance, faucetPending } fr
 import { showSettings, showLicenses } from "./settings.js";
 import { showApproval } from "./approve.js";
 import * as dock from "./dock.js";
-import { NETWORK, NETWORK_MIRROR_KEY, IS_TESTNET, syncNetworkMirror } from "./net.js";
+import { NETWORK, NETWORK_MIRROR_KEY, IS_TESTNET, syncNetworkMirror, toActiveNetworkAddress } from "./net.js";
+
+/** KaChat's donation address, pinned (iOS 8bc86f8): the address kachat.kas has always paid. */
+const DONATION_ADDRESS = "kaspa:qzy7da4589avjwmmnqfvkhp5p8p268gc7rvr9lg2xxpuhj75sy8kgdqmpd2fu";
 import { showColdStorage, coldWatchAddresses } from "./cold.js";
 import { showPortfolio } from "./portfolio.js";
 import { showCameraPermissionPage } from "./camera.js";
@@ -398,9 +401,10 @@ function paintHome() {
       onClick: logOut,
     }],
   });
-  // iOS Donate (e7cc0d5): the Send screen with kachat.kachat filled in; it resolves like any typed
-  // name (.kachat first), and where it isn't registered Other domains offers kachat elsewhere.
-  $("#donate").onclick = () => { if (main) showSend({ source: mainSource, fromAddress: main, recipient: "kachat.kachat", title: "Donate to KaChat", onClose: showHome }); };
+  // iOS Donate (8bc86f8, IOS-067): the Send screen with KaChat's pinned donation address - the one
+  // kachat.kas has always paid, its kaspatest: form on testnet. Not the name: .kachat names are
+  // first-come, so resolving kachat.kachat would pay whoever registered it.
+  $("#donate").onclick = () => { if (main) showSend({ source: mainSource, fromAddress: main, recipient: toActiveNetworkAddress(DONATION_ADDRESS), title: "Donate to KaChat", onClose: showHome }); };
   $("#licenses").onclick = () => showLicenses({ onBack: showHome });
 }
 
@@ -464,8 +468,20 @@ bell.onBellChange(() => {
 
 function openBell() {
   bell.showBell({
-    // a receipt opens the wallet, as iOS opens Portfolio
-    openWallet: () => dock.selectTab("portfolio"),
+    // a receipt opens the history of the address it reached (iOS 95e2cba): the chatting address,
+    // a spending address, or Cold Storage for a KasSigner one; an older row without one, Portfolio
+    openWallet: (address) => {
+      const s = homeState;
+      const main = s?.addresses?.main;
+      if (!address) { dock.selectTab("portfolio"); return; }
+      if (main && address === main.toLowerCase()) {
+        showManageAddress({ address: main, onBack: showHome, onChangeIdentity: s.account.imported ? () => { homeState = null; showHome(); } : null });
+      } else if (Object.values(s?.addresses?.spending || {}).some((a) => a.toLowerCase() === address)) {
+        openSpendingAddress(address, showHome);
+      } else {
+        dock.selectTab("cold");
+      }
+    },
     // a .kachat row opens the name; one that's free again opens the marketplace to claim it
     openName: async (name) => {
       try {

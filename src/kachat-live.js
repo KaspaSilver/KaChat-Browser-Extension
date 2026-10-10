@@ -2185,6 +2185,17 @@ export function liveDomainsTab({ address, repaint, forAddress = false }) {
       repaint();
     })();
   }
+  // When it runs out, bottom right (iOS 72b7dc7): "Expires <date>" - with the time once less than
+  // two days are left - or "Grace ends <date>" for a name expired and in its grace period.
+  const cardFootnote = (n) => {
+    const grace = statusOf(n) === Status.grace;
+    const at = Number(grace ? n.expiresAt + graceMs() : n.expiresAt);
+    const soon = at - Date.now() < 2 * 86_400_000;
+    const when = new Date(at).toLocaleString(undefined, soon
+      ? { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }
+      : { month: "short", day: "numeric", year: "numeric" });
+    return grace ? `Grace ends ${when}` : `Expires ${when}`;
+  };
   const badge = (n) => {
     const status = statusOf(n);
     if (status === Status.active) return n.isListed ? "Listed" : null;
@@ -2212,7 +2223,7 @@ export function liveDomainsTab({ address, repaint, forAddress = false }) {
           </div>`)
       : entry.names.map((n) => `
           <button class="domain-button" data-kachat-name="${esc(n.name)}" aria-label="${esc(n.display)}">
-            <div class="domain-card"><span class="domain-name">${esc(n.display)}</span>${badge(n) ? `<span class="domain-badge">${esc(badge(n))}</span>` : ""}</div>
+            <div class="domain-card"><span class="domain-name">${esc(n.display)}</span>${badge(n) ? `<span class="domain-badge">${esc(badge(n))}</span>` : ""}<span class="domain-foot">${esc(cardFootnote(n))}</span></div>
           </button>`).join("");
   const offers = !forAddress && !upgrading && entry.offers.length ? `
     <div class="kl-domains-offers">

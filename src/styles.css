@@ -1086,3 +1086,4 @@ button.kl-tile:not(:disabled), .kl-tile-split { cursor: pointer; }
 .grace-banner { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-radius: 16px; background: rgba(255,159,10,.12); border: 1px solid rgba(255,159,10,.3); cursor: pointer; margin-bottom: 12px; }
 .grace-icon { color: #ff9f0a; display: inline-flex; flex: none; }
 .grace-text { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+.domain-foot { position: absolute; bottom: 9px; right: 12px; font-size: 10.5px; font-weight: 600; color: rgba(255,255,255,.85); }
