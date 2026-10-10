@@ -1419,7 +1419,7 @@ function openClaimSheet(target) {
       if (token === state.token) { state.quote = q; state.quoteTier = tier; }
     } catch (error) {
       if (token === state.token) {
-        if (error?.code === "registrationNotOpen") state.notOpen = errorText(error);
+        if (error?.code === "registrationNotOpen" || error?.code === "notPublicYet") state.notOpen = errorText(error);
         else state.quoteError = errorText(error);
       }
     }
