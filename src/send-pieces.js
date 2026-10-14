@@ -5,7 +5,7 @@
 // (send.js) and KasSigner's send (cold-send.js). Change these rather than one screen.
 
 import { addressBookButtonHtml, savedNameHtml, openAddressBookPicker } from "./address-book.js";
-import { groupedAmountText } from "../shared/engine/amounts.js";
+import { groupedAmountText } from "./grouped-amount.js";
 import { esc, ICONS } from "./ui.js";
 import { KAS_UNIT } from "./net.js";
 

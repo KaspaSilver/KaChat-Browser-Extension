@@ -3,7 +3,41 @@
 // wrapped: reading it gives the plain number, writing it shows the grouped one, so the code
 // that sanitizes, checks and sends an amount is unchanged.
 
-import { groupedAmountText, ungroupedAmountText } from "../shared/engine/amounts.js";
+import { groupedAmountText as groupedWithCommas, ungroupedAmountText as ungroupedFromCommas } from "../shared/engine/amounts.js";
+
+// Where the browser writes decimals with "," (de, fr, es, ...), a comma is always the decimal
+// point, a pasted "1.234,5" is 1234.5, and thousands show as a narrow space ("2 500"), so nobody
+// reads the shown amount wrong. Elsewhere commas stay thousands separators, but "0,001" (no
+// grouped number starts "0,") is 0.001 (iOS 73af28a, IOS-078: "0,001" pasted read as 1000x).
+const commaDecimal = (() => {
+  try { return new Intl.NumberFormat().formatToParts(1.5).find((p) => p.type === "decimal")?.value === ","; } catch { return false; }
+})();
+const NARROW = "\u202F";
+
+/** The amount as shown: thousands grouped the way this browser's language writes them. */
+export function groupedAmountText(plain) {
+  const text = groupedWithCommas(plain);
+  return commaDecimal ? text.replaceAll(",", NARROW) : text;
+}
+
+function ungroupedAmountText(edited, previous) {
+  const raw = String(edited ?? "");
+  if (commaDecimal) {
+    let text = raw.replaceAll(NARROW, "").replaceAll(" ", "").replaceAll("\u00A0", "");
+    if (text.includes(",")) {
+      text = text.replaceAll(".", "");
+      const first = text.indexOf(",");
+      text = `${text.slice(0, first)}.${text.slice(first + 1).replaceAll(",", "")}`;
+    }
+    return text;
+  }
+  // "0,001" or ",5": a single comma after nothing or a lone 0 is the decimal point
+  const comma = raw.indexOf(",");
+  if (comma >= 0 && comma === raw.lastIndexOf(",") && !raw.includes(".") && (comma === 0 || raw.slice(0, comma) === "0")) {
+    return raw.replace(",", ".");
+  }
+  return ungroupedFromCommas(raw, previous);
+}
 
 // The send screens' amount (Send Kaspa, a spending address's Send, KasSigner's send), the .kachat
 // offer and list price, and Add to Portfolio / a portfolio transaction's quantity. The portfolio
