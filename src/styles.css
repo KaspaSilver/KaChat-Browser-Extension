@@ -1094,3 +1094,24 @@ button.kl-tile:not(:disabled), .kl-tile-split { cursor: pointer; }
 .km-countdown-unit { display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 60px; padding: 10px 6px; border-radius: 12px; background: var(--panel-2); }
 .km-countdown-value { font-size: 24px; font-weight: 800; font-variant-numeric: tabular-nums; }
 .kl-locked-note { display: flex; gap: 8px; align-items: flex-start; font-weight: 600; } .kl-locked-note svg { width: 15px; height: 15px; flex: none; margin-top: 2px; }
+
+/* Profile (iOS 6333dd3): one Manage Addresses card; the "+" (the extension's own, Profile only) */
+.manage-text { display: flex; flex-direction: column; gap: 2px; text-align: left; }
+.wallet-plus { position: fixed; right: 16px; bottom: calc(var(--dock-h, 56px) + 16px); width: 52px; height: 52px; border-radius: 50%; padding: 0; display: inline-flex; align-items: center; justify-content: center; background: var(--kaspa); color: #000; box-shadow: 0 8px 22px rgba(0,0,0,.45); z-index: 20; }
+.wallet-tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; padding: 4px 4px 8px; }
+.wallet-tile { aspect-ratio: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 8px; border-radius: 18px; background: #2c2c2e; color: var(--text); font-weight: 400; text-align: center; line-height: 1.2; }
+/* Send's From (iOS SendFromSection) and pill choices (SelectablePill) */
+.sel-pills { display: flex; gap: 8px; flex-wrap: wrap; }
+.sel-pill { padding: 7px 14px; border-radius: 999px; background: transparent; color: var(--kaspa); border: 1.5px solid var(--kaspa); font-size: 13px; font-weight: 600; }
+.sel-pill.on { background: var(--kaspa); color: #000; }
+.sk-from { gap: 10px; }
+.sk-from-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.req-form { display: flex; flex-direction: column; gap: 12px; }
+.req-memo { width: 100%; box-sizing: border-box; resize: vertical; background: transparent; border: 0; color: var(--text); font: inherit; outline: none; }
+.req-count { text-align: right; }
+.req-amount-row { display: flex; align-items: baseline; justify-content: center; gap: 8px; } .req-amount-row input { text-align: right; }
+/* An address's Domains tab (iOS fe52376) */
+.domains-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+.domains-service { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 16px 10px; border-radius: 16px; color: var(--text); font-weight: 400; }
+.domains-count { font-size: 20px; font-weight: 800; }
+.domains-back { display: inline-flex; align-items: center; gap: 4px; margin-bottom: 8px; }

@@ -528,14 +528,14 @@ export async function send({ source, destination, amountKas = null, tipKas = "0"
       selectedOutpoints, log,
     });
   }
+  // A spending address's change goes to a never-used address (iOS 6333dd3): nothing rotates a
+  // "primary" any more - the From choice picks the address on every send.
   let fresh = null;
   if (source?.kind === "spending") {
     const state = await spendingState(from.accountId);
-    if (source.index === state.activeIndex) {
-      const account = await activeAccountSecrets();
-      const index = state.maxIndex + 1;
-      fresh = { index, address: deriveSpendingWallet(k, account.mnemonic, index, account.passphrase).address };
-    }
+    const account = await activeAccountSecrets();
+    const index = state.maxIndex + 1;
+    fresh = { index, address: deriveSpendingWallet(k, account.mnemonic, index, account.passphrase).address };
   }
   const result = await sendKaspa({
     kaspa: k, rpc: node, withRpc, privateKey: from.privateKeyHex, sourceAddress: from.address,
@@ -543,7 +543,8 @@ export async function send({ source, destination, amountKas = null, tipKas = "0"
     selectedOutpoints, changeAddress: fresh?.address || null, log,
   });
   if (fresh) {
-    await saveSpendingState(from.accountId, { activeIndex: fresh.index, maxIndex: fresh.index });
+    const state = await spendingState(from.accountId);
+    await saveSpendingState(from.accountId, { activeIndex: state.activeIndex, maxIndex: fresh.index });
     await cacheSpendingAddress(from.accountId, fresh.index, fresh.address);
   }
   return result;
@@ -802,9 +803,16 @@ async function activeState() {
   return { account, state: await spendingState(account.id) };
 }
 
+/** Address Visibility's Hide All (iOS 245a5d2): every spending address hidden - the list starts
+ *  over with only the chatting address. */
+export async function hideAllSpending() {
+  const { account, state } = await activeState();
+  return saveSpendingState(account.id, { hidden: Array.from({ length: state.maxIndex + 1 }, (_, i) => i) });
+}
+
 export async function setSpendingHidden(index, hidden) {
   const { account, state } = await activeState();
-  if (hidden && index === state.activeIndex) throw new Error("The primary spending address can't be hidden.");
+  // every address toggles both ways, funded ones too (iOS 245a5d2); totals count hidden ones
   const set = new Set(state.hidden);
   if (hidden) set.add(index); else set.delete(index);
   return saveSpendingState(account.id, { hidden: [...set] });
@@ -830,6 +838,25 @@ export async function setPrimarySpending(index) {
  * whose used-state is unknown gets one transactions-count probe, all probes sharing a 2 s
  * budget; when the budget runs out (or a probe fails) the chain extends by one instead.
  */
+/** The next never-revealed spending address (the slot after the last one) - shown, not reserved
+ *  (iOS spendingAddress(at: maxSpendingAddressIndex + 1)). */
+export async function nextFreshSpendingAddress() {
+  const { state } = await activeState();
+  const index = state.maxIndex + 1;
+  return { index, address: (await spendingAddressRange(index, 1))[index] };
+}
+
+/** Reserves the next never-revealed spending address for one use (a payment request): the
+ *  chain moves past it, so nothing hands it out again (iOS reserveFreshSpendingAddresses). */
+export async function reserveFreshSpendingAddress() {
+  const { account, state } = await activeState();
+  const index = state.maxIndex + 1;
+  const address = (await spendingAddressRange(index, 1))[index];
+  await saveSpendingState(account.id, { maxIndex: index });
+  await cacheSpendingAddress(account.id, index, address);
+  return { index, address };
+}
+
 export async function generateSpendingAddress() {
   const { account, state } = await activeState();
   const cached = (await cachedAddresses(account.id))?.spending || {};
@@ -886,6 +913,8 @@ export async function freshReceiveAddress() {
     const cached = (await cachedAddresses(account.id))?.spending?.[index];
     const derived = (await spendingAddressRange(index, 1))[index];
     if (cached && cached !== derived) await cacheSpendingAddress(account.id, index, derived);
+    // the address Receive shows is on the list again (iOS 245a5d2: un-hidden when handed out)
+    if ((await spendingState(account.id)).hidden.includes(index)) await setSpendingHidden(index, false);
     return derived;
   };
   if (Number.isInteger(state.receiveIndex)) {

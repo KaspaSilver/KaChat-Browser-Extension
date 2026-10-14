@@ -289,6 +289,15 @@ export async function ownedNamesOf(address) {
   return [...(k || []), ...(kaspa || [])];
 }
 
+/** What `address` holds on .k and .kaspa, per service: a list, or null when that service couldn't
+ *  be reached (iOS fe52376 ownedNamesByService) - leaves Your Domains' own lists alone. */
+export async function ownedNamesByService(address) {
+  const key = String(address || "").trim().toLowerCase();
+  if (!key) return { k: [], kaspa: [] };
+  const [k, kaspa] = await Promise.all([ownedDotk(key).catch(() => null), ownedKaspaNames(key).catch(() => null)]);
+  return { k, kaspa };
+}
+
 /** ownedNamesOf for many addresses, six at a time (the services rate-limit bursts). */
 export async function ownedNamesOfMany(addresses, concurrency = 6) {
   const result = {};

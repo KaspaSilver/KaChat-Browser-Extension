@@ -29,6 +29,8 @@ import {
  * @param {string} [opts.feeFooter]  the Fee footer (iOS words it per screen)
  * @param {boolean} [opts.compound]
  * @param {string} [opts.recipient]  prefill (Donate)
+ * @param {boolean} [opts.lockedSource] opened from one address's own page: that address only, no
+ *                                    From choice (iOS 7a8102b)
  * @param {Function} opts.onClose    back / cancel / done
  * @param {Function} [opts.onSent]   after a successful send, before the Sent sheet closes
  */
@@ -246,11 +248,23 @@ export function showSend(opts) {
     const caret = document.activeElement?.selectionStart;
     const available = spendableSompi();
     const price = state.price?.price || 0;
-    const spendingSource = opts.source?.kind === "spending";
-    const availableText = available != null ? `Available: ${trimmedKas(available)} KAS` : "";
-    const pill = available == null ? "" : spendingSource
-      ? pillHtml(`<span>${esc(availableText)}</span><span>·</span><span>${esc(state.sourceLabel || `Address #${opts.source.index}`)}</span>${opts.compound ? "" : CHEVRON_DOWN}`, { id: "send-from", disabled: Boolean(opts.compound) })
-      : pillHtml(esc(availableText));
+    // From (iOS 6333dd3 SendFromSection): which of your addresses pays - the chatting address by
+    // default, or any one picked; the chosen address and what it holds.
+    const isChatting = opts.source?.kind !== "spending";
+    const fromTitle = isChatting ? "Chatting Address" : (state.sourceLabel || `Address #${opts.source.index}`);
+    const fromHtml = opts.compound ? "" : `
+      <div class="sk-card sk-from">
+        <div class="sk-label">From</div>
+        ${opts.lockedSource ? "" : `<div class="sel-pills">
+          <button type="button" class="sel-pill ${isChatting ? "on" : ""}" id="from-chatting">Chatting Address</button>
+          <button type="button" class="sel-pill ${isChatting ? "" : "on"}" id="from-choose">Choose an Address</button>
+        </div>`}
+        <div class="sk-from-row">
+          <span class="tx-meta"><span class="strong small">${esc(fromTitle)}</span><span class="mono tiny muted">${esc(`${opts.fromAddress.slice(0, 14)}...${opts.fromAddress.slice(-6)}`)}</span></span>
+          ${available != null ? `<span class="small">${esc(trimmedKas(available))} KAS</span>` : '<span class="spinner small-spin"></span>'}
+        </div>
+      </div>`;
+    const pill = "";
     render(`
       <header class="navbar form-bar">
         <button class="bar-text" id="cancel">Cancel</button>
@@ -259,6 +273,7 @@ export function showSend(opts) {
       </header>
       <section class="form sk-form">
         ${opts.title ? `<p class="muted small center-text">${esc(opts.title)}</p>` : ""}
+        ${fromHtml}
         ${recipientCardHtml({
           input: state.recipientInput,
           lockedAddress: opts.compound ? opts.fromAddress : null,
@@ -349,8 +364,10 @@ export function showSend(opts) {
     if (unitSwitch) unitSwitch.onclick = () => { amountField.toggle(price); paint(); };
     const max = $("#max");
     if (max) max.onclick = async () => { await fillMax(); paint(); };
-    const sendFrom = $("#send-from");
-    if (sendFrom && !opts.compound) sendFrom.onclick = showSendFrom;
+    const fromChatting = $("#from-chatting");
+    if (fromChatting) fromChatting.onclick = () => switchToChatting();
+    const fromChoose = $("#from-choose");
+    if (fromChoose) fromChoose.onclick = showSendFrom;
     const coins = $("#coins");
     if (coins) coins.onclick = () => {
       view.screen = "coins";
@@ -423,32 +440,41 @@ export function showSend(opts) {
     bindSlideButton(app, doSend);
   };
 
-  // Send From (iOS e994235, SpendingSourcePicker): every visible spending address (plus hidden
-  // ones holding Kaspa), funded first; picking one switches this send to it without changing the
-  // primary.
+  // Choose an Address (iOS 6333dd3 OwnAddressPicker): the chatting address, then the spending
+  // addresses (the visible ones plus hidden ones holding Kaspa) in number order, each with its
+  // balance and whether it was ever used.
   const showSendFrom = async () => {
     const sheet = showSheet({ title: "Send From", headerHtml: '<div class="center-text"><span class="spinner small-spin"></span></div>', rows: [] });
     let list;
-    try { list = await wallet.spendingList(); } catch { sheet.close(); return; }
-    const rows = list.rows
-      .filter((r) => !r.hidden || r.balanceSompi > 0n || r.index === opts.source.index)
-      .sort((a, b) => (a.balanceSompi > 0n ? 0 : 1) - (b.balanceSompi > 0n ? 0 : 1) || a.index - b.index);
-    sheet.update({
-      headerHtml: "",
-      rows: rows.map((r) => ({
-        label: `${r.label}${r.primary ? " · Primary" : ""}${r.index === opts.source.index ? " ✓" : ""}`,
-        subtitle: `${r.address.slice(0, 14)}...${r.address.slice(-6)} · ${trimmedKas(r.balanceSompi)} KAS`,
-        onClick: () => switchSource(r),
-      })),
-    });
+    let chatting = null;
+    try {
+      list = await wallet.spendingList();
+      const view = await vault.readAccounts();
+      chatting = (await wallet.cachedAddresses(view.activeAccountId))?.main || null;
+    } catch { sheet.close(); return; }
+    const balances = await wallet.balancesFor([chatting, ...list.rows.map((r) => r.address)].filter(Boolean)).catch(() => ({}));
+    const usedText = async (address, balance) => {
+      if (balance > 0n) return "Used";
+      const known = await wallet.knownUsedState(address).catch(() => null);
+      return known == null ? "" : known ? "Used" : "Unused";
+    };
+    const spending = list.rows.filter((r) => !r.hidden || r.balanceSompi > 0n).sort((a, b) => a.index - b.index);
+    const current = opts.source?.kind === "spending" ? opts.source.index : null;
+    const row = async (label, address, balance, onClick, picked) => {
+      const used = await usedText(address, balance);
+      return {
+        label: `${label}${picked ? " ✓" : ""}`,
+        subtitle: `${address.slice(0, 14)}...${address.slice(-6)} · ${trimmedKas(balance)} KAS${used ? ` · ${used}` : ""}`,
+        onClick,
+      };
+    };
+    const rows = [];
+    if (chatting) rows.push(await row("Chatting Address", chatting, BigInt(balances[chatting] ?? 0n), () => switchToChatting(chatting), current == null));
+    for (const r of spending) rows.push(await row(r.label, r.address, r.balanceSompi, () => switchSource(r), current === r.index));
+    sheet.update({ headerHtml: "", rows });
   };
-  const switchSource = (row) => {
-    if (row.index === opts.source.index) return;
-    opts.source = { kind: "spending", index: row.index };
-    opts.fromAddress = row.address;
-    opts.navTitle = `Send Kaspa from Address #${row.index}`;
-    state.sourceLabel = row.label;
-    // Fee estimate, Max and coin control follow the new address (coin control resets).
+  /** Fee estimate, Max and coin control follow the new address (coin control resets). */
+  const resetForSource = () => {
     state.coins = null;
     state.selected = null;
     state.customFeeKas = null;
@@ -457,6 +483,25 @@ export function showSend(opts) {
     state.error = "";
     paint();
     load();
+  };
+  const switchSource = (row) => {
+    if (opts.source?.kind === "spending" && row.index === opts.source.index) return;
+    opts.source = { kind: "spending", index: row.index };
+    opts.fromAddress = row.address;
+    state.sourceLabel = row.label;
+    resetForSource();
+  };
+  const switchToChatting = async (known = null) => {
+    if (opts.source?.kind !== "spending") return;
+    let address = known;
+    if (!address) {
+      try { address = (await wallet.cachedAddresses((await vault.readAccounts()).activeAccountId))?.main || null; } catch { address = null; }
+    }
+    if (!address) return;
+    opts.source = { kind: "main" };
+    opts.fromAddress = address;
+    state.sourceLabel = null;
+    resetForSource();
   };
 
   const setAmountKas = (kasText) => {

@@ -26,6 +26,7 @@ import {
 import { showSend } from "./send.js";
 import { kachatWordmark } from "./market.js";
 import { addressNamesTab, showLiveNameDetail } from "./kachat-live.js";
+import { addressDomainsTab } from "./address-domains.js";
 import { kachatRegistry } from "./kachat-names.js";
 import { followAccount } from "./approve.js";
 import { sompiFromUserText } from "./amounts.js";
@@ -224,24 +225,23 @@ function loaders(state, address, repaintIfHere) {
   return { loadHistory, loadCoins };
 }
 
-// iOS KachatAddressDomainsList - the .kachat tab of every address screen (it replaced KNS
-// Domains in 5.2; .kas names are managed from Your Domains): this address's own .kachat names
-// (iOS 881ada6), empty where no registry runs (mainnet).
+// The Domains tab of every address screen (iOS fe52376): a card per name service with this
+// address's count; .kachat opens its cards and detail screens as before.
 function kachatTabHtml(state) {
-  state.kachatTab = addressNamesTab({ address: state.address, repaint: state.repaint });
+  state.kachatTab = addressDomainsTab({ address: state.address, repaint: state.repaint });
   return state.kachatTab.html;
 }
 
-/** After a render: the .kachat tab's cards open the name's detail, coming back to this screen. */
+/** After a render: the Domains tab's cards, and a name's detail coming back to this screen. */
 function bindKachatTab(state, back) {
-  if (state.tab === "kachat") state.kachatTab?.bind(app, { openName: (info) => showLiveNameDetail({ info, onBack: back }) });
+  if (state.tab === "domains") state.kachatTab?.bind(app, back);
 }
 
-// iOS UnderlineTabBar with the plain titles History / UTXOs / .kachat.
+// iOS UnderlineTabBar with the plain titles History / UTXOs / Domains.
 function addressTabsHtml(current) {
   return `
     <div class="underline-tabs address-tabs" role="tablist">
-      ${[["history", "History"], ["utxos", "UTXOs"], ["kachat", ".kachat"]].map(([id, title]) =>
+      ${[["history", "History"], ["utxos", "UTXOs"], ["domains", "Domains"]].map(([id, title]) =>
         `<button role="tab" data-tab="${id}" aria-selected="${current === id}">${title}</button>`).join("")}
     </div>`;
 }
@@ -336,7 +336,8 @@ export function showManageAddress(opts) {
   const balance = () => (state.coins ? state.coins.reduce((sum, c) => sum + c.amount, 0n) : null);
 
   const openSend = (compound = false) => showSend({
-    source, fromAddress: opts.address, compound, navTitle: compound ? "Compound UTXOs" : "Send Kaspa",
+    // an address's own page sends from that address, no From choice (iOS 7a8102b)
+    source, fromAddress: opts.address, compound, lockedSource: true, navTitle: compound ? "Compound UTXOs" : "Send Kaspa",
     feeFooter: "If the network is busy, Fast or Priority pays a higher fee to help your withdrawal confirm sooner. Tap the fee amount to set a custom fee.",
     onClose: () => { paint(); loadHistory(); loadCoins(); },
   });
@@ -396,16 +397,15 @@ const domainOwners = new Map(); // address -> owns a KNS domain
 
 function displayLabel(row) { return row.label; }
 
-// iOS sortedEntries: primary, then addresses holding Kaspa or a domain, then fresh ones; funded
-// before unfunded, higher index first.
+// In number order, #0 first, under the chatting address (iOS 245a5d2): no "primary" any more -
+// the send screen's From picks the address.
 function sortRows(rows) {
-  const active = (r) => r.balanceSompi > 0n || domainOwners.get(r.address);
-  const rank = (r) => (r.primary ? 0 : active(r) ? 1 : 2);
-  return [...rows].sort((a, b) => rank(a) - rank(b) || Number(b.balanceSompi > 0n) - Number(a.balanceSompi > 0n) || b.index - a.index);
+  return [...rows].sort((a, b) => a.index - b.index);
 }
 
-export function showManageAddresses({ onBack }) {
-  const state = { list: listSnapshot, loading: !listSnapshot, used: new Map(), busy: null, discovery: null, summary: "", error: "" };
+export function showManageAddresses({ onBack, onChangeIdentity = null }) {
+  // the chatting address leads the list (iOS 6333dd3): { address, balance }
+  const state = { list: listSnapshot, loading: !listSnapshot, used: new Map(), busy: null, discovery: null, summary: "", error: "", chatting: null, allTotal: null };
   const back = () => { paint(); load(); };
   const here = () => app.dataset.screen === "manage-list";
   let actionsSheet = null;
@@ -417,6 +417,13 @@ export function showManageAddresses({ onBack }) {
       state.list = await wallet.spendingList();
       listSnapshot = state.list;
       state.error = "";
+      try {
+        const main = (await wallet.cachedAddresses((await vault.readAccounts()).activeAccountId))?.main || null;
+        if (main) {
+          const balances = await wallet.balancesFor([main]);
+          state.chatting = { address: main, balance: balances[main] ?? 0n };
+        }
+      } catch { /* the chatting card shows without a balance */ }
     } catch (error) {
       state.error = error.message;
     }
@@ -474,7 +481,7 @@ export function showManageAddresses({ onBack }) {
   };
 
   const rowActions = (row) => {
-    const hideable = !row.primary && row.balanceSompi === 0n;
+    const hideable = true;
     showSheet({
       title: row.customLabel || `Address ${row.index}`,
       subtitle: shortAddress(row.address),
@@ -483,7 +490,6 @@ export function showManageAddresses({ onBack }) {
         { label: "Rename Address", subtitle: "Gives this address a label of your own.", icon: SF.pencil, onClick: () => renameAddress(row) },
         { label: "Copy Address", subtitle: "Puts the full address on the clipboard.", icon: SF.doc, onClick: () => copyText(row.address) },
         { label: "Show QR Code", subtitle: "Full screen, for scanning with another device.", icon: SF.qrcode, onClick: () => showQr({ title: `Address #${row.index}`, address: row.address, backLabel: "Close", onBack: back }) },
-        ...(row.primary ? [] : [{ label: "Set as Primary Address", subtitle: "New payments send from here by default.", icon: SF.star, onClick: () => setPrimary(row) }]),
         ...(hideable ? [{ label: "Hide Address", subtitle: "Removes it from this list. Re-enable it in Address Visibility.", icon: SF.eyeSlash, tint: "orange", onClick: () => hideAddress(row) }] : []),
       ],
     });
@@ -509,8 +515,6 @@ export function showManageAddresses({ onBack }) {
   const hideAddress = async (row) => {
     try {
       // The balance is checked again on chain before hiding (iOS setSpendingAddressHidden).
-      const live = (await wallet.balancesFor([row.address]))[row.address] ?? 0n;
-      if (live > 0n || row.primary) throw new Error("This address can't be hidden.");
       await wallet.setSpendingHidden(row.index, true);
       toast("Address hidden. Re-enable it in Address Visibility.");
       load();
@@ -526,7 +530,6 @@ export function showManageAddresses({ onBack }) {
       { label: "Generate New Spending Address", subtitle: "Reveals the next unused address in this wallet.", icon: SF.plusCircle, busy, disabled: discovering, onClick: generate },
       { label: "Discover Addresses", subtitle: "Finds addresses holding a balance or a domain.", icon: SF.magnifier, disabled: discovering, keepOpen: true, onClick: discover },
       { label: "Address Visibility", subtitle: "Check off every address you want on the list, in one sitting.", icon: SF.checklist, disabled: discovering, onClick: () => showVisibility({ onBack: back }) },
-      { label: "Send All Kaspa To Primary", subtitle: "Sweeps every other address into your primary spending address.", icon: SF.upToLine, disabled: discovering, onClick: () => showConsolidate({ list: state.list, onBack: back }) },
     ];
   };
 
@@ -595,7 +598,16 @@ export function showManageAddresses({ onBack }) {
 
   function paint() {
     const rows = sortRows(visibleRows());
-    const total = rows.reduce((sum, r) => sum + r.balanceSompi, 0n);
+    // every address of the account, hidden ones and the chatting address too (iOS 245a5d2)
+    const total = (state.list?.rows || []).reduce((sum, r) => sum + r.balanceSompi, 0n) + BigInt(state.chatting?.balance ?? 0n);
+    const chattingCard = state.chatting ? `
+          <div class="glass address-card" id="open-chatting" role="button" tabindex="0">
+            <div class="address-card-main">
+              <span class="muted small medium">Chatting Address</span>
+              <span class="mono small">${esc(shortAddress(state.chatting.address))}</span>
+              <span class="strong small">${esc(formatKas8(state.chatting.balance))} KAS</span>
+            </div>
+          </div>` : "";
     const busy = Boolean(state.discovery) || state.busy === "generate";
     const scroll = app.querySelector(".manage-scroll")?.scrollTop || 0;
     render(`
@@ -605,13 +617,14 @@ export function showManageAddresses({ onBack }) {
         <button class="ios-capsule" id="address-actions" ${busy ? "disabled" : ""}>${busy ? '<span class="spinner dark-spinner small-spin"></span>' : "Address Actions"}</button>
         ${state.error ? `<p class="error">${esc(state.error)}</p>` : ""}
         ${state.loading && !state.list ? '<div class="center-text"><span class="spinner"></span></div>' : ""}
+        ${chattingCard}
         ${state.list && !rows.length ? `
           <div class="km-empty"><span class="muted">${SF.creditcard}</span><div class="km-title">No Spending Addresses</div>
           <p class="muted small">Generate one below to start sending payments from a separate address than the one you chat from.</p></div>` : ""}
         ${rows.map((row) => `
           <div class="glass address-card" data-open="${row.index}" role="button" tabindex="0">
             <div class="address-card-main">
-              <span class="muted small medium">${esc(displayLabel(row))}${row.primary ? ` <span class="accent">${SF.starFill}</span>` : ""}</span>
+              <span class="muted small medium">${esc(displayLabel(row))}</span>
               <span class="mono small">${esc(shortAddress(row.address))}</span>
               <span class="strong small">${esc(formatKas8(row.balanceSompi))} KAS</span>
               <span class="address-status">${usedBadge(row)}${domainOwners.get(row.address) ? '<span class="domain-tag">Contains domain</span>' : ""}</span>
@@ -626,6 +639,8 @@ export function showManageAddresses({ onBack }) {
     if (scroller) scroller.scrollTop = scroll;
     $("#back").onclick = onBack;
     $("#address-actions").onclick = openActions;
+    const chattingEl = $("#open-chatting");
+    if (chattingEl) chattingEl.onclick = () => showManageAddress({ address: state.chatting.address, onBack: back, onChangeIdentity });
     const byIndex = (index) => state.list.rows.find((r) => r.index === Number(index));
     for (const card of app.querySelectorAll("[data-open]")) {
       card.onclick = (event) => {
@@ -665,8 +680,8 @@ function showSpendingAddress({ row, onBack }) {
   state.repaint = repaintIfHere;
   const { loadHistory, loadCoins } = loaders(state, row.address, repaintIfHere);
   const openSend = (compound = false) => showSend({
-    source, fromAddress: row.address, compound,
-    navTitle: compound ? "Compound UTXOs" : `Send Kaspa from Address #${row.index}`,
+    // an address's own page sends from that address, no From choice (iOS 7a8102b)
+    source, fromAddress: row.address, compound, lockedSource: true, navTitle: compound ? "Compound UTXOs" : "Send Kaspa",
     feeFooter: "If the network is busy, Fast or Priority pays a higher fee to help this confirm sooner. Tap the fee amount to set a custom fee.",
     onClose: () => { paint(); loadHistory(); loadCoins(); },
   });
@@ -769,8 +784,6 @@ function showVisibility({ onBack }) {
   };
 
   const toggle = async (row) => {
-    if (row.primary) return;
-    if (row.visible && row.balanceSompi > 0n) return; // hiding is blocked for funded addresses
     try {
       if (!row.revealed) await wallet.revealSpendingAddress(row.index);
       else await wallet.setSpendingHidden(row.index, row.visible);
@@ -790,15 +803,16 @@ function showVisibility({ onBack }) {
         <button class="bar-text strong" id="done">Done</button>
       </header>
       <div class="manage-scroll flush">
+        <button class="ghost vis-hide-all" id="hide-all">Hide All</button>
         ${state.loading ? '<div class="center-text pad"><span class="spinner"></span></div>'
           : !state.rows?.length ? '<p class="muted center-text pad">These addresses couldn\'t be derived right now. Go back a page or reopen this screen to retry.</p>'
           : `<div class="plain-list">${state.rows.map((row) => {
-              const locked = row.primary || (row.visible && row.balanceSompi > 0n);
+              const locked = false; // every address toggles both ways (iOS 245a5d2)
               return `
                 <button class="vis-row ${locked ? "locked" : ""}" data-vis="${row.index}" ${locked ? "aria-disabled=\"true\"" : ""}>
                   <span class="${row.visible ? "accent" : "muted"}">${row.visible ? ICONS.circleCheck : ICONS.circle}</span>
                   <span class="tx-meta">
-                    <span><span class="strong small mono-digits">#${row.index}</span>${row.primary ? ' <span class="accent tiny strong">Primary</span>' : ""}${row.customLabel ? ` <span class="muted tiny">${esc(row.customLabel)}</span>` : ""}</span>
+                    <span><span class="strong small mono-digits">#${row.index}</span>${row.customLabel ? ` <span class="muted tiny">${esc(row.customLabel)}</span>` : ""}</span>
                     <span class="mono tiny muted">${esc(`${row.address.slice(0, 16)}…${row.address.slice(-6)}`)}</span>
                   </span>
                   ${trailing(row)}
@@ -811,6 +825,14 @@ function showVisibility({ onBack }) {
         <button class="icon plain accent" id="next" aria-label="Next page">${SF.chevronRight}</button>
       </div>`, "visibility");
     $("#done").onclick = onBack;
+    // Hide All (confirmed): the list starts over with only the chatting address (iOS 245a5d2)
+    $("#hide-all").onclick = () => showAlert({
+      title: "Hide All Addresses?",
+      message: "Every spending address leaves the list; only the chatting address stays. Their Kaspa still counts in your totals, and you can show any of them again here.",
+      confirmLabel: "Hide All",
+      cancelLabel: "Cancel",
+      onConfirm: async () => { try { await wallet.hideAllSpending(); } catch (error) { toast(error.message); } loadPage(); },
+    });
     $("#prev").onclick = () => { if (state.page > 0) { state.page -= 1; loadPage(); } };
     $("#next").onclick = () => { state.page += 1; loadPage(); };
     for (const button of app.querySelectorAll("[data-vis]")) {

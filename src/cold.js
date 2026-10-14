@@ -31,6 +31,7 @@ import {
 import { scanQr } from "./camera.js";
 import { kachatWordmark } from "./market.js";
 import { addressNamesTab, showLiveNameDetail } from "./kachat-live.js";
+import { addressDomainsTab } from "./address-domains.js";
 import { kachatRegistry } from "./kachat-names.js";
 import { showAddToPortfolio } from "./portfolio.js";
 import { showColdSend } from "./cold-send.js";
@@ -1033,15 +1034,16 @@ function showAddress({ accountId, entry, onBack }) {
 
   // This KasSigner address's own .kachat names (iOS 881ada6) - read-only on the detail screen.
   let kachatTab = null;
+  // the Domains tab: a card per name service with this address's count (iOS fe52376)
   const kachatHtml = () => {
-    kachatTab = addressNamesTab({ address, repaint: repaintIfHere });
+    kachatTab = addressDomainsTab({ address, repaint: repaintIfHere });
     return kachatTab.html;
   };
 
   function paint() {
     const total = balance();
     const scroll = app.querySelector(".manage-scroll")?.scrollTop || 0;
-    const tabs = [["history", "History"], ["utxos", "UTXOs"], ["kachat", ".kachat"]];
+    const tabs = [["history", "History"], ["utxos", "UTXOs"], ["domains", "Domains"]];
     render(`
       <header class="navbar">
         <button class="nav-back" id="back" aria-label="Back">${ICONS.back}<span>Back</span></button>
@@ -1059,7 +1061,7 @@ function showAddress({ accountId, entry, onBack }) {
         <button class="ios-capsule with-icon" id="receive">${SF.qrcodeSmall}<span>Receive</span></button>
         <button class="ios-capsule with-icon cold-bold" id="send" ${total === 0n ? "disabled" : ""}>${SF.sendFill}<span>Send</span></button>
       </div>`, "cold:address");
-    if (state.tab === "kachat") kachatTab?.bind(app, { openName: (info) => showLiveNameDetail({ info, onBack: back }) });
+    if (state.tab === "domains") kachatTab?.bind(app, back);
     app.dataset.coldAddress = address;
     dock.remember(() => paint());
     const scroller = app.querySelector(".manage-scroll");

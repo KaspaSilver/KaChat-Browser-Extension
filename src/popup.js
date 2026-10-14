@@ -9,6 +9,7 @@ import {
   app, isTab, esc, render, $, toast, copyText, settings, noteActivity, ICONS, showQr, showQrPending, showSheet,
 } from "./ui.js";
 import { showSend } from "./send.js";
+import { showRequestPayment } from "./request-payment.js";
 import { showManageAddress, showManageAddresses, openSpendingAddress } from "./manage.js";
 import { cachedOwnedNames, ownedNames, otherNamesCount } from "./names.js";
 import { showWelcome, showUnlock, enterApp, setHandlers, setLoggedOut } from "./onboarding.js";
@@ -272,8 +273,11 @@ function paintHome() {
         </div>
 
         ${IS_TESTNET && main ? faucetCardHtml(main) : ""}
-        ${addressActionRowHtml("chatting", "Chatting", main, mainSompi != null ? `${wallet.formatKas(mainSompi, 8)} KAS` : null, null)}
-        ${addressActionRowHtml("spending", "Spending", primary, primarySompi != null ? `${wallet.formatKas(primarySompi, 8)} KAS` : null, totalSpending != null ? `Total: ${wallet.formatKas(totalSpending, 8)} KAS` : null)}
+        <!-- One card for every address of this account (iOS 6333dd3): it opens Manage Addresses;
+             which address a send comes from is picked on the send screen (From). -->
+        <button class="glass nav-row manage-card" id="manage-addresses">
+          <span class="nav-row-label">${ICONS.list || ICONS.wallet}<span class="manage-text"><span>Manage Addresses</span>${s.balances ? `<span class="muted tiny">${esc(wallet.formatKas(s.balances.total, 8))} KAS</span>` : ""}</span></span>${ICONS.chevron}
+        </button>
 
         <button class="glass nav-row" id="domains">
           <span class="nav-row-label">${ICONS.at}<span>Your Domains</span></span>
@@ -300,6 +304,7 @@ function paintHome() {
           <button class="list-row" id="licenses"><span>Open Source Licenses</span>${ICONS.chevron}</button>
         </div>
       </section>
+      <button class="wallet-plus" id="wallet-plus" aria-label="New" title="New">${PLUS_ICON}</button>
     </div>`, "home");
 
   $("#dot").onclick = () => toast(s.connection === "ok" ? `Connected to ${wallet.connectedNodeUrl().replace(/^wss:\/\//, "")}` : s.connection === "bad" ? "Can't reach a Kaspa node - retrying" : "Connecting to the Kaspa network…");
@@ -356,28 +361,18 @@ function paintHome() {
     note: "This address should be for chatting and domains only. 1 Kaspa is enough for about 500 interactions in the app. Domains cost from 35 to 4,000 Kaspa, depending on the name.",
     onBack: paintHome,
   });
-  for (const [kind, address] of [["chatting", main], ["spending", primary]]) {
-    const copy = $(`#copy-${kind}`);
-    if (copy && address) copy.onclick = () => copyText(address);
-  }
   const mainSource = { kind: "main" };
-  const spendingSource = { kind: "spending", index: s.spending.activeIndex };
-  // The Profile Send buttons: WithdrawKaspaView ("Send Kaspa") for the chatting address,
-  // SpendingAddressWithdrawView ("Send Kaspa from Address #n") for the primary spending one.
-  $("#send-chatting").onclick = () => {
-    if (main) showSend({ source: mainSource, fromAddress: main, navTitle: "Send Kaspa", feeFooter: "If the network is busy, Fast or Priority pays a higher fee to help your withdrawal confirm sooner. Tap the fee amount to set a custom fee.", onClose: showHome });
-  };
-  $("#send-spending").onclick = () => {
-    if (primary) showSend({ source: spendingSource, fromAddress: primary, navTitle: `Send Kaspa from Address #${s.spending.activeIndex}`, feeFooter: "If the network is busy, Fast or Priority pays a higher fee to help this confirm sooner. Tap the fee amount to set a custom fee.", onClose: showHome });
-  };
-  $("#manage-chatting").onclick = () => {
-    if (!main) return;
-    showManageAddress({
-      address: main, onBack: showHome,
-      onChangeIdentity: s.account.imported ? () => { homeState = null; showHome(); } : null,
-    });
-  };
-  $("#manage-spending").onclick = () => showManageAddresses({ onBack: showHome });
+  $("#manage-addresses").onclick = () => showManageAddresses({
+    onBack: showHome,
+    onChangeIdentity: s.account.imported ? () => { homeState = null; showHome(); } : null,
+  });
+  // The "+" on the Profile (the extension's own; iOS has it in Chats): the wallet's tiles.
+  $("#wallet-plus").onclick = () => showWalletPlus({
+    send: () => { if (main) showSend({ source: mainSource, fromAddress: main, navTitle: "Send Kaspa", onClose: showHome }); },
+    receive: () => $("#receive")?.click(),
+    request: () => showRequestPayment(),
+    fund: () => $("#chatting-qr")?.click(),
+  });
   $("#domains").onclick = () => { if (main) showDomains({ address: main, onBack: showHome }); };
   $("#kachat-names").onclick = () => dock.selectTab("kachat");
   $("#edit-kachat-profile").onclick = () => showKachatProfileEditor({ onSaved: () => refreshHome() });
@@ -442,21 +437,43 @@ function shortIdentity(address) {
   return body.length > 12 ? `${prefix}:${body.slice(0, 4)}....${body.slice(-4)}` : text;
 }
 
-// One address row: title + balance on the left (tapping it copies the address), then the
-// Send and Manage circles - iOS addressActionRow.
-function addressActionRowHtml(kind, title, address, balanceText, totalText) {
-  return `
-    <div class="glass address-action">
-      <button class="address-copy" id="copy-${kind}" aria-label="Copy ${esc(title)} address" ${address ? "" : "disabled"}>
-        <span class="address-title">${esc(title)}</span>
-        ${address ? "" : '<span class="muted tiny">Address unlocking...</span>'}
-        ${balanceText != null ? `<span class="address-balance">${esc(balanceText)}</span>` : '<span class="spinner small-spin"></span>'}
-        ${totalText ? `<span class="muted tiny">${esc(totalText)}</span>` : ""}
-      </button>
-      <button class="circle-action" id="send-${kind}" aria-label="Send">${ICONS.sendCircle}</button>
-      <button class="circle-action" id="manage-${kind}" aria-label="Manage">${ICONS.gear}</button>
+const PLUS_ICON = '<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>';
+const TILE = {
+  send: '<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9.5"/><path d="M12 16.5v-9M8 11l4-4 4 4"/></svg>',
+  receive: '<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9.5"/><path d="M12 7.5v9M8 13l4 4 4-4"/></svg>',
+  request: '<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3.5H7.4A1.9 1.9 0 0 0 5.5 5.4v13.2a1.9 1.9 0 0 0 1.9 1.9h9.2a1.9 1.9 0 0 0 1.9-1.9V8Z"/><path d="M14 3.5V8h4.5M9 13h6M9 16.5h4"/></svg>',
+  fund: '<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><path d="M14 14h2.5v2.5H14zM18 18h2v2h-2zM17.5 14H20"/></svg>',
+};
+
+/** The Profile "+" half sheet (iOS ChatListView's New sheet, the wallet's tiles only, at the
+ *  owner's request): Send Kaspa, Receive Kaspa, Request Payment, Fund Chatting Address. */
+function showWalletPlus(actions) {
+  document.querySelector(".wallet-plus-backdrop")?.remove();
+  const backdrop = document.createElement("div");
+  backdrop.className = "sheet-backdrop wallet-plus-backdrop";
+  const tile = (id, title, icon) => `<button class="wallet-tile" data-tile="${id}"><span class="accent">${icon}</span><span class="small strong">${esc(title)}</span></button>`;
+  backdrop.innerHTML = `
+    <div class="sheet wallet-plus-sheet" role="dialog" aria-modal="true" aria-label="New">
+      <div class="sheet-grabber"></div>
+      <div class="sheet-title center-text">New</div>
+      <div class="wallet-tiles">
+        ${tile("send", "Send Kaspa", TILE.send)}
+        ${tile("receive", "Receive Kaspa", TILE.receive)}
+        ${tile("request", "Request Payment", TILE.request)}
+        ${tile("fund", "Fund Chatting Address", TILE.fund)}
+      </div>
     </div>`;
+  const close = () => { backdrop.remove(); document.removeEventListener("keydown", onKey); };
+  const onKey = (event) => { if (event.key === "Escape") close(); };
+  document.addEventListener("keydown", onKey);
+  backdrop.addEventListener("click", (event) => {
+    const t = event.target.closest("[data-tile]");
+    if (t) { close(); actions[t.dataset.tile]?.(); return; }
+    if (event.target === backdrop) close();
+  });
+  document.body.appendChild(backdrop);
 }
+
 
 // --- The bell (iOS GlobalNotificationListView): received Kaspa and .kachat news -------------
 
@@ -566,7 +583,8 @@ async function refreshHome() {
           .catch(() => {});
       }
       loadKachatSocial(s, s.addresses.main);
-      s.balances = await wallet.balances(s.addresses, s.spending.hidden);
+      // the account total counts hidden addresses too, so nothing disappears from it (iOS 245a5d2)
+      s.balances = await wallet.balances(s.addresses, []);
       // The bell: Kaspa that arrived in any of this account's addresses since the last look.
       bellReceipts(s);
       // A faucet visit's payment landed: Claim Testnet Kaspa locks for 24 hours.
