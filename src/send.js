@@ -262,7 +262,7 @@ export function showSend(opts) {
         </div>`}
         <div class="sk-from-row">
           <span class="tx-meta"><span class="strong small">${esc(fromTitle)}</span><span class="mono tiny muted">${esc(`${opts.fromAddress.slice(0, 14)}...${opts.fromAddress.slice(-6)}`)}</span></span>
-          ${available != null ? `<span class="small">${esc(trimmedKas(available))} KAS</span>` : '<span class="spinner small-spin"></span>'}
+          ${available != null ? `<span class="small">${esc(wallet.formatKas(available, 8))} ${KAS_UNIT}</span>` : '<span class="spinner small-spin"></span>'}
         </div>
       </div>`;
     const pill = "";
@@ -465,7 +465,7 @@ export function showSend(opts) {
       const used = await usedText(address, balance);
       return {
         label: `${label}${picked ? " ✓" : ""}`,
-        subtitle: `${address.slice(0, 14)}...${address.slice(-6)} · ${trimmedKas(balance)} KAS${used ? ` · ${used}` : ""}`,
+        subtitle: `${address.slice(0, 14)}...${address.slice(-6)} · ${wallet.formatKas(balance, 8)} ${KAS_UNIT}${used ? ` · ${used}` : ""}`,
         onClick,
       };
     };

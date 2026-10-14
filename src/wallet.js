@@ -15,7 +15,7 @@ import {
   spendingDerivationPath,
   importPrivateKey,
 } from "../shared/engine/wallet.js";
-import { createRpc, probeRpc, disconnectRpc, getNodeRegistrySnapshot, PUBLIC_NODE_SEEDS } from "../shared/engine/rpc.js";
+import { createRpc, probeRpc, disconnectRpc, getNodeRegistrySnapshot, forgetEndpoint, markBadNode, knownPublicNodes } from "../shared/engine/rpc.js";
 import { getEndpoint } from "../shared/engine/endpoints.js";
 import { getBalance, sendKaspa, sendMaxKaspa, sweepAllToSelf, estimateSendFeeDetail, estimateOnchainFeeDetail, submitConfirmingAcceptance } from "../shared/engine/transactions.js";
 import { checkedUtxoAnswer } from "../shared/engine/amounts.js";
@@ -210,7 +210,8 @@ async function raceForNode(k, log) {
   const viaResolver = createRpc(k, log);
   const viaKnownNodes = (async () => {
     await new Promise((resolve) => setTimeout(resolve, 3000));
-    const nodes = [...PUBLIC_NODE_SEEDS].sort(() => Math.random() - 0.5);
+    // shuffled, without a node that answered the impossible this session (DSK-046)
+    const nodes = knownPublicNodes();
     for (const url of nodes) {
       if (settled) break;
       try {
@@ -398,6 +399,21 @@ async function withRpc(fn) {
   try {
     return await fn(await connection());
   } catch (error) {
+    if (error?.badNode) {
+      // Up but answering the impossible (DSK-046, KaChat-Desktop e6b0b71): out of the races, the
+      // remembered nodes and the last-node fast path, then once more on another node. A node the
+      // user set is theirs - its answer is refused, never swapped.
+      if (getEndpoint("trustedNode")) throw error;
+      const endpoint = rpc?.url || "";
+      logConnection(`${error.message} from ${endpoint || "the node"}; switching nodes...`);
+      if (endpoint) {
+        forgetEndpoint(endpoint);
+        markBadNode(endpoint);
+        if ((await getLocal(LAST_NODE_KEY)) === endpoint) await removeLocal(LAST_NODE_KEY);
+      }
+      await disconnect();
+      return fn(await connection());
+    }
     if (!/not connected|closed|timed out|timeout|network/i.test(String(error?.message || error))) throw error;
     await disconnect();
     return fn(await connection());
@@ -406,7 +422,7 @@ async function withRpc(fn) {
 
 /** Spendable coins at an address, sorted largest first. */
 export async function utxos(address) {
-  const response = await withRpc((node) => node.getUtxosByAddresses([address]));
+  const response = await withRpc(async (node) => checkedUtxoAnswer(await node.getUtxosByAddresses([address])));
   return (response?.entries || [])
     .map((entry) => ({
       entry,
@@ -789,7 +805,7 @@ export async function balancesFor(addresses) {
   for (const address of list) out[address] = 0n;
   for (let i = 0; i < list.length; i += 50) {
     const chunk = list.slice(i, i + 50);
-    const response = await withRpc((node) => node.getUtxosByAddresses(chunk));
+    const response = await withRpc(async (node) => checkedUtxoAnswer(await node.getUtxosByAddresses(chunk)));
     for (const entry of response?.entries || []) {
       const owner = String(entry?.address?.toString?.() ?? entry?.address ?? "");
       if (owner in out) out[owner] += BigInt(entry?.amount ?? 0);

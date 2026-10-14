@@ -413,9 +413,9 @@ function showOffer() {
   });
 }
 
-/** Buy From (iOS KachatMarketSourceSheet): which address the marketplace pays with - Chatting
- *  Address (default), Fresh Address (a never-used spending address, revealed in Manage Addresses)
- *  or Choose an Address - with its balance, a copy button and, when it is empty, Fund. */
+/** Buy From (iOS KachatMarketSourceSheet, ca39de7): which address the marketplace pays with -
+ *  Chatting Address (default) or Choose an Address (any of yours, a never-used one marked Unused) -
+ *  with its balance, a copy button and, when it is empty, Fund. */
 async function showBuyFrom(onChanged) {
   const rt = await kachatNames().catch(() => null);
   if (!rt) return;
@@ -424,15 +424,13 @@ async function showBuyFrom(onChanged) {
     if (!handle?.isOpen()) return;
     const info = await sourceInfo();
     const spending = info.source.kind === "spending";
-    const fresh = spending && rt.actions.marketSourceIsFresh;
     const sompi = info.address ? ((await wallet.balancesFor([info.address]).catch(() => ({})))[info.address] ?? null) : null;
     const host = handle.panel.querySelector("[data-buyfrom]");
     host.innerHTML = `
       <div class="sk-card sk-from">
         <div class="sel-pills">
           <button type="button" class="sel-pill ${spending ? "" : "on"}" data-src="chatting">Chatting Address</button>
-          <button type="button" class="sel-pill ${fresh ? "on" : ""}" data-src="fresh">Fresh Address</button>
-          <button type="button" class="sel-pill ${spending && !fresh ? "on" : ""}" data-src="choose">Choose an Address</button>
+          <button type="button" class="sel-pill ${spending ? "on" : ""}" data-src="choose">Choose an Address</button>
         </div>
         <div class="sk-from-row">
           <span class="tx-meta"><span class="strong small">${esc(info.title)}</span><span class="mono tiny muted">${esc(compact(info.address))}</span></span>
@@ -442,20 +440,14 @@ async function showBuyFrom(onChanged) {
           <button class="km-bordered small-button" data-copy>Copy Address</button>
           ${sompi === 0n ? '<button class="km-prominent small-button" data-fund>Fund</button>' : ""}
         </div>
-      </div>
-      <p class="muted small">Claims, purchases, offers, extensions and renewals here are paid from this address, and a name claimed or bought belongs to it.</p>`;
+      </div>`;
     host.querySelector("[data-copy]").onclick = async () => { try { await navigator.clipboard.writeText(info.address); toast("Address copied to clipboard."); } catch { /* blocked */ } };
     const fund = host.querySelector("[data-fund]");
     if (fund) fund.onclick = () => live.openAddressFundSheet({ address: info.address, title: "Send KAS to this address to buy with it.", onClose: () => { paint(); onChanged?.(); } });
     for (const b of host.querySelectorAll("[data-src]")) {
       b.onclick = async () => {
         if (b.dataset.src === "chatting") await setKachatMarketSource({ kind: "chatting" });
-        else if (b.dataset.src === "fresh") {
-          try {
-            const { index, address } = await wallet.reserveFreshSpendingAddress();
-            await setKachatMarketSource({ kind: "spending", index, address, label: `Address #${index}` }, { fresh: true });
-          } catch { toast("Couldn't make a new address. Please try again."); }
-        } else { chooseSource(); return; }
+        else { chooseSource(); return; }
         paint();
         onChanged?.();
       };
