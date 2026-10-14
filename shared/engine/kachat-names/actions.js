@@ -70,7 +70,7 @@ import { templateScript, paramsRegisterCost } from "./manifest.js";
 import { registerNow, renewWindowOpen } from "./builder.js";
 import { keyOf } from "./registry.js";
 import { GapInfo, OfferInfo, Profile, Status, addressOf, p2shAddress } from "./registry-state.js";
-import { publicLaunchMs, launchString } from "./launch.js";
+import { publicLaunchMs, launchString, isPubliclyOpen, refreshChainTime } from "./launch.js";
 import { KachatNamesService, ServiceError, xonlyKey, fundingUtxos, newSalt, profileRecordPayload } from "./service.js";
 
 // MARK: - Registration records
@@ -172,6 +172,19 @@ export const combineFeeRoom = 5_000_000n;
  *  fit". Swift `KachatNamesActions.isTooManyCoins` (iOS f1c16ec). */
 export function isTooManyCoins(error) {
   return error instanceof Failure && String(error.message ?? "").includes("funding inputs fit");
+}
+
+/** The wallet as it will be once `combineCoins` ran: its largest coins (as many as a combine
+ *  takes) as one coin, less room for that send's fee. Only ever planned against, for a preview -
+ *  never signed or sent (Swift `combinedPreviewWallet`, iOS 778a8fc). */
+export function combinedPreviewWallet(wallet) {
+  const sorted = [...wallet].sort((a, b) => (b.entry.amount > a.entry.amount ? 1 : b.entry.amount < a.entry.amount ? -1 : 0));
+  const merged = sorted.slice(0, combineMaxCoins);
+  if (merged.length <= 1) return wallet;
+  const total = merged.reduce((sum, u) => sum + u.entry.amount, 0n);
+  if (!(total > combineFeeRoom)) return wallet;
+  const standIn = makeUtxo(makeOutpoint(new Uint8Array(32).fill(0xcc), 0), { ...merged[0].entry, amount: total - combineFeeRoom });
+  return [standIn, ...sorted.slice(merged.length)];
 }
 
 // MARK: - Fees (iOS e426432)
@@ -362,9 +375,10 @@ export function isNotOpenYet(error) {
  *  with the 3-minute margin `registerNow` takes off it (Swift
  *  `KachatNamesActions.requireRegistrationOpen`, iOS dd836cb). */
 export function requireRegistrationOpen(m) {
-  // mainnet's countdown: nobody claims a name in the app before the public opening (iOS c6ebf74)
+  // mainnet's countdown: nobody claims a name in the app before the public opening (iOS c6ebf74),
+  // judged on the network's time, not the device's (XP-020)
   const opens = publicLaunchMs();
-  if (opens != null && nowMs() < opens) throw ActionError.notPublicYet(opens);
+  if (opens != null && !isPubliclyOpen()) throw ActionError.notPublicYet(opens);
   const deadline = m?.params?.migration?.deadlineMs;
   if (deadline == null || !(BigInt(nowMs()) - 180_000n < deadline)) return;
   throw ActionError.registrationNotOpen(deadline + 180_000n);
@@ -646,6 +660,12 @@ export class KachatNamesActions {
   /** See the module-level `requireRegistrationOpen`. */
   static requireRegistrationOpen(m) { return requireRegistrationOpen(m); }
 
+  /** The network's time for the mainnet countdown (XP-020), read from the node when stale. */
+  async _refreshChainTime() {
+    if (publicLaunchMs() == null || typeof this.engine?.currentDagPoint !== "function") return;
+    await refreshChainTime({ read: () => this.engine.currentDagPoint() });
+  }
+
   // MARK: Fees (iOS e426432)
 
   /** Reads the network's fee picture and keeps it in `feeEstimate` (subscribers hear of it): the
@@ -784,20 +804,19 @@ export class KachatNamesActions {
 
   /** `{ plan, feerate }`: the plan and the fee rate it was built at - the rate
    *  `perform(op, { exactFeerate })` then sends at, so the fee sent is the fee shown (Swift
-   *  `planWithRate`, iOS 7e2b6cd, IOS-061). */
+   *  `planWithRate`, iOS 7e2b6cd, IOS-061). A preview never sends anything (iOS 778a8fc,
+   *  IOS-075/DSK-047): when the KAS is there but in more small coins than the transaction can take,
+   *  it is planned as if they were already combined and `combinesCoins` says so; the combine itself
+   *  is sent by `perform`, after the slide and the device lock. */
   async planWithRate(op, { fee = null } = {}) {
     const s = this.signerFor(op);
     const rate = await this._feerateFor(fee, op, s);
-    let built;
     try {
-      built = await this._build(op, s, rate);
+      return { plan: (await this._build(op, s, rate)).plan, feerate: rate, combinesCoins: false };
     } catch (error) {
       if (!isTooManyCoins(error)) throw error;
-      // the KAS is there, in too many small coins: combined into one first (iOS f1c16ec)
-      await this.combineCoins(s);
-      built = await this._build(op, s, rate);
+      return { plan: (await this._build(op, s, rate, { previewCombined: true })).plan, feerate: rate, combinesCoins: true };
     }
-    return { plan: built.plan, feerate: rate };
   }
 
   /** Combines the wallet's coins into one: a plain send of up to `combineMaxCoins` largest coins to
@@ -845,9 +864,10 @@ export class KachatNamesActions {
     return txId;
   }
 
-  async _build(op, s, rate = null) {
+  async _build(op, s, rate = null, { previewCombined = false } = {}) {
     const m = await this.registry.prepare();
-    const { builder: b, env, wallet } = await this._context(s, rate);
+    const { builder: b, env, wallet: live } = await this._context(s, rate);
+    const wallet = previewCombined ? combinedPreviewWallet(live) : live;
     let plan;
     switch (op.kind) {
       case "extend": {
@@ -1220,6 +1240,7 @@ export class KachatNamesActions {
     const s = this.signer();
     years = BigInt(years);
     const m = await this.registry.prepare();
+    await this._refreshChainTime();
     requireRegistrationOpen(m);
     const { builder: b, env, wallet } = await this._context(s, await this.feerateForTier(feeTier));
     const salt = newSalt();
@@ -1284,7 +1305,9 @@ export class KachatNamesActions {
     const name = normalize(raw);
     validate(name);
     // never a commit that couldn't be registered: v5 opens register at its migration deadline
-    requireRegistrationOpen(await this.registry.prepare());
+    const manifest = await this.registry.prepare();
+    await this._refreshChainTime();
+    requireRegistrationOpen(manifest);
     this._loadPending(s.address);
     await this.registry.refresh();
     const found = await this.registry.lookup(name);
@@ -1632,6 +1655,7 @@ export class KachatNamesActions {
       const m = await this.registry.prepare();
       // A commit isn't bound to a registry: one sent before a migration registers on the new
       // registry once its deadline passes. Until then it waits, saying why (iOS dd836cb).
+      await this._refreshChainTime();
       try { requireRegistrationOpen(m); } catch (error) {
         this._set(p, (q) => { q.lastError = errorMessage(error); });
         return;

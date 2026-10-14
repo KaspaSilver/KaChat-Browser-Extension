@@ -5,6 +5,7 @@
 // (send.js) and KasSigner's send (cold-send.js). Change these rather than one screen.
 
 import { addressBookButtonHtml, savedNameHtml, openAddressBookPicker } from "./address-book.js";
+import { groupedAmountText } from "../shared/engine/amounts.js";
 import { esc, ICONS } from "./ui.js";
 import { KAS_UNIT } from "./net.js";
 
@@ -139,7 +140,7 @@ export function amountEntryHtml({ display = "", unit = KAS_UNIT, conversion = nu
   return `
     <div class="sk-amount">
       <label class="sk-amount-row" style="--size:${size}px">
-        <input id="amount" class="sk-amount-input" inputmode="decimal" placeholder="0" value="${esc(display)}" autocomplete="off" aria-label="Amount" ${readOnly ? "readonly" : ""} style="width:${Math.max(1, (display || "0").length) + 0.1}ch" />
+        <input id="amount" class="sk-amount-input" inputmode="decimal" placeholder="0" value="${esc(groupedAmountText(display))}" autocomplete="off" aria-label="Amount" ${readOnly ? "readonly" : ""} style="width:${Math.max(1, (groupedAmountText(display) || "0").length) + 0.1}ch" />
         <span class="sk-amount-unit">${esc(unit)}</span>
       </label>
       <div class="sk-amount-actions">
@@ -151,7 +152,8 @@ export function amountEntryHtml({ display = "", unit = KAS_UNIT, conversion = nu
 
 /** Grows the amount field with its text and re-sizes the font, without a repaint while typing. */
 export function fitAmountInput(input) {
-  const text = input.value || "0";
+  // sized to what it shows - with its thousands commas (grouped-amount.js), not the plain value
+  const text = groupedAmountText(input.value || "") || "0";
   input.style.width = `${Math.max(1, text.length) + 0.1}ch`;
   const size = text.length <= 7 ? 46 : text.length <= 10 ? 36 : 28;
   input.closest(".sk-amount-row")?.style.setProperty("--size", `${size}px`);

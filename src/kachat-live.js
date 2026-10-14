@@ -360,7 +360,7 @@ function txStepHtml(text, { done = false, active = false } = {}) {
  * block (a registration the driver saw land). A transaction `perform` didn't send (a profile save)
  * is followed here. `onClose` runs when it goes away.
  */
-export function showTxDone({ txId, title = "Transaction sent", onClose = () => {}, accepted = false }) {
+export function showTxDone({ txId, title = "Transaction sent", onClose = () => {}, accepted = false, note = null }) {
   document.querySelector(".kl-done-backdrop")?.remove();
   const backdrop = document.createElement("div");
   backdrop.className = "sheet-backdrop kl-done-backdrop";
@@ -378,6 +378,7 @@ export function showTxDone({ txId, title = "Transaction sent", onClose = () => {
         ${icon}
         <div class="kl-done-title">${esc(title)}</div>
         <p class="muted small center-text">${esc(txStageText(st))}</p>
+        ${note ? `<div class="kl-locked-note accent">${SYMBOLS.lock || ""}<span class="small">${esc(note)}</span></div>` : ""}
         <div class="kl-receipt-steps">
           ${txStepHtml("Sent to the network", { done: true })}
           ${txStepHtml("In a block", { done: inBlock, active: !inBlock && st !== TxStage.dropped })}
@@ -669,7 +670,12 @@ function registrationCardHtml(r) {
 
 /** The finished registration (or cancelled commit) as the done sheet shows it, or null. */
 function finishedTx(r) {
-  if (r.stage === Stage.registered && r.registerTxId) return { txId: r.registerTxId, title: "Name registered", accepted: true };
+  if (r.stage === Stage.registered && r.registerTxId) {
+    // say plainly what stays locked with the name (iOS b3b62f5): the registry's bond + deposit
+    const p = params();
+    const note = p ? `${amount(p.bond + p.gapValue)} is locked with this name. It comes back to you when you release it.` : null;
+    return { txId: r.registerTxId, title: "Name registered", accepted: true, note };
+  }
   if (r.stage === Stage.cancelled && r.cancelTxId) return { txId: r.cancelTxId, title: "Commit cancelled" };
   return null;
 }
@@ -1346,7 +1352,8 @@ function openClaimSheet(target) {
         ${labeledRow("Registry deposit (returned on release)", amount(q.gapDeposit))}
         ${labeledRow("Commit (returned at registration)", amount(q.commit))}
         ${labeledRow("Network fees", amount(q.networkFee))}
-        ${labeledRow("Total", amount(q.total), true)}`;
+        ${labeledRow("Total", amount(q.total), true)}
+        <div class="form-row kl-locked-note accent">${SYMBOLS.lock || ""}<span class="small">${esc(`${amount(q.bond + q.gapDeposit)} stays locked with your name while you hold it (bond + registry deposit). You get it back when you release the name.`)}</span></div>`;
     } else if (state.notOpen) {
       rows = labeledRow("Total", "-");
     } else if (state.quoteError) {

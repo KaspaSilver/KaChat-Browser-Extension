@@ -17,6 +17,10 @@ import { showKachatMarket, kachatWordmark } from "./market.js";
 import { watchRegistrations, scheduleLapse, showLiveNameDetail } from "./kachat-live.js";
 import * as bell from "./bell.js";
 import * as addressBook from "./address-book.js";
+import { installGroupedAmountInputs } from "./grouped-amount.js";
+
+// Amount fields show thousands commas as you type ("12,345.5"), the value underneath plain (iOS 40c5258).
+installGroupedAmountInputs();
 import { startKachatNamesNotifier } from "./kachat-notifier.js";
 import { kachatLive, kachatNames, kachatLabelOf, forgetKachatSigner, kachatSocial, ownKachatProfile } from "./kachat-names.js";
 import { showKachatProfileEditor } from "./kachat-profile.js";
@@ -290,7 +294,7 @@ function paintHome() {
         <div class="glass list">
           <div class="list-row"><span>Created</span><span class="muted">${esc(created)}</span></div>
           <div class="list-row"><span>Version</span><span class="muted">${esc(version)}</span></div>
-          <a class="list-row" href="https://linktr.ee/Kachat_" target="_blank" rel="noopener noreferrer"><span>Website</span><span class="muted">linktr.ee/Kachat_</span></a>
+          <a class="list-row" href="https://home.kachat.app" target="_blank" rel="noopener noreferrer"><span>Website</span><span class="muted">home.kachat.app</span></a>
           <a class="list-row" href="mailto:kaspasilver@gmail.com"><span>Support Email</span><span class="muted">kaspasilver@gmail.com</span></a>
           <button class="list-row" id="donate"><span>Donate</span><span class="muted">kachat.kachat</span></button>
           <button class="list-row" id="licenses"><span>Open Source Licenses</span>${ICONS.chevron}</button>

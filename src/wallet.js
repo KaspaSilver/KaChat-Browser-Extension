@@ -19,6 +19,7 @@ import { createRpc, probeRpc, disconnectRpc, getNodeRegistrySnapshot, PUBLIC_NOD
 import { getEndpoint } from "../shared/engine/endpoints.js";
 import { getBalance, sendKaspa, sendMaxKaspa, sweepAllToSelf, estimateSendFeeDetail, estimateOnchainFeeDetail, submitConfirmingAcceptance } from "../shared/engine/transactions.js";
 import { checkedUtxoAnswer } from "../shared/engine/amounts.js";
+import { noteChainTimeMs } from "../shared/engine/kachat-names/launch.js";
 import { calculateMass, calculateFee, fetchQuotedFeeRateSompiPerGram } from "../shared/ui/kspt.js";
 import { looksLikeName, resolveEverywhere, primaryResolution, notFoundMessage, ownsAnyName, ownedNamesOfMany } from "./names.js";
 import { fetchKasPrice, peekKasPrice } from "../shared/engine/prices.js";
@@ -979,8 +980,9 @@ export const EXPLORERS = Object.freeze({
   kaspaOrg: { name: "explorer.kaspa.org", tx: "https://explorer.kaspa.org/txs/", address: "https://explorer.kaspa.org/addresses/" },
   kaspaStream: { name: "kaspa.stream", tx: "https://kaspa.stream/transactions/", address: "https://kaspa.stream/addresses/" },
 });
-let explorerId = "kaspaOrg";
-export function useExplorer(id) { explorerId = EXPLORERS[id] ? id : "kaspaOrg"; }
+// kaspa.stream is the default (iOS e69fe13); a choice made in Settings is kept
+let explorerId = "kaspaStream";
+export function useExplorer(id) { explorerId = EXPLORERS[id] ? id : "kaspaStream"; }
 export function currentExplorer() { return explorerId; }
 // On testnet every link goes to tn10.kaspa.stream, whichever explorer is picked (iOS 421a832).
 export function explorerTxUrl(txid) { return IS_TESTNET ? `https://tn10.kaspa.stream/transactions/${txid}` : `${EXPLORERS[explorerId].tx}${txid}`; }
@@ -1228,7 +1230,10 @@ export function namesNodeMethods() {
         const dag = await node.getBlockDagInfo();
         let networkId = String(dag?.network ?? dag?.networkId ?? "");
         if (!networkId) networkId = String((await node.getServerInfo())?.networkId ?? "");
-        return { networkId, virtualDaaScore: BigInt(dag?.virtualDaaScore ?? 0), pastMedianTime: BigInt(dag?.pastMedianTime ?? 0) };
+        const point = { networkId, virtualDaaScore: BigInt(dag?.virtualDaaScore ?? 0), pastMedianTime: BigInt(dag?.pastMedianTime ?? 0) };
+        // the network's own clock, for the .kachat countdown (XP-020)
+        if (point.pastMedianTime > 0n) noteChainTimeMs(point.pastMedianTime);
+        return point;
       });
     },
     async currentVirtualDaaScore() {

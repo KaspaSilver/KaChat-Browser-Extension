@@ -15,7 +15,7 @@
 
 import { app, esc, render, $, ICONS, navHeader } from "./ui.js";
 import { SYMBOLS, kachatWordmark, openPanel } from "./kachat-ui.js";
-import { kachatLive, kachatLaunched, kachatPublicLaunchMs, kachatPubliclyOpen, kachatLaunchText } from "./kachat-names.js";
+import { kachatLive, kachatLaunched, kachatPublicLaunchMs, kachatPubliclyOpen, kachatLaunchText, kachatNowMs, kachatRefreshClock, kachatRegistry } from "./kachat-names.js";
 import { IS_TESTNET } from "./net.js";
 import * as dock from "./dock.js";
 import * as live from "./kachat-live.js";
@@ -175,8 +175,11 @@ export function showKachatMarket({ onBack = null } = {}) {
     </div>`;
   const tickCountdown = () => {
     if (app.dataset.screen !== "kachat:market") return;
-    const left = Math.max(0, Math.floor((kachatPublicLaunchMs - Date.now()) / 1000));
-    if (left <= 0) { paint(); return; }
+    // the network's clock, read from a node at most once a minute (iOS 6975e3e, XP-020)
+    kachatRegistry();
+    kachatRefreshClock().catch(() => null);
+    const left = Math.max(0, Math.floor((kachatPublicLaunchMs - kachatNowMs()) / 1000));
+    if (left <= 0 && kachatPubliclyOpen()) { paint(); return; }
     const set = (k, v) => { const el = app.querySelector(`[data-cd="${k}"]`); if (el) el.textContent = String(v); };
     set("d", Math.floor(left / 86_400));
     set("h", Math.floor((left % 86_400) / 3_600));

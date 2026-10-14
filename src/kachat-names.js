@@ -13,7 +13,7 @@
 
 import { getEndpoint } from "../shared/engine/endpoints.js";
 import { KachatNamesService } from "../shared/engine/kachat-names/service.js";
-import { publicLaunchMs, isPubliclyOpen, launchString } from "../shared/engine/kachat-names/launch.js";
+import { publicLaunchMs, isPubliclyOpen, launchString, setChainTimeSource, networkNowMs, refreshChainTime } from "../shared/engine/kachat-names/launch.js";
 import { KachatNamesRegistry } from "../shared/engine/kachat-names/registry.js";
 import { KachatNamesActions } from "../shared/engine/kachat-names/actions.js";
 import { KachatSocialImageResolver } from "../shared/engine/kachat-names/social-image-resolver.js";
@@ -39,7 +39,12 @@ export const kachatLive = kachatLaunched;
  *  plan, iOS c6ebf74): until then no app searches or claims names there; names already held stay
  *  manageable. Testnet has no such moment. The moment lives in the shared engine (launch.js). */
 export const kachatPublicLaunchMs = publicLaunchMs();
-export function kachatPubliclyOpen(now = Date.now()) { return isPubliclyOpen(now); }
+/** On the network's clock, not the device's (iOS 6975e3e, XP-020): a device set to a later date
+ *  doesn't open search and registration early. Unknown until a node has answered (shut). */
+export function kachatPubliclyOpen() { return isPubliclyOpen(); }
+/** The network's time now (the device's until a node has answered), and a fresh read of it. */
+export const kachatNowMs = () => networkNowMs() ?? Date.now();
+export const kachatRefreshClock = () => refreshChainTime();
 /** "Friday, October 16 at 8:00 AM" in your own time zone (iOS launchString). */
 export function kachatLaunchText(ms = kachatPublicLaunchMs) { return launchString(ms); }
 
@@ -89,6 +94,8 @@ function base() {
   if (!service) {
     engine = { ...namesNodeMethods(), kaspa: null, rpc: null, address: null, privateKey: null, privateKeyHex: null };
     service = new KachatNamesService(engine);
+    // the countdown reads the network's time from a node (launch.js)
+    setChainTimeSource(() => engine.currentDagPoint());
     registry = new KachatNamesRegistry({
       manifest: () => service.loadManifest(),
       isEnabled: () => KachatNamesService.isLaunched,
