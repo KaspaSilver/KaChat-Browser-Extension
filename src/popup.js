@@ -473,9 +473,9 @@ function showWalletPlus(actions) {
   backdrop.className = "sheet-backdrop wallet-plus-backdrop";
   const tile = (id, title, icon) => `<button class="wallet-tile" data-tile="${id}"><span class="accent">${icon}</span><span class="small strong">${esc(title)}</span></button>`;
   backdrop.innerHTML = `
-    <div class="sheet wallet-plus-sheet" role="dialog" aria-modal="true" aria-label="New">
+    <div class="sheet wallet-plus-sheet" role="dialog" aria-modal="true" aria-label="Actions">
       <div class="sheet-grabber"></div>
-      <div class="sheet-title center-text">New</div>
+      <div class="sheet-title center-text">Actions</div>
       <div class="wallet-tiles">
         ${tile("send", "Send Kaspa", TILE.send)}
         ${tile("receive", "Receive Kaspa", TILE.receive)}

@@ -1,5 +1,5 @@
-// The dock - iOS MainTabView's tab bar, wallet-only: Storage | .kachat | Profile | Portfolio | +,
-// Profile in the middle. The "+" isn't a tab: it opens the wallet's tiles (Send, Receive,
+// The dock - iOS MainTabView's tab bar, wallet-only: Storage | .kachat | + Actions | Portfolio |
+// Profile, the "+" in the middle and Profile on the right. The "+" isn't a tab: it opens the wallet's tiles (Send, Receive,
 // Request Payment, Fund Chatting Address) over whichever tab is showing.
 // Selected items take the accent, the rest the system grey; labels are 10 pt under 26 pt
 // glyphs. Each tab keeps its own place: switching back returns to the screen you left there
@@ -25,8 +25,8 @@ const ICON = {
   profile: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="12" cy="12" r="9.5"/><circle cx="12" cy="9.5" r="3.3"/><path d="M5.6 18.6c1.4-2.3 3.7-3.5 6.4-3.5s5 1.2 6.4 3.5"/></svg>',
 };
 
-// Profile in the middle, the .kachat marketplace on its left, the "+" last (the user's order).
-const TABS = [["cold", "Storage"], ["kachat", ".kachat"], ["profile", "Profile"], ["portfolio", "Portfolio"], ["new", "New"]];
+// The "+" (Actions) in the middle, Profile on the very right (the user's order).
+const TABS = [["cold", "Storage"], ["kachat", ".kachat"], ["new", "Actions"], ["portfolio", "Portfolio"], ["profile", "Profile"]];
 
 const roots = {};
 const actions = {};
