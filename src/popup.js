@@ -15,7 +15,7 @@ import { showManageAddress, showManageAddresses, openSpendingAddress } from "./m
 import { cachedOwnedNames, ownedNames, otherNamesCount } from "./names.js";
 import { showWelcome, showUnlock, enterApp, setHandlers, setLoggedOut } from "./onboarding.js";
 import { showDomains } from "./domains.js";
-import { showKachatMarket, kachatWordmark } from "./market.js";
+import { showKachatMarket } from "./market.js";
 import { watchRegistrations, scheduleLapse, showLiveNameDetail } from "./kachat-live.js";
 import * as bell from "./bell.js";
 import * as addressBook from "./address-book.js";
@@ -284,10 +284,6 @@ function paintHome() {
           <span class="nav-row-label">${ICONS.at}<span>Your Domains</span></span>
           <span class="nav-row-value">${domainCount != null ? esc(String(domainCount)) : ""}</span>${ICONS.chevron}
         </button>
-        <button class="glass nav-row" id="kachat-names">
-          <span class="nav-row-label">${kachatWordmark(22)}<span>Marketplace</span></span>
-          ${kachatLive ? (IS_TESTNET ? '<span class="kl-testnet">Testnet</span>' : "") : '<span class="coming-pill">Coming soon</span>'}${ICONS.chevron}
-        </button>
         <button class="glass nav-row" id="settings">
           <span class="nav-row-label">${ICONS.gear}<span>Settings</span></span>${ICONS.chevron}
         </button>
@@ -375,7 +371,6 @@ function paintHome() {
     fund: () => $("#chatting-qr")?.click(),
   });
   $("#domains").onclick = () => { if (main) showDomains({ address: main, onBack: showHome }); };
-  $("#kachat-names").onclick = () => dock.selectTab("kachat");
   $("#edit-kachat-profile").onclick = () => showKachatProfileEditor({ onSaved: () => refreshHome() });
   // Claim Testnet Kaspa (testnet only): the faucet opens in a tab; a wallet open in its own tab
   // watches the chatting balance for a minute, the popup checks it next time it opens.
