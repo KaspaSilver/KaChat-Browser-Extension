@@ -1097,7 +1097,6 @@ button.kl-tile:not(:disabled), .kl-tile-split { cursor: pointer; }
 
 /* Profile (iOS 6333dd3): one Manage Addresses card; the "+" (the extension's own, Profile only) */
 .manage-text { display: flex; flex-direction: column; gap: 2px; text-align: left; }
-.wallet-plus { position: fixed; right: 16px; bottom: calc(var(--dock-h, 56px) + 16px); width: 52px; height: 52px; border-radius: 50%; padding: 0; display: inline-flex; align-items: center; justify-content: center; background: var(--kaspa); color: #000; box-shadow: 0 8px 22px rgba(0,0,0,.45); z-index: 20; }
 .wallet-tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; padding: 4px 4px 8px; }
 .wallet-tile { aspect-ratio: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 8px; border-radius: 18px; background: #2c2c2e; color: var(--text); font-weight: 400; text-align: center; line-height: 1.2; }
 /* Send's From (iOS SendFromSection) and pill choices (SelectablePill) */

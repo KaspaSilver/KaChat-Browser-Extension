@@ -1,5 +1,5 @@
 // The Address Book (iOS 00767a4 / cda0d99 AddressBookManager + AddressBookView): Kaspa addresses
-// you saved with a name you'll recognize, and a note. Its own tab in the dock.
+// you saved with a name you'll recognize, and a note. A card on Profile.
 //
 // One book per wallet (its chatting address, so per network too): switching accounts never shows
 // who another wallet knows. It lives in this browser's extension storage only - no sync, no
@@ -167,7 +167,11 @@ const view = { query: "" };
 let detailAddress = null;
 
 /** The Address Book tab's first screen (iOS AddressBookView). */
-export async function showAddressBook() {
+let backTo = null;
+
+/** The Address Book, a card on Profile. `onBack`: where Back goes (kept for the detail's Back). */
+export async function showAddressBook({ onBack } = {}) {
+  if (onBack) backTo = onBack;
   await loading;
   detailAddress = null;
   paintList();
@@ -188,7 +192,11 @@ function rowsHtml(list) {
 function paintList() {
   const list = search(view.query);
   render(`
-    ${dock.tabTopHtml("Address Book", { rightHtml: `<button class="icon plain accent" id="ab-io" aria-label="Import or export" title="Import or export">${IMPORT_EXPORT}</button><button class="icon plain accent" id="ab-add" aria-label="Add Address" title="Add Address">${PLUS}</button>` })}
+    <header class="navbar">
+      <button class="nav-back" id="back" aria-label="Back">${ICONS.back}<span>Back</span></button>
+      <div class="nav-title">Address Book</div>
+      <div class="nav-right"><button class="icon plain accent" id="ab-io" aria-label="Import or export" title="Import or export">${IMPORT_EXPORT}</button><button class="icon plain accent" id="ab-add" aria-label="Add Address" title="Add Address">${PLUS}</button></div>
+    </header>
     <section class="ab-screen">
       ${entries.length ? `
         <label class="ab-search">
@@ -204,8 +212,7 @@ function paintList() {
           <button class="with-icon" id="ab-add-empty">${PLUS}<span>Add Address</span></button>
         </div>`}
     </section>`, "book:home");
-  dock.bindTabTop();
-  dock.remember(() => showAddressBook());
+  $("#back").onclick = () => (backTo || (() => dock.returnToTab()))();
   $("#ab-add").onclick = () => openEditor({ onSaved: (e) => showDetail(e.address) });
   $("#ab-io").onclick = showImportExport;
   const empty = $("#ab-add-empty");
@@ -268,7 +275,6 @@ function showDetail(address) {
         ${action("ab-delete", TRASH, "Delete from Address Book", "danger-text")}
       </div>
     </section>`, "book:detail");
-  dock.remember(() => showDetail(entry.address));
   $("#back").onclick = showAddressBook;
   $("#ab-copy").onclick = async () => {
     try { await navigator.clipboard.writeText(entry.address); } catch { return; }
@@ -636,7 +642,7 @@ if (isTab && new URLSearchParams(location.search).get(IMPORT_PARAM) === "import"
     if (done || screen !== "home") return;
     done = true;
     setTimeout(() => {
-      dock.selectTab("book");
+      showAddressBook();
       history.replaceState(null, "", location.pathname + "?view=tab");
       setTimeout(showImportExport, 50);
     }, 0);

@@ -71,7 +71,8 @@ dock.registerTab("cold", () => showColdStorage());
 dock.registerTab("portfolio", () => showPortfolio());
 // the .kachat marketplace, its own tab left of Profile
 dock.registerTab("kachat", () => showKachatMarket());
-dock.registerTab("book", () => addressBook.showAddressBook());
+// The "+" in the dock (where the Address Book tab was): the wallet's tiles, from any tab.
+dock.registerAction("new", () => openWalletPlus());
 // The Address Book's Send KAS: Send Kaspa from the chatting address, to the saved address.
 addressBook.setAddressBookSend((address, onClose) => {
   const main = homeState?.addresses?.main;
@@ -284,6 +285,10 @@ function paintHome() {
           <span class="nav-row-label">${ICONS.at}<span>Your Domains</span></span>
           <span class="nav-row-value">${domainCount != null ? esc(String(domainCount)) : ""}</span>${ICONS.chevron}
         </button>
+        <button class="glass nav-row" id="address-book">
+          <span class="nav-row-label">${ADDRESS_BOOK_ICON}<span>Address Book</span></span>
+          <span class="nav-row-value">${addressBook.addressBookEntries().length || ""}</span>${ICONS.chevron}
+        </button>
         <button class="glass nav-row" id="settings">
           <span class="nav-row-label">${ICONS.gear}<span>Settings</span></span>${ICONS.chevron}
         </button>
@@ -301,7 +306,6 @@ function paintHome() {
           <button class="list-row" id="licenses"><span>Open Source Licenses</span>${ICONS.chevron}</button>
         </div>
       </section>
-      <button class="wallet-plus" id="wallet-plus" aria-label="New" title="New">${PLUS_ICON}</button>
     </div>`, "home");
 
   $("#dot").onclick = () => toast(s.connection === "ok" ? `Connected to ${wallet.connectedNodeUrl().replace(/^wss:\/\//, "")}` : s.connection === "bad" ? "Can't reach a Kaspa node - retrying" : "Connecting to the Kaspa network…");
@@ -335,41 +339,14 @@ function paintHome() {
   // Receive hands out a never-used address (iOS ReceiveKaspaQRView over freshReceiveAddress):
   // "Preparing a fresh address" while it is worked out, then the white QR page with the
   // address's balance in the bar.
-  if (primary) $("#receive").onclick = async () => {
-    showQrPending({ onBack: showHome });
-    let address;
-    try { address = await wallet.freshReceiveAddress(); } catch { address = null; }
-    if (app.dataset.screen !== "qr") return;
-    if (!address) return showQrPending({ failed: true, onBack: showHome });
-    let balanceSompi = null;
-    try { balanceSompi = (await wallet.balancesFor([address]))[address] ?? null; } catch { /* unknown - nothing shown */ }
-    if (app.dataset.screen !== "qr") return;
-    showQr({
-      address,
-      balanceSompi,
-      note: "A fresh address, never used before. Kaspa sent here lands in this account and shows in your spending total. This address should be used for everything not related to chatting or domains.",
-      onBack: showHome,
-    });
-  };
-  // Shown from the recovery phrase, not only the cache (audit EXT-006).
-  if (main) $("#chatting-qr").onclick = async () => showQr({
-    address: (await wallet.identityFor(s.account.id).catch(() => null))?.address || main,
-    balanceSompi: mainSompi,
-    note: "This address should be for chatting and domains only. 1 Kaspa is enough for about 500 interactions in the app. Domains cost from 35 to 4,000 Kaspa, depending on the name.",
-    onBack: paintHome,
-  });
+  if (primary) $("#receive").onclick = () => openReceive(showHome);
+  if (main) $("#chatting-qr").onclick = () => openChattingQr(s, paintHome);
   const mainSource = { kind: "main" };
   $("#manage-addresses").onclick = () => showManageAddresses({
     onBack: showHome,
     onChangeIdentity: s.account.imported ? () => { homeState = null; showHome(); } : null,
   });
-  // The "+" on the Profile (the extension's own; iOS has it in Chats): the wallet's tiles.
-  $("#wallet-plus").onclick = () => showWalletPlus({
-    send: () => { if (main) showSend({ source: mainSource, fromAddress: main, navTitle: "Send Kaspa", onClose: showHome }); },
-    receive: () => $("#receive")?.click(),
-    request: () => showRequestPayment(),
-    fund: () => $("#chatting-qr")?.click(),
-  });
+  $("#address-book").onclick = () => addressBook.showAddressBook({ onBack: showHome });
   $("#domains").onclick = () => { if (main) showDomains({ address: main, onBack: showHome }); };
   $("#edit-kachat-profile").onclick = () => showKachatProfileEditor({ onSaved: () => refreshHome() });
   // Claim Testnet Kaspa (testnet only): the faucet opens in a tab; a wallet open in its own tab
@@ -433,7 +410,54 @@ function shortIdentity(address) {
   return body.length > 12 ? `${prefix}:${body.slice(0, 4)}....${body.slice(-4)}` : text;
 }
 
-const PLUS_ICON = '<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>';
+const ADDRESS_BOOK_ICON = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M5 4.5A2.5 2.5 0 0 1 7.5 2H19v17H7.5A2.5 2.5 0 0 0 5 21.5z"/><path d="M5 21.5A2.5 2.5 0 0 1 7.5 19H19v3H7.5"/></svg>';
+
+// Receive hands out a never-used address (iOS ReceiveKaspaQRView over freshReceiveAddress):
+// "Preparing a fresh address" while it is worked out, then the white QR page with the
+// address's balance in the bar.
+async function openReceive(onBack) {
+  showQrPending({ onBack });
+  let address;
+  try { address = await wallet.freshReceiveAddress(); } catch { address = null; }
+  if (app.dataset.screen !== "qr") return;
+  if (!address) return showQrPending({ failed: true, onBack });
+  let balanceSompi = null;
+  try { balanceSompi = (await wallet.balancesFor([address]))[address] ?? null; } catch { /* unknown - nothing shown */ }
+  if (app.dataset.screen !== "qr") return;
+  showQr({
+    address,
+    balanceSompi,
+    note: "A fresh address, never used before. Kaspa sent here lands in this account and shows in your spending total. This address should be used for everything not related to chatting or domains.",
+    onBack,
+  });
+}
+
+// The chatting address's QR (Fund Chatting Address), shown from the recovery phrase, not only
+// the cache (audit EXT-006).
+async function openChattingQr(s, onBack) {
+  const main = s?.addresses?.main;
+  if (!main) return;
+  showQr({
+    address: (await wallet.identityFor(s.account.id).catch(() => null))?.address || main,
+    balanceSompi: s.balances?.main ?? null,
+    note: "This address should be for chatting and domains only. 1 Kaspa is enough for about 500 interactions in the app. Domains cost from 35 to 4,000 Kaspa, depending on the name.",
+    onBack,
+  });
+}
+
+/** The dock's "+": the wallet's tiles. Each screen it opens comes back to the tab it was
+ *  opened from. */
+function openWalletPlus() {
+  const s = homeState;
+  const main = s?.addresses?.main;
+  const back = () => dock.returnToTab();
+  showWalletPlus({
+    send: () => { if (main) showSend({ source: { kind: "main" }, fromAddress: main, navTitle: "Send Kaspa", onClose: back }); },
+    receive: () => openReceive(back),
+    request: () => showRequestPayment(),
+    fund: () => openChattingQr(s, back),
+  });
+}
 const TILE = {
   send: '<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9.5"/><path d="M12 16.5v-9M8 11l4-4 4 4"/></svg>',
   receive: '<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9.5"/><path d="M12 7.5v9M8 13l4 4 4-4"/></svg>',
@@ -441,7 +465,7 @@ const TILE = {
   fund: '<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><path d="M14 14h2.5v2.5H14zM18 18h2v2h-2zM17.5 14H20"/></svg>',
 };
 
-/** The Profile "+" half sheet (iOS ChatListView's New sheet, the wallet's tiles only, at the
+/** The dock's "+" half sheet (iOS ChatListView's New sheet, the wallet's tiles only, at the
  *  owner's request): Send Kaspa, Receive Kaspa, Request Payment, Fund Chatting Address. */
 function showWalletPlus(actions) {
   document.querySelector(".wallet-plus-backdrop")?.remove();
