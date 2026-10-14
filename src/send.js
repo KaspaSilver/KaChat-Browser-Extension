@@ -13,6 +13,7 @@ import * as vault from "./vault.js";
 import { app, esc, render, $, toast, copyText, settings, showSheet, ICONS, formatKas8 } from "./ui.js";
 import { otherDomainsHtml, bindOtherDomains, splitTypedName } from "./names.js";
 import { scanQr } from "./camera.js";
+import { loadOwnAddresses } from "./own-addresses.js";
 import { sompiFromUserText, sanitizeAmountInput, sompiToKasNumber } from "./amounts.js";
 import { KAS_UNIT } from "./net.js";
 import {
@@ -511,6 +512,8 @@ export function showSend(opts) {
 
   paint();
   load();
+  // the recipient card marks one of your own addresses (iOS 56f004f)
+  loadOwnAddresses().then((changed) => { if (changed) paint(); });
   if (state.recipientInput && !opts.compound) resolveRecipient();
 }
 

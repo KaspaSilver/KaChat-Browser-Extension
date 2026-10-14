@@ -16,6 +16,7 @@ import { KachatNamesService } from "../shared/engine/kachat-names/service.js";
 import { publicLaunchMs, isPubliclyOpen, launchString, setChainTimeSource, networkNowMs, refreshChainTime } from "../shared/engine/kachat-names/launch.js";
 import { KachatNamesRegistry } from "../shared/engine/kachat-names/registry.js";
 import { KachatNamesActions } from "../shared/engine/kachat-names/actions.js";
+import { unhex32 } from "../shared/engine/kachat-names/codec.js";
 import { KachatSocialImageResolver } from "../shared/engine/kachat-names/social-image-resolver.js";
 import { chattingSigner, namesNodeMethods, cachedAddresses, privateKeyHex } from "./wallet.js";
 import { ext } from "./browser.js";
@@ -76,6 +77,32 @@ async function loadWalletAddresses() {
     const { coldWatchAddresses } = await import("./cold.js");
     walletState.kasSigner = await coldWatchAddresses();
   } catch { walletState.kasSigner = []; }
+}
+
+/** A spending address's key, ready for the engine's synchronous `spendingPrivateKey` hook. */
+async function loadSpendingKey(index) {
+  if (Number.isInteger(index) && !walletState.keys.has(index)) {
+    walletState.keys.set(index, await privateKeyHex({ kind: "spending", index }));
+  }
+}
+
+async function preloadClaimOwners() {
+  for (const p of actions?.pending ?? []) {
+    try {
+      const own = actions.ownAddress(unhex32(String(p.owner)));
+      if (own?.kind === "spending") await loadSpendingKey(own.index);
+    } catch { /* not this wallet's: the driver leaves it */ }
+  }
+}
+
+/** Buy From (iOS eb9b027): the address the marketplace pays and buys with - claims, buys, offers,
+ *  extends and renews - `{ kind: "chatting" }` or `{ kind: "spending", index, address, label }`.
+ *  Its key is made ready first; `fresh` marks Buy From's Fresh Address. */
+export async function setKachatMarketSource(source, { fresh = false } = {}) {
+  const rt = await kachatNames();
+  if (!rt) return;
+  if (source?.kind === "spending") await loadSpendingKey(source.index);
+  rt.actions.setMarketSource(source, { fresh });
 }
 
 /** Derives the spending key an action signs with when a spending address holds the name. */
@@ -148,6 +175,9 @@ async function bind() {
     boundAddress = address;
     walletState.keys.clear();
     if (kachatLaunched) await loadWalletAddresses();
+    // A claim keeps signing with the address it started from (iOS eb9b027 ownerSigner): the
+    // spending keys of claims in progress are ready before the driver resumes them.
+    if (kachatLaunched) await preloadClaimOwners();
     // Another account: its own registrations in flight (the driver keys them by wallet address).
     actions.resume();
   }

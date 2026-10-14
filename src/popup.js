@@ -10,6 +10,7 @@ import {
 } from "./ui.js";
 import { showSend } from "./send.js";
 import { showRequestPayment } from "./request-payment.js";
+import { loadOwnAddresses } from "./own-addresses.js";
 import { showManageAddress, showManageAddresses, openSpendingAddress } from "./manage.js";
 import { cachedOwnedNames, ownedNames, otherNamesCount } from "./names.js";
 import { showWelcome, showUnlock, enterApp, setHandlers, setLoggedOut } from "./onboarding.js";
@@ -587,6 +588,8 @@ async function refreshHome() {
       s.balances = await wallet.balances(s.addresses, []);
       // The bell: Kaspa that arrived in any of this account's addresses since the last look.
       bellReceipts(s);
+      // "Your own address" on every To field, KasSigner's send included (iOS 56f004f)
+      loadOwnAddresses();
       // A faucet visit's payment landed: Claim Testnet Kaspa locks for 24 hours.
       if (IS_TESTNET) noteFaucetBalance(s.addresses.main, s.balances.main);
       // The other tabs' toolbars show the chatting wallet's balance, as iOS does.

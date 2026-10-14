@@ -6,6 +6,7 @@
 
 import { addressBookButtonHtml, savedNameHtml, openAddressBookPicker } from "./address-book.js";
 import { groupedAmountText } from "./grouped-amount.js";
+import { ownAddressLabel } from "./own-addresses.js";
 import { esc, ICONS } from "./ui.js";
 import { KAS_UNIT } from "./net.js";
 
@@ -75,6 +76,7 @@ export function recipientCardHtml({ input = "", lockedAddress = null, status = {
           </span>
         </div>` : ""}
       ${shownAddress ? savedNameHtml(shownAddress) : ""}
+      ${shownAddress && ownAddressLabel(shownAddress) ? `<div class="sk-status accent">${esc(`Your own address: ${ownAddressLabel(shownAddress)}`)}</div>` : ""}
       ${line}
       ${extraHtml}
     </div>`;

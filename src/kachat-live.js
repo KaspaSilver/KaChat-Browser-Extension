@@ -1142,7 +1142,14 @@ function openTxSheet({ title, confirmTitle, doneTitle = "Transaction sent", warn
     const price = p && p.priceFee > 0n ? labeledRow("Price (to miners)", amount(p.priceFee)) : "";
     const list = rowsNow().map((r) => labeledRow(r.title, r.value)).join("") + price;
     const foot = state.planError ? `<span class="error-text">${esc(state.planError)}</span>` : footerNow() ? esc(footerNow()) : "";
-    const pill = p && myKey ? `<div class="sk-pills"><span class="sk-pill">${esc(balancePill(balanceChange(p, myKey)))}</span></div>` : "";
+    // paid by a spending address (an owner action on its name, or the marketplace's Buy From,
+    // iOS eb9b027): which one, and what it changes there; else the chatting address's balance after
+    let payer = null;
+    try { const op = operation(); payer = op ? runtimeActions()?.payerFor(op) : null; } catch { payer = null; }
+    const payerKey = payer?.kind === "spending" ? KachatNamesRegistry.keyOf(payer.address) : null;
+    const pill = !p ? ""
+      : payerKey ? `<div class="sk-pills"><span class="sk-pill">${esc(`From: ${payer.label || `Address #${payer.index}`}`)}</span><span class="sk-pill">${esc(`Balance change: ${signed(balanceChange(p, payerKey))}`)}</span></div>`
+        : myKey ? `<div class="sk-pills"><span class="sk-pill">${esc(balancePill(balanceChange(p, myKey)))}</span></div>` : "";
     return `
       ${list || foot ? `<div class="form-section">
         ${list ? `<div class="form-card">${list}</div>` : ""}
@@ -1361,8 +1368,9 @@ function openClaimSheet(target) {
     } else {
       rows = '<div class="form-row between"><span>Total</span><span class="spinner small-spin"></span></div>';
     }
+    const buyFrom = runtimeActions()?.marketSource;
     const foot = q && !q.affordable
-      ? '<span class="error-text">Not enough KAS on your chatting address for this name.</span>'
+      ? `<span class="error-text">${esc(buyFrom?.kind === "spending" ? `Not enough KAS on ${buyFrom.label} for this name.` : "Not enough KAS on your chatting address for this name.")}</span>`
       : "The price goes to the miners - KaChat takes nothing. The bond and the deposit come back when you release the name.";
     return `
       ${state.notOpen ? `
@@ -1385,7 +1393,7 @@ function openClaimSheet(target) {
         <div class="form-card">${rows}</div>
         <div class="form-footer">${unitText(foot)}</div>
       </div>
-      ${q ? `<div class="sk-pills"><span class="sk-pill">Available: ${esc(amount(q.spendable))}</span></div>` : ""}
+      ${q ? `<div class="sk-pills">${(() => { const src = runtimeActions()?.marketSource; return src?.kind === "spending" ? `<span class="sk-pill">${esc(`From: ${src.label}`)}</span>` : ""; })()}<span class="sk-pill">Available: ${esc(amount(q.spendable))}</span></div>` : ""}
       <div class="form-section">
         <div class="form-header">How claiming works</div>
         <div class="form-card">
@@ -2010,6 +2018,46 @@ export async function showLiveNameDetail({ info: initial, onBack, screen = "kach
   reload();
 }
 
+// --- Fund an address (iOS eb9b027 KachatAddressFundSheet, 2b45d6e) -------------------------
+
+/** Any address's balance in sompi, read from a node, or null when it can't be read. */
+export async function addressBalanceSompi(address) {
+  try { return (await wallet.balancesFor([address]))[address] ?? 0n; } catch { return null; }
+}
+
+/**
+ * Fund: the headline, the address's QR code, the address and a copy button - the zero-balance
+ * funding card's look. Closes by itself once the address holds `dismissAtSompi` (any KAS by
+ * default), checked every few seconds. `onClose()` runs however it closed.
+ */
+export function openAddressFundSheet({ address, title, dismissAtSompi = 1n, onClose = null }) {
+  if (!address) return null;
+  let timer = null;
+  const handle = openPanel({
+    title: "", trailing: "Done", stack: true,
+    body: `
+      <div class="kl-fund">
+        <div class="strong center-text">${esc(title)}</div>
+        <canvas class="kl-fund-qr" width="360" height="360"></canvas>
+        <button class="mono tiny kl-fund-address" data-fund-copy title="Copy address">${esc(address)}</button>
+        <button class="km-bordered" data-fund-copy>Copy Address</button>
+      </div>`,
+    onClose: () => { clearTimeout(timer); try { onClose?.(); } catch { /* fine */ } },
+  });
+  import("qrcode").then(({ default: QRCode }) => QRCode.toCanvas(handle.panel.querySelector(".kl-fund-qr"), address, { width: 360, margin: 1 })).catch(() => {});
+  for (const b of handle.panel.querySelectorAll("[data-fund-copy]")) {
+    b.onclick = async () => { try { await navigator.clipboard.writeText(address); toast("Address copied to clipboard."); } catch { /* blocked */ } };
+  }
+  const poll = async () => {
+    if (!handle.isOpen()) return;
+    const balance = await addressBalanceSompi(address);
+    if (balance != null && balance >= BigInt(dismissAtSompi)) { handle.close(); return; }
+    timer = setTimeout(poll, 4000);
+  };
+  timer = setTimeout(poll, 4000);
+  return handle;
+}
+
 // --- Saving the profile record (iOS KachatProfileSaveSheet) --------------------------------
 
 const PRIVACY_SEEN_KEY = "kachat_profile_privacy_seen";
@@ -2084,6 +2132,37 @@ export function openProfileSaveSheet({ title, confirmTitle, doneTitle, makeProfi
     host.querySelector("#kl-save-profile")?.addEventListener("click", save);
   };
 
+  // Not enough on the chatting address to pay the fee (iOS 2b45d6e): its QR code pops up, and it
+  // closes by itself once 1 KAS arrives; the fee is worked out again either way.
+  const NOT_ENOUGH = "You don't have enough funds. Please send at least 1 KAS to your chatting address.";
+  let funding = null;
+  const shortOfFunds = (error) => error?.code === "noFunds" || /insufficient|no spendable|not enough/i.test(String(error?.message ?? error ?? "")) || state.balance === 0n;
+  const showFunding = async () => {
+    if (funding || !handle?.isOpen()) return;
+    const address = (await kachatProfiles().catch(() => null))?.actions.myAddress;
+    if (!address) return;
+    funding = openAddressFundSheet({
+      address, title: NOT_ENOUGH, dismissAtSompi: 100_000_000n,
+      onClose: () => {
+        funding = null;
+        if (!handle?.isOpen()) return;
+        state.quoteError = null;
+        state.sendError = null;
+        state.fee = null;
+        paint();
+        quote();
+      },
+    });
+  };
+  const quote = async () => {
+    try {
+      state.fee = await (await kachatProfiles()).actions.profileFee(state.profile);
+    } catch (error) {
+      if (shortOfFunds(error)) { state.quoteError = NOT_ENOUGH; showFunding(); } else state.quoteError = errorText(error);
+    }
+    paint();
+  };
+
   async function save() {
     if (!state.profile || state.fee == null || state.sending) return;
     if (!(await confirmPassword())) return;
@@ -2096,23 +2175,24 @@ export function openProfileSaveSheet({ title, confirmTitle, doneTitle, makeProfi
       state.done = true;
       showTxDone({ txId: tx, title: doneTitle, onClose: () => { handle.close(); onSaved(); } });
     } catch (error) {
-      state.sendError = errorText(error);
+      if (shortOfFunds(error)) { state.sendError = NOT_ENOUGH; showFunding(); } else state.sendError = errorText(error);
     }
     state.sending = false;
     paint();
   }
 
-  handle = openPanel({ title, leading: "Cancel", full: true, stack: true, body: "<div data-save></div>" });
+  handle = openPanel({ title, leading: "Cancel", full: true, stack: true, body: "<div data-save></div>", onClose: () => funding?.close() });
   paint();
   (async () => {
     try {
       state.profile = await makeProfile();
       paint();
-      state.fee = await (await kachatProfiles()).actions.profileFee(state.profile);
     } catch (error) {
       state.quoteError = errorText(error);
+      paint();
+      return;
     }
-    paint();
+    await quote();
   })();
   chattingBalance().then((balance) => { state.balance = balance; paint(); });
   return handle;
@@ -2170,6 +2250,15 @@ export function liveDomainsTab({ address, repaint, forAddress = false }) {
           // the bell says so); expired names in grace stay, to be renewed. Your Domains and each
           // address's tab alike (iOS e26562e / aa36d2a / eea52b2).
           entry.names = await reg.heldNames(key);
+          // Your Domains also holds the names of the addresses this wallet bought with (iOS
+          // eb9b027): the marketplace's Buy From addresses, remembered per wallet
+          if (!forAddress) {
+            const seen = new Set(entry.names.map((n) => n.name));
+            for (const other of runtimeActions()?.ownMarketKeys ?? []) {
+              if (bytesEqual(other, key)) continue;
+              for (const n of await reg.heldNames(other).catch(() => [])) if (!seen.has(n.name)) { seen.add(n.name); entry.names.push(n); }
+            }
+          }
           entry.upgrading = false;
         } catch (error) { entry.upgrading = isRegistryUpgrading(error); }
         if (!forAddress) {
@@ -2177,6 +2266,9 @@ export function liveDomainsTab({ address, repaint, forAddress = false }) {
           // expired ones, and ones made to an earlier owner, come back on their own (ba07975).
           try {
             entry.offers = await reg.myOffers(key);
+            for (const other of runtimeActions()?.ownMarketKeys ?? []) {
+              if (!bytesEqual(other, key)) entry.offers.push(...await reg.myOffers(other).catch(() => []));
+            }
             if (entry.offers.length) {
               const actions = (await runtime()).actions;
               await actions.refreshVirtualDaa().catch(() => null);
