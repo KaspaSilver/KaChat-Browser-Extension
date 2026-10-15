@@ -18,7 +18,7 @@ import { KachatNamesRegistry } from "../shared/engine/kachat-names/registry.js";
 import { KachatNamesActions } from "../shared/engine/kachat-names/actions.js";
 import { unhex32 } from "../shared/engine/kachat-names/codec.js";
 import { KachatSocialImageResolver } from "../shared/engine/kachat-names/social-image-resolver.js";
-import { chattingSigner, namesNodeMethods, cachedAddresses, privateKeyHex } from "./wallet.js";
+import { chattingSigner, namesNodeMethods, cachedAddresses, privateKeyHex, knownUsedAddresses, addressUsed } from "./wallet.js";
 import { ext } from "./browser.js";
 import { readAccounts } from "./vault.js";
 
@@ -60,11 +60,21 @@ let boundAddress = null;
 // The wallet's other addresses for the actions (iOS 881ada6): a name on a spending address is
 // acted on with that address's key, one on a KasSigner address is shown read-only. Filled when the
 // signer is bound; spending keys are derived only for the action that needs one (prepareSigner).
-const walletState = { spending: [], kasSigner: [], keys: new Map() };
+const walletState = { spending: [], kasSigner: [], keys: new Map(), used: new Set() };
 const walletHooks = {
   spendingAddresses: () => walletState.spending,
   spendingPrivateKey: (index) => walletState.keys.get(index) ?? null,
   kasSignerAddresses: () => walletState.kasSigner,
+  // A wallet's names are on all its addresses (iOS d1026de, IOS-085): the .kachat lists look up
+  // every spending address that was ever used. "Used" is for good, so the remembered answer
+  // counts; an unknown one is probed once (and remembered when used).
+  spendingMaxIndex: () => walletState.spending.reduce((max, e) => Math.max(max, e.index), -1),
+  cachedSpendingAddressUsed: (address) => (walletState.used.has(address) ? true : null),
+  spendingAddressUsed: async (address) => {
+    const used = await addressUsed(address);
+    if (used === true) walletState.used.add(address);
+    return used;
+  },
 };
 
 async function loadWalletAddresses() {
@@ -73,6 +83,7 @@ async function loadWalletAddresses() {
     const cached = await cachedAddresses(view?.activeAccountId);
     walletState.spending = Object.entries(cached?.spending || {}).map(([index, address]) => ({ index: Number(index), address }));
   } catch { walletState.spending = []; }
+  try { walletState.used = new Set(await knownUsedAddresses()); } catch { walletState.used = new Set(); }
   try {
     const { coldWatchAddresses } = await import("./cold.js");
     walletState.kasSigner = await coldWatchAddresses();
@@ -92,6 +103,18 @@ async function preloadClaimOwners() {
       const own = actions.ownAddress(unhex32(String(p.owner)));
       if (own?.kind === "spending") await loadSpendingKey(own.index);
     } catch { /* not this wallet's: the driver leaves it */ }
+  }
+}
+
+/** Makes ready the keys of this wallet's spending addresses that made `offers` (OfferInfo[]):
+ *  withdrawing or returning one signs with the address it was made from, through the engine's
+ *  synchronous key hook (iOS d1026de - an offer on any address of the wallet is the wallet's). */
+export async function prepareOfferSigners(offers) {
+  for (const o of offers ?? []) {
+    try {
+      const own = actions?.ownAddress(o.buyer);
+      if (own?.kind === "spending") await loadSpendingKey(own.index);
+    } catch { /* not this wallet's */ }
   }
 }
 

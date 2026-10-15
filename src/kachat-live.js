@@ -15,7 +15,7 @@ import { looksLikeName, resolveEverywhere, primaryResolution, notFoundMessage, o
 import { sompiFromUserText, sanitizeAmountInput } from "./amounts.js";
 import * as vault from "./vault.js";
 import * as wallet from "./wallet.js";
-import { kachatNames, kachatProfiles, kachatRegistry, kachatLaunched, prepareSigner, kachatPubliclyOpen, kachatLaunchText } from "./kachat-names.js";
+import { kachatNames, kachatProfiles, kachatRegistry, kachatLaunched, prepareSigner, prepareOfferSigners, kachatPubliclyOpen, kachatLaunchText } from "./kachat-names.js";
 import { SYMBOLS, openPanel, kachatWordmark, showTileSheet } from "./kachat-ui.js";
 import { Operation, Stage, isOpen, needsDriving, KachatNamesActions, FeeTier, FeeChoice, TxStage } from "../shared/engine/kachat-names/actions.js";
 import { feeControlsHtml, slideButtonHtml, bindSlideButton } from "./send-pieces.js";
@@ -190,7 +190,14 @@ function party(s) {
 let myKey = null; // the bound signer's x-only key, set when the runtime is fetched
 let lastActions = null; // the actions of the last runtime fetched (offer states)
 const runtimeActions = () => lastActions;
-const isMine = (key) => Boolean(myKey && key && bytesEqual(myKey, key));
+/** A key of this wallet: the chatting address or any revealed spending address (iOS d1026de,
+ *  IOS-085). Set as Primary still asks for the chatting key itself (`isChattingKey`). */
+const isMine = (key) => {
+  if (!key) return false;
+  try { if (lastActions?.isOwnKey(key)) return true; } catch { /* not known yet */ }
+  return isChattingKey(key);
+};
+const isChattingKey = (key) => Boolean(myKey && key && bytesEqual(myKey, key));
 
 const EVENT_ICONS = {
   register: SYMBOLS.atPlus, transfer: SYMBOLS.arrows, list: SYMBOLS.tag, delist: SYMBOLS.tagSlash,
@@ -1763,7 +1770,8 @@ export async function showLiveNameDetail({ info: initial, onBack, screen = "kach
   // "kachat:name" when opened from the marketplace (it stays in the .kachat tab), else a Profile-tab screen
   const here = () => app.dataset.screen === screen && app.dataset.kachatName === state.info.name;
   /** Held by the chatting address: the identity, so Set as Primary applies. */
-  const isChatting = () => state.heldBy?.kind === "chatting" || (!state.heldBy && isMine(state.info.owner));
+  // Set as Primary applies only to the chatting address's names (iOS d1026de)
+  const isChatting = () => state.heldBy?.kind === "chatting" || (!state.heldBy && isChattingKey(state.info.owner));
   /** Held by an address this wallet can sign for: every owner action. */
   const canActAsOwner = () => isChatting() || state.heldBy?.kind === "spending";
   /** Held by any of this wallet's addresses - never offered Buy / Make an Offer. */
@@ -2007,6 +2015,7 @@ export async function showLiveNameDetail({ info: initial, onBack, screen = "kach
       await actions.refreshVirtualDaa().catch(() => {});
       // Expired offers don't stay on the name: the owner's app (and the buyer's) send them back;
       // your offers made to an earlier owner are pulled back (iOS ba07975).
+      await prepareOfferSigners(state.offers);
       await actions.returnExpiredOffers(canActAsOwner() ? state.offers : state.offers.filter((o) => isMine(o.buyer))).catch(() => {});
       await actions.withdrawDeclinedOffers(state.offers).catch(() => {});
     }
@@ -2251,6 +2260,7 @@ export function liveDomainsTab({ address, repaint, forAddress = false }) {
     entry.loading = true;
     (async () => {
       const key = KachatNamesRegistry.keyOf(String(address).toLowerCase());
+      let own = null;
       if (key) {
         try {
           await runtime().catch(() => null);
@@ -2258,29 +2268,26 @@ export function liveDomainsTab({ address, repaint, forAddress = false }) {
           // A name past grace is no longer theirs - it's Available to anyone in the marketplace (and
           // the bell says so); expired names in grace stay, to be renewed. Your Domains and each
           // address's tab alike (iOS e26562e / aa36d2a / eea52b2).
-          entry.names = await reg.heldNames(key);
-          // Your Domains also holds the names of the addresses this wallet bought with (iOS
-          // eb9b027): the marketplace's Buy From addresses, remembered per wallet
+          // Your Domains holds the names and offers on every address of this wallet - the
+          // chatting address and every used spending address, one claimed with Buy From too, on
+          // any browser restored from the seed (iOS d1026de, IOS-085); an address's own tab, its own
+          own = null;
           if (!forAddress) {
-            const seen = new Set(entry.names.map((n) => n.name));
-            for (const other of runtimeActions()?.ownMarketKeys ?? []) {
-              if (bytesEqual(other, key)) continue;
-              for (const n of await reg.heldNames(other).catch(() => [])) if (!seen.has(n.name)) { seen.add(n.name); entry.names.push(n); }
-            }
+            const actions = (await runtime().catch(() => null))?.actions;
+            if (actions) own = await actions.ownNamesAndOffers({ heldOnly: true });
           }
+          entry.names = own ? own.names : await reg.heldNames(key);
           entry.upgrading = false;
         } catch (error) { entry.upgrading = isRegistryUpgrading(error); }
         if (!forAddress) {
           // The offers this wallet made, under its names (iOS 0765ce0, from the former My Names tab);
           // expired ones, and ones made to an earlier owner, come back on their own (ba07975).
           try {
-            entry.offers = await reg.myOffers(key);
-            for (const other of runtimeActions()?.ownMarketKeys ?? []) {
-              if (!bytesEqual(other, key)) entry.offers.push(...await reg.myOffers(other).catch(() => []));
-            }
+            entry.offers = own ? own.offers : await reg.myOffers(key);
             if (entry.offers.length) {
               const actions = (await runtime()).actions;
               await actions.refreshVirtualDaa().catch(() => null);
+              await prepareOfferSigners(entry.offers);
               await actions.returnExpiredOffers(entry.offers).catch(() => null);
               await actions.withdrawDeclinedOffers(entry.offers).catch(() => null);
             }

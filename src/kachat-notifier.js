@@ -11,7 +11,6 @@
 import { kachatNames } from "./kachat-names.js";
 import { KAS_UNIT } from "./net.js";
 import { Status } from "../shared/engine/kachat-names/registry-state.js";
-import { bytesEqual } from "../shared/engine/kachat-names/codec.js";
 import { dayString } from "../shared/engine/kachat-names/actions.js";
 import { amount } from "./kachat-live.js";
 import { record } from "./bell.js";
@@ -68,9 +67,11 @@ export async function checkKachatNamesNews() {
     const graceMs = registry.graceMs;
     let owned;
     let myOpenOffers;
+    // every address of this wallet, not only the chatting one: a name claimed with Buy From gets
+    // its notices too - renewal open, expired, no longer yours - here in the bell, since the
+    // indexer's pushes reach only the chatting address (iOS d1026de, IOS-085 / XP-024)
     try {
-      owned = await registry.namesOf(me, { includeInactive: true });
-      myOpenOffers = await registry.myOffers(me);
+      ({ names: owned, offers: myOpenOffers } = await actions.ownNamesAndOffers({ heldOnly: false }));
     } catch {
       return;
     }
@@ -80,7 +81,7 @@ export async function checkKachatNamesNews() {
       if (n.status(graceMs, now) !== Status.active) continue;
       let open = [];
       try { open = await registry.offersFor(n.name); } catch { open = []; }
-      for (const o of open) if (bytesEqual(o.seller, me)) offersOnMine.push(o);
+      for (const o of open) if (actions.isOwnKey(o.seller)) offersOnMine.push(o);
     }
     // a different wallet signed in meanwhile: this answer isn't its
     if (actions.myAddress !== walletAddress) return;

@@ -722,6 +722,11 @@ export async function knownUsedState(address) {
   return sessionUnused.has(address) ? false : null;
 }
 
+/** Every address remembered as used (for good). */
+export async function knownUsedAddresses() {
+  return (await getLocal(USED_KEY)) || [];
+}
+
 export async function addressUsed(address) {
   const used = new Set((await getLocal(USED_KEY)) || []);
   if (used.has(address)) return true;

@@ -142,7 +142,7 @@ export function amountEntryHtml({ display = "", unit = KAS_UNIT, conversion = nu
   return `
     <div class="sk-amount">
       <label class="sk-amount-row" style="--size:${size}px">
-        <input id="amount" class="sk-amount-input" inputmode="decimal" placeholder="0" value="${esc(groupedAmountText(display))}" autocomplete="off" aria-label="Amount" ${readOnly ? "readonly" : ""} style="width:${Math.max(1, (groupedAmountText(display) || "0").length) + 0.1}ch" />
+        <input id="amount" class="sk-amount-input" inputmode="decimal" placeholder="0" value="${esc(display)}" autocomplete="off" aria-label="Amount" ${readOnly ? "readonly" : ""} style="width:${Math.max(1, (groupedAmountText(display) || "0").length) + 0.1}ch" />
         <span class="sk-amount-unit">${esc(unit)}</span>
       </label>
       <div class="sk-amount-actions">

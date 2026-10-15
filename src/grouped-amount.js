@@ -1,4 +1,5 @@
-// Amount fields show thousands commas as you type ("12,345.5") while the value the app reads stays
+// Amount fields show thousands commas as you type ("12,345.5", or "12 345,5" where "," is the
+// decimal point - iOS b383ff0) while the value the app reads stays
 // plain (iOS 40c5258: KaspaAmountEntry and Binding.groupedAmount). Each field's `value` is
 // wrapped: reading it gives the plain number, writing it shows the grouped one, so the code
 // that sanitizes, checks and sends an amount is unchanged.
@@ -43,15 +44,17 @@ function attach(input) {
     const plain = ungroupedAmountText(edited, lastShown);
     const next = groupedAmountText(plain);
     if (next === edited) { lastShown = next; return; }
-    // Keep the caret after the same digit: count what isn't a grouping comma before it.
-    const decimalComma = plain.includes(".") && !edited.includes(".");
+    // Keep the caret after the same digit (separators come and go around it), and after the
+    // decimal point when that is what was just typed (KaChat-Desktop ui/grouped-amount.js).
     let keep = 0;
-    for (let i = 0; i < caret; i += 1) if (edited[i] !== "," || decimalComma) keep += 1;
+    for (let i = 0; i < caret; i += 1) if (edited[i] >= "0" && edited[i] <= "9") keep += 1;
+    const typedDecimal = caret > 0 && (edited[caret - 1] === "." || edited[caret - 1] === ",") && plain.includes(".");
     show(next);
     let at = next.length;
     if (caret < edited.length) {
       at = 0;
-      for (let seen = 0; at < next.length && seen < keep; at += 1) if (next[at] !== ",") seen += 1;
+      for (let seen = 0; at < next.length && seen < keep; at += 1) if (next[at] >= "0" && next[at] <= "9") seen += 1;
+      if (typedDecimal && (next[at] === "." || next[at] === ",")) at += 1;
     }
     try { input.setSelectionRange(at, at); } catch { /* not focusable */ }
   }, true);
