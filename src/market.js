@@ -204,11 +204,14 @@ export function showKachatMarket({ onBack = null } = {}) {
     pill.onclick = () => showBuyFrom(paintSourcePill);
     const info = await sourceInfo();
     if (!info.address || !pill.isConnected) return;
-    const text = (sompi) => `${sompi != null ? wallet.formatKas(sompi, 8) : "--"} ${KAS_UNIT} · ${info.title} · ${compact(info.address)}`;
-    pill.textContent = text(sourceBalance.address === info.address ? sourceBalance.sompi : null);
+    // the KAS logo right beside the balance, the address line under them (iOS dbb8b9b)
+    const text = (sompi) => `
+      <span class="km-source-balance"><img src="icons/kaspa-logo.png" alt="" /><span>${sompi != null ? esc(wallet.formatKas(sompi, 8)) : "--"} ${esc(KAS_UNIT)}</span></span>
+      <span class="km-source-address muted">${esc(info.title)} · ${esc(compact(info.address))}</span>`;
+    pill.innerHTML = text(sourceBalance.address === info.address ? sourceBalance.sompi : null);
     const sompi = (await wallet.balancesFor([info.address]).catch(() => ({})))[info.address] ?? null;
     sourceBalance = { address: info.address, sompi };
-    if (pill.isConnected) pill.textContent = text(sompi);
+    if (pill.isConnected) pill.innerHTML = text(sompi);
   };
 
   // Mainnet before its public opening (iOS c6ebf74): a live countdown instead of search and the

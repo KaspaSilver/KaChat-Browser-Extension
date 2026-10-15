@@ -537,7 +537,7 @@ function openBell() {
 
 /** Every address of the account, labelled the way the bell describes it (iOS describe(address)). */
 async function bellReceipts(s) {
-  const list = [{ address: s.addresses.main, label: "Chatting address" }];
+  const list = [{ address: s.addresses.main, label: "Chatting address", chatting: true }];
   for (const address of Object.values(s.addresses.spending || {})) list.push({ address, label: "Spending address" });
   try {
     for (const c of await coldWatchAddresses()) list.push({ address: c.address, label: `Cold storage (${c.account})` });

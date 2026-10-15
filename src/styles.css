@@ -1118,4 +1118,8 @@ button.kl-tile:not(:disabled), .kl-tile-split { cursor: pointer; }
 .kl-fund { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 8px 0 12px; }
 .kl-fund-qr { width: 220px; height: 220px; border-radius: 12px; background: #fff; padding: 8px; }
 .kl-fund-address { background: transparent; color: var(--muted); overflow-wrap: anywhere; text-align: center; font-weight: 400; }
-.km-source-pill { margin-top: 6px; padding: 7px 14px; border-radius: 999px; background: var(--panel); color: var(--text); font-size: 12px; font-weight: 600; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .buyfrom-actions { display: flex; gap: 8px; }
+.km-source-pill { margin-top: 6px; padding: 6px 16px; border-radius: 999px; background: var(--panel); color: var(--text); font-size: 12px; font-weight: 600; max-width: 100%; display: inline-flex; flex-direction: column; align-items: center; gap: 1px; }
+.km-source-balance { display: inline-flex; align-items: center; gap: 6px; font-variant-numeric: tabular-nums; }
+.km-source-balance img { width: 15px; height: 15px; }
+.km-source-address { font-size: 10.5px; font-weight: 500; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .buyfrom-actions { display: flex; gap: 8px; }
+.kl-fund-button { display: flex; width: fit-content; align-items: center; gap: 6px; margin-top: 8px; padding: 0; font-size: 14px; }

@@ -11,7 +11,9 @@
 // them: each address's balance is compared with the last one seen, and a rise is attributed to the
 // transactions that paid it since then - leaving out any whose inputs come from this wallet's own
 // addresses (change, consolidations, sends between your own addresses). When the rise can't be
-// attributed it still shows, as "Balance increased by". The first look at an address only records
+// attributed it still shows, as "Balance increased by". The chatting address counts plain
+// transfers only (iOS 56b75c8): a transaction with a payload - a chat payment, a handshake - is
+// the chat's own news, and its balance gets no "increased by" row (it moves with every chat). The first look at an address only records
 // where it stands, so importing a wallet never fills the bell with old payments.
 
 import { esc } from "./ui.js";
@@ -177,9 +179,9 @@ const shortAddress = (a) => (a.length > 20 ? `${a.slice(0, 14)}...${a.slice(-6)}
 
 /**
  * Checks the wallet's own addresses for Kaspa that arrived since the last look and records a row
- * per paying transaction. `addresses`: `[{ address, label }]` - every address of this account
- * (the chatting address, all spending addresses, KasSigner addresses); all of them count as
- * "yours" for the self-send check. Never throws.
+ * per paying transaction. `addresses`: `[{ address, label, chatting? }]` - every address of
+ * this account (the chatting address, all spending addresses, KasSigner addresses); all of them
+ * count as "yours" for the self-send check. `chatting`: plain transfers only. Never throws.
  */
 export async function checkReceipts(addresses, { force = false } = {}) {
   if (!scope || receiptsRunning || !addresses?.length) return;
@@ -191,9 +193,11 @@ export async function checkReceipts(addresses, { force = false } = {}) {
     const list = [...new Set(addresses.map((a) => String(a.address).toLowerCase()).filter(Boolean))];
     // the first label an address gets wins: chatting, then spending, then cold storage
     const labels = new Map();
+    const chattingSet = new Set();
     for (const a of addresses) {
       const key = String(a.address).toLowerCase();
       if (!labels.has(key)) labels.set(key, a.label);
+      if (a.chatting) chattingSet.add(key);
     }
     const own = new Set(list);
     let now;
@@ -213,6 +217,7 @@ export async function checkReceipts(addresses, { force = false } = {}) {
       if (balance <= prev) continue;
       const delta = balance - prev;
       const label = labels.get(address) || "Your address";
+      const chatting = chattingSet.has(address);
       const txs = await wallet.recentTransactions(address, 10);
       if (scope !== myScope) return;
       let attributed = false;
@@ -228,6 +233,8 @@ export async function checkReceipts(addresses, { force = false } = {}) {
           if (handled.has(txId)) { attributed = true; continue; }
           if (Number(tx.block_time || 0) < since) continue;
           attributed = true;
+          // the chatting address: a chat payment or a handshake (a payload) is the chat's news
+          if (chatting && String(tx.payload || "") !== "") { handled.add(txId); continue; }
           handled.add(txId);
           const inputs = (tx.inputs || []).map((i) => String(i.previous_outpoint_address || "").toLowerCase()).filter(Boolean);
           const selfSend = inputs.length > 0 && inputs.some((a) => own.has(a));
@@ -242,7 +249,7 @@ export async function checkReceipts(addresses, { force = false } = {}) {
           });
         }
       }
-      if (!attributed) {
+      if (!attributed && !chatting) {
         // the rise isn't in the recent transactions (deep history, an indexer behind): say so anyway
         record({
           id: `wallet-bal-${address.slice(-12)}-${stamp}`, source: "wallet",

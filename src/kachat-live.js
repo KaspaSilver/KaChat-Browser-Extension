@@ -2105,7 +2105,7 @@ export function openProfileSaveSheet({ title, confirmTitle, doneTitle, makeProfi
       cost = '<div class="form-row between"><span>Network fee</span><span class="spinner small-spin"></span></div>';
     }
     const foot = state.quoteError
-      ? `<span class="error-text">${esc(state.quoteError)}</span>`
+      ? `<span class="error-text">${esc(state.quoteError)}</span>${state.shortOfFunds ? `<button class="bar-text accent strong with-icon kl-fund-button" data-fund>${ICONS.qr}<span>Fund</span></button>` : ""}`
       : privacySeen
         ? "Saved on chain from your chatting address to itself."
         : "Profiles are public and on chain: anyone can read them, and earlier versions stay readable after you change them.";
@@ -2121,7 +2121,7 @@ export function openProfileSaveSheet({ title, confirmTitle, doneTitle, makeProfi
             ${state.sending ? '<span class="spinner small-spin"></span>' : esc(confirmTitle)}
           </button>
         </div>
-        ${state.sendError ? `<div class="form-footer error-text">${esc(state.sendError)}</div>` : ""}
+        ${state.sendError ? `<div class="form-footer"><span class="error-text">${esc(state.sendError)}</span>${state.shortOfFunds ? `<button class="bar-text accent strong with-icon kl-fund-button" data-fund>${ICONS.qr}<span>Fund</span></button>` : ""}</div>` : ""}
       </div>`;
   };
 
@@ -2130,19 +2130,27 @@ export function openProfileSaveSheet({ title, confirmTitle, doneTitle, makeProfi
     const host = handle.panel.querySelector("[data-save]");
     host.innerHTML = unitText(bodyHtml());
     host.querySelector("#kl-save-profile")?.addEventListener("click", save);
+    for (const b of host.querySelectorAll("[data-fund]")) b.onclick = () => showFunding();
   };
 
-  // Not enough on the chatting address to pay the fee (iOS 2b45d6e): its QR code pops up, and it
-  // closes by itself once 1 KAS arrives; the fee is worked out again either way.
+  // Not enough on the chatting address to pay the fee (iOS 2b45d6e, IOS-084): its QR code pops up
+  // by itself once per sheet - after that the Fund button under the message opens it - and it
+  // closes by itself as soon as any KAS arrives; the fee is worked out again either way.
   const NOT_ENOUGH = "You don't have enough funds. Please send at least 1 KAS to your chatting address.";
   let funding = null;
-  const shortOfFunds = (error) => error?.code === "noFunds" || /insufficient|no spendable|not enough/i.test(String(error?.message ?? error ?? "")) || state.balance === 0n;
+  let fundingShownOnce = false;
+  // read from the error alone: an unreachable node is not "no funds"
+  const shortOfFunds = (error) => error?.code === "noFunds" || /insufficient|no spendable|not enough/i.test(String(error?.message ?? error ?? ""));
+  const noteShortOfFunds = () => {
+    state.shortOfFunds = true;
+    if (!fundingShownOnce) { fundingShownOnce = true; showFunding(); }
+  };
   const showFunding = async () => {
     if (funding || !handle?.isOpen()) return;
     const address = (await kachatProfiles().catch(() => null))?.actions.myAddress;
     if (!address) return;
     funding = openAddressFundSheet({
-      address, title: NOT_ENOUGH, dismissAtSompi: 100_000_000n,
+      address, title: NOT_ENOUGH,
       onClose: () => {
         funding = null;
         if (!handle?.isOpen()) return;
@@ -2157,8 +2165,9 @@ export function openProfileSaveSheet({ title, confirmTitle, doneTitle, makeProfi
   const quote = async () => {
     try {
       state.fee = await (await kachatProfiles()).actions.profileFee(state.profile);
+      state.shortOfFunds = false;
     } catch (error) {
-      if (shortOfFunds(error)) { state.quoteError = NOT_ENOUGH; showFunding(); } else state.quoteError = errorText(error);
+      if (shortOfFunds(error)) { state.quoteError = NOT_ENOUGH; noteShortOfFunds(); } else state.quoteError = errorText(error);
     }
     paint();
   };
@@ -2175,7 +2184,7 @@ export function openProfileSaveSheet({ title, confirmTitle, doneTitle, makeProfi
       state.done = true;
       showTxDone({ txId: tx, title: doneTitle, onClose: () => { handle.close(); onSaved(); } });
     } catch (error) {
-      if (shortOfFunds(error)) { state.sendError = NOT_ENOUGH; showFunding(); } else state.sendError = errorText(error);
+      if (shortOfFunds(error)) { state.sendError = NOT_ENOUGH; noteShortOfFunds(); } else state.sendError = errorText(error);
     }
     state.sending = false;
     paint();
