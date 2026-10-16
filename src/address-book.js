@@ -585,15 +585,17 @@ async function importText(text) {
   if (!file || file.type !== EXPORT_KIND || !Array.isArray(file.entries)) throw new Error("That file isn't a KaChat Address Book export.");
   // only the running network's addresses (iOS 218dc42, IOS-063): a mainnet book never takes testnet ones
   // and says so (EXT-017): how many were the other network's, or that every one was
-  const named = file.entries.filter((e) => e && String(e.name ?? "").trim() && isValidKaspaAddress(normalize(e.address)));
-  if (!named.length) throw new Error("That Address Book export has no addresses.");
-  const valid = named.filter((e) => !invalidReason(normalize(e.address)));
+  // A nameless entry is a real entry (note, photo) and merges like any other: a newer one with an
+  // empty name clears an older entry's name (NEXTCLOUD_SYNC.md, iOS 160f0e6, XP-031)
+  const addressed = file.entries.filter((e) => e && isValidKaspaAddress(normalize(e.address)));
+  if (!addressed.length) throw new Error("That Address Book export has no addresses.");
+  const valid = addressed.filter((e) => !invalidReason(normalize(e.address)));
   if (!valid.length) {
     throw new Error(NETWORK === "testnet"
       ? "Every address in that file is a Mainnet address. KaChat is on Testnet."
       : "Every address in that file is a Testnet address. KaChat is on Mainnet.");
   }
-  const skipped = named.length - valid.length;
+  const skipped = addressed.length - valid.length;
   let added = 0;
   let updated = 0;
   for (const incoming of valid) {
@@ -603,12 +605,12 @@ async function importText(text) {
     const existing = entries.find((e) => e.address === address);
     if (existing) {
       if (!(updatedAt > Number(existing.updatedAt || 0))) continue;
-      Object.assign(existing, { name: String(incoming.name).trim(), note: String(incoming.note ?? "").trim(), updatedAt });
+      Object.assign(existing, { name: String(incoming.name ?? "").trim(), note: String(incoming.note ?? "").trim(), updatedAt });
       if (photo) photos[address] = photo; else delete photos[address];
       updated += 1;
     } else {
       const id = typeof incoming.id === "string" && !entries.some((e) => e.id === incoming.id) ? incoming.id : crypto.randomUUID();
-      entries.push({ id, address, name: String(incoming.name).trim(), note: String(incoming.note ?? "").trim(), createdAt: fromIso(incoming.createdAt), updatedAt });
+      entries.push({ id, address, name: String(incoming.name ?? "").trim(), note: String(incoming.note ?? "").trim(), createdAt: fromIso(incoming.createdAt), updatedAt });
       if (photo) photos[address] = photo;
       added += 1;
     }

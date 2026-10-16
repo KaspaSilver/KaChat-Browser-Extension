@@ -15,7 +15,7 @@
 
 import { app, esc, render, $, ICONS, navHeader } from "./ui.js";
 import { SYMBOLS, kachatWordmark, openPanel } from "./kachat-ui.js";
-import { kachatLive, kachatLaunched, kachatPublicLaunchMs, kachatPubliclyOpen, kachatLaunchText, kachatNowMs, kachatRefreshClock, kachatRegistry, kachatNames, setKachatMarketSource } from "./kachat-names.js";
+import { kachatLive, kachatLaunched, kachatNames, setKachatMarketSource } from "./kachat-names.js";
 import * as wallet from "./wallet.js";
 import * as vault from "./vault.js";
 import { onRender, showSheet, toast } from "./ui.js";
@@ -127,7 +127,6 @@ export function showKachatMarket({ onBack = null } = {}) {
           <div id="km-status">${heroStatus()}</div>
           <div id="km-source-slot"></div>
         </div>
-        ${!kachatPubliclyOpen() ? countdownHtml() : `
         <div class="km-search">
           <label class="km-card km-search-field">
             <span class="muted">${ICONS.search}</span>
@@ -140,7 +139,7 @@ export function showKachatMarket({ onBack = null } = {}) {
           ${[["market", "Marketplace"], ["available", "Available"], ["expired", "Expired"], ["activity", "Activity"]].map(([id, title]) =>
             `<button role="tab" data-page="${id}" aria-selected="${id === page}">${title}</button>`).join("")}
         </div>
-        <div class="km-page" id="km-page">${pageHtml()}</div>`}
+        <div class="km-page" id="km-page">${pageHtml()}</div>
       </section>`, "kachat:market");
     dock.remember(back);
     const scroller = app.querySelector(".km");
@@ -149,7 +148,6 @@ export function showKachatMarket({ onBack = null } = {}) {
     $("#how").onclick = () => showHowItWorks(isLive());
     bindClaims();
     paintSourcePill();
-    if (!kachatPubliclyOpen()) { tickCountdown(); return; }
     const search = $("#search");
     search.oninput = () => {
       state.search = search.value;
@@ -215,36 +213,8 @@ export function showKachatMarket({ onBack = null } = {}) {
     if (pill.isConnected) pill.innerHTML = text(sompi);
   };
 
-  // Mainnet before its public opening (iOS c6ebf74): a live countdown instead of search and the
-  // pages; at the moment it opens by itself.
-  const countdownHtml = () => `
-    <div class="km-card km-countdown">
-      <div class="muted small">Names open in</div>
-      <div class="km-countdown-units">
-        ${[["d", "Days"], ["h", "Hours"], ["m", "Minutes"], ["s", "Seconds"]].map(([k, label]) => `
-          <div class="km-countdown-unit"><span class="km-countdown-value" data-cd="${k}">--</span><span class="muted tiny">${label}</span></div>`).join("")}
-      </div>
-      <div class="strong small">${esc(kachatLaunchText())}</div>
-      <p class="muted small center-text">Then anyone can search and claim a .kachat name here.</p>
-    </div>`;
-  const tickCountdown = () => {
-    if (app.dataset.screen !== "kachat:market") return;
-    // the network's clock, read from a node at most once a minute (iOS 6975e3e, XP-020)
-    kachatRegistry();
-    kachatRefreshClock().catch(() => null);
-    const left = Math.max(0, Math.floor((kachatPublicLaunchMs - kachatNowMs()) / 1000));
-    if (left <= 0 && kachatPubliclyOpen()) { paint(); return; }
-    const set = (k, v) => { const el = app.querySelector(`[data-cd="${k}"]`); if (el) el.textContent = String(v); };
-    set("d", Math.floor(left / 86_400));
-    set("h", Math.floor((left % 86_400) / 3_600));
-    set("m", Math.floor((left % 3_600) / 60));
-    set("s", left % 60);
-    setTimeout(tickCountdown, 1000);
-  };
-
   const paintParts = () => {
     if (app.dataset.screen !== "kachat:market") return;
-    if (!kachatPubliclyOpen()) { $("#km-status").innerHTML = heroStatus(); return; }
     const scroller = app.querySelector(".km");
     const scroll = scroller?.scrollTop || 0;
     $("#km-status").innerHTML = heroStatus();

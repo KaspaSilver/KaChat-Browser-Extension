@@ -19,7 +19,6 @@ import { createRpc, probeRpc, disconnectRpc, getNodeRegistrySnapshot, forgetEndp
 import { getEndpoint } from "../shared/engine/endpoints.js";
 import { getBalance, sendKaspa, sendMaxKaspa, sweepAllToSelf, estimateSendFeeDetail, estimateOnchainFeeDetail, submitConfirmingAcceptance } from "../shared/engine/transactions.js";
 import { checkedUtxoAnswer } from "../shared/engine/amounts.js";
-import { noteChainTimeMs } from "../shared/engine/kachat-names/launch.js";
 import { calculateMass, calculateFee, fetchQuotedFeeRateSompiPerGram } from "../shared/ui/kspt.js";
 import { looksLikeName, resolveEverywhere, primaryResolution, notFoundMessage, ownsAnyName, ownedNamesOfMany } from "./names.js";
 import { fetchKasPrice, peekKasPrice } from "../shared/engine/prices.js";
@@ -1281,8 +1280,6 @@ export function namesNodeMethods() {
         let networkId = String(dag?.network ?? dag?.networkId ?? "");
         if (!networkId) networkId = String((await node.getServerInfo())?.networkId ?? "");
         const point = { networkId, virtualDaaScore: BigInt(dag?.virtualDaaScore ?? 0), pastMedianTime: BigInt(dag?.pastMedianTime ?? 0) };
-        // the network's own clock, for the .kachat countdown (XP-020)
-        if (point.pastMedianTime > 0n) noteChainTimeMs(point.pastMedianTime);
         return point;
       });
     },

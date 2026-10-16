@@ -13,7 +13,6 @@
 
 import { getEndpoint } from "../shared/engine/endpoints.js";
 import { KachatNamesService } from "../shared/engine/kachat-names/service.js";
-import { publicLaunchMs, isPubliclyOpen, launchString, setChainTimeSource, networkNowMs, refreshChainTime } from "../shared/engine/kachat-names/launch.js";
 import { KachatNamesRegistry } from "../shared/engine/kachat-names/registry.js";
 import { KachatNamesActions } from "../shared/engine/kachat-names/actions.js";
 import { unhex32 } from "../shared/engine/kachat-names/codec.js";
@@ -36,18 +35,6 @@ export const kachatLaunched = KachatNamesService.isLaunched;
 /** The registry is live here - the same as `kachatLaunched`. */
 export const kachatLive = kachatLaunched;
 
-/** Mainnet opens to everyone on Friday 2026-10-16 12:00 UTC (8:00 AM Eastern; the owner's launch
- *  plan, iOS c6ebf74): until then no app searches or claims names there; names already held stay
- *  manageable. Testnet has no such moment. The moment lives in the shared engine (launch.js). */
-export const kachatPublicLaunchMs = publicLaunchMs();
-/** On the network's clock, not the device's (iOS 6975e3e, XP-020): a device set to a later date
- *  doesn't open search and registration early. Unknown until a node has answered (shut). */
-export function kachatPubliclyOpen() { return isPubliclyOpen(); }
-/** The network's time now (the device's until a node has answered), and a fresh read of it. */
-export const kachatNowMs = () => networkNowMs() ?? Date.now();
-export const kachatRefreshClock = () => refreshChainTime();
-/** "Friday, October 16 at 8:00 AM" in your own time zone (iOS launchString). */
-export function kachatLaunchText(ms = kachatPublicLaunchMs) { return launchString(ms); }
 
 // The engine object the service and actions hold: the node methods, plus the signer once bound.
 // Made on first use (names.js -> here -> wallet.js -> names.js is an import cycle).
@@ -144,8 +131,6 @@ function base() {
   if (!service) {
     engine = { ...namesNodeMethods(), kaspa: null, rpc: null, address: null, privateKey: null, privateKeyHex: null };
     service = new KachatNamesService(engine);
-    // the countdown reads the network's time from a node (launch.js)
-    setChainTimeSource(() => engine.currentDagPoint());
     registry = new KachatNamesRegistry({
       manifest: () => service.loadManifest(),
       isEnabled: () => KachatNamesService.isLaunched,
