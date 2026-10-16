@@ -111,7 +111,16 @@ Like any web request, these services see the user's IP address.
   > Requirements: Node.js 20+ and npm. From the repository root: `npm install`, then
   > `npm run package`. The Firefox build is `dist-firefox/`; the zip is
   > `packages/kachat-wallet-<version>-firefox.zip`. `shared/kaspa/kaspa.js` and
-  > `shared/kaspa/kaspa_bg.wasm` are the rusty-kaspa WASM SDK (ISC licence), committed prebuilt.
+  > `shared/kaspa/kaspa_bg.wasm` are a build of the rusty-kaspa WASM SDK (ISC licence) version
+  > 2.0.1 from a rusty-kaspa master snapshot with covenant support, committed prebuilt (web
+  > target, `wasm/build-web --sdk`, rustc commit 59807616e1fa2540724bfbac14d7976d7e4a3860,
+  > wasm-bindgen 0.2.100). SHA-256 of `kaspa_bg.wasm`:
+  > c1768cd48dfeafb2b07077fa21700075370696e76ab9c180376c32cef8cac80d (`shared/kaspa/SHA256SUMS`;
+  > check with `cd shared/kaspa && shasum -a 256 -c SHA256SUMS`). `kaspa.js` is the generated
+  > glue with three small local patches that answer the SDK's three built-in JavaScript snippets
+  > without `new Function` (the extension's CSP has no 'unsafe-eval'). `shared/kaspa/VERSION`
+  > records what is known and what is not: the exact rusty-kaspa commit and the wasm-pack version
+  > were not recorded, and the binary has not yet been rebuilt from a pinned commit.
 
 ## Screenshots
 

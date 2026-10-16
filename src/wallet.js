@@ -270,14 +270,14 @@ export async function disconnect() {
  * the total. One node round trip per address, all in parallel.
  */
 export async function balances(addresses, hiddenIndexes = []) {
-  const node = await connection();
   const k = await kaspa();
   const hidden = new Set(hiddenIndexes);
   const spendingEntries = Object.entries(addresses.spending || {}).filter(([index]) => !hidden.has(Number(index)));
-  const [main, ...spending] = await Promise.all([
+  // through withRpc: a node answering an above-supply coin is dropped and another asked (EXT-024)
+  const [main, ...spending] = await withRpc((node) => Promise.all([
     getBalance(k, node, addresses.main),
     ...spendingEntries.map(([, address]) => getBalance(k, node, address)),
-  ]);
+  ]));
   const bySpendingIndex = {};
   spendingEntries.forEach(([index], i) => { bySpendingIndex[index] = spending[i].totalSompi; });
   const total = spending.reduce((sum, b) => sum + b.totalSompi, main.totalSompi);
@@ -1226,7 +1226,7 @@ export async function ksptEngine() {
     kaspa: k,
     connect: () => connection(),
     withRpc: (fn) => withRpc(fn),
-    balanceForAddress: async (address) => getBalance(k, await connection(), address),
+    balanceForAddress: async (address) => withRpc((node) => getBalance(k, node, address)),
   };
 }
 

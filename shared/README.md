@@ -8,6 +8,6 @@ message.
 |---|---|
 | `engine/` | The desktop app's wallet engine: key derivation, transactions and signing, wRPC nodes, REST endpoints, KNS, prices, network (mainnet / testnet-10). Only the files the extension imports. |
 | `ui/` | `kspt.js` (KasSigner KSPT: unsigned transactions, animated QR frames, signed-transaction scan-back and broadcast) and the BIP39 English word list. |
-| `kaspa/` | The rusty-kaspa WASM SDK (`kaspa.js`, `kaspa_bg.wasm`, ISC licence), prebuilt. KaChat-Desktop's `npm run setup:wasm` rebuilds it from rusty-kaspa source. |
+| `kaspa/` | The rusty-kaspa WASM SDK (`kaspa.js`, `kaspa_bg.wasm`, ISC licence), prebuilt, with its provenance (`VERSION`: SDK 2.0.1, toolchain, local glue patches, and what isn't known) and checksums (`SHA256SUMS`; `shasum -a 256 -c SHA256SUMS`), as KaChat-Desktop records them. |
 
 Copied from KaChat-Desktop 8cef292.

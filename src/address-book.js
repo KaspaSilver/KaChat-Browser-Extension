@@ -537,7 +537,9 @@ function showImportExport() {
   });
 }
 
-const toIso = (ms) => new Date(Number(ms) || Date.now()).toISOString();
+// whole seconds, as iOS's and Android's encoders write them: iOS 17's .iso8601 decoder refuses
+// fractional seconds, and one such date fails the whole file there (XP-014)
+const toIso = (ms) => new Date(Number(ms) || Date.now()).toISOString().replace(/\.\d{3}Z$/, "Z");
 const fromIso = (value) => {
   const t = typeof value === "number" ? value : Date.parse(value);
   return Number.isFinite(t) ? t : Date.now();
@@ -548,7 +550,7 @@ function exportFile() {
   const file = {
     type: EXPORT_KIND,
     version: 1,
-    exportedAt: new Date().toISOString(),
+    exportedAt: toIso(Date.now()),
     walletAddress: walletKey,
     entries: entries.map((e) => {
       const photo = photos[e.address]?.split(",")[1];
@@ -574,15 +576,24 @@ function exportFile() {
   }
 }
 
-/** Imports an export's text: returns { added, updated }; throws when it isn't one. */
+/** Imports an export's text: returns { added, updated, skipped } (`skipped`: the other network's
+ *  addresses, left out); throws when it isn't one. */
 async function importText(text) {
   if (!walletKey) throw new Error("Open a wallet first.");
   let file = null;
   try { file = JSON.parse(text); } catch { file = null; }
   if (!file || file.type !== EXPORT_KIND || !Array.isArray(file.entries)) throw new Error("That file isn't a KaChat Address Book export.");
   // only the running network's addresses (iOS 218dc42, IOS-063): a mainnet book never takes testnet ones
-  const valid = file.entries.filter((e) => e && String(e.name ?? "").trim() && !invalidReason(normalize(e.address)));
-  if (!valid.length) throw new Error("That Address Book export has no addresses.");
+  // and says so (EXT-017): how many were the other network's, or that every one was
+  const named = file.entries.filter((e) => e && String(e.name ?? "").trim() && isValidKaspaAddress(normalize(e.address)));
+  if (!named.length) throw new Error("That Address Book export has no addresses.");
+  const valid = named.filter((e) => !invalidReason(normalize(e.address)));
+  if (!valid.length) {
+    throw new Error(NETWORK === "testnet"
+      ? "Every address in that file is a Mainnet address. KaChat is on Testnet."
+      : "Every address in that file is a Testnet address. KaChat is on Mainnet.");
+  }
+  const skipped = named.length - valid.length;
   let added = 0;
   let updated = 0;
   for (const incoming of valid) {
@@ -606,7 +617,7 @@ async function importText(text) {
   entries.sort(byName);
   await persist();
   if (added + updated > 0) changed();
-  return { added, updated };
+  return { added, updated, skipped };
 }
 
 // In the toolbar popup a file picker takes focus away and the popup closes under it, so the import
@@ -632,8 +643,9 @@ function importFile() {
     const file = input.files?.[0];
     if (!file) return;
     try {
-      const { added, updated } = await importText(await file.text());
-      toast(added + updated ? `Imported: ${added} added, ${updated} updated.` : "Already up to date. Every address in the file is saved.");
+      const { added, updated, skipped } = await importText(await file.text());
+      const note = skipped ? ` Skipped ${skipped} from the other network.` : "";
+      toast((added + updated ? `Imported: ${added} added, ${updated} updated.` : skipped ? "Already up to date." : "Already up to date. Every address in the file is saved.") + note);
     } catch (error) {
       toast(error?.message || "Couldn't read that file.");
     }

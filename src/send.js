@@ -16,6 +16,8 @@ import { scanQr } from "./camera.js";
 import { loadOwnAddresses } from "./own-addresses.js";
 import { sompiFromUserText, sanitizeAmountInput, sompiToKasNumber } from "./amounts.js";
 import { KAS_UNIT } from "./net.js";
+import { parsePaymentRequestLink, paymentRequestAmountText } from "../shared/engine/payment-request.js";
+import { entryFor, entryName } from "./address-book.js";
 import {
   FEE_TIERS, recipientCardHtml, bindAddressBookButton, amountState, amountEntryHtml, fitAmountInput, pillHtml, feeControlsHtml,
   coinSummary, slideButtonHtml, bindSlideButton, trimmedKas, CHEVRON_DOWN,
@@ -57,6 +59,7 @@ export function showSend(opts) {
     error: "",
     currency: "usd",
     sourceLabel: null,
+    request: null,          // a kachat.app/pay link pasted, scanned or typed (EXT-023)
   };
   const view = { screen: "form" };
   // The amount field (KAS or your currency) - iOS KaspaFiatAmountState.
@@ -159,6 +162,43 @@ export function showSend(opts) {
     setAmountKas(wallet.sompiToKasText(available - fee));
     state.maxMode = true;
     state.error = "";
+  };
+
+  // --- payment requests (EXT-023, iOS PaymentRequest.found(in:) -> apply, Desktop
+  // applyPaymentRequestToSendKaspa): a kachat.app/pay link fills in the address and the exact
+  // amount, with the request above the amount. A chat-payment request is sent as a plain transfer
+  // here (the extension has no chats): its memo is shown to you only.
+  /** `text` as a payment request link: applied, and true; else false. */
+  const applyRequestLink = (text) => {
+    const request = parsePaymentRequestLink(text);
+    if (!request || opts.compound) return false;
+    state.request = request;
+    state.recipientInput = request.address;
+    // the exact amount is what's sent: the field goes back to KAS for it
+    amountField.fiat = false;
+    setAmountKas(paymentRequestAmountText(request));
+    state.maxMode = false;
+    state.error = "";
+    resolveRecipient();
+    scheduleEstimate();
+    return true;
+  };
+  const requestHtml = () => {
+    const r = state.request;
+    if (!r) return "";
+    const saved = r.creator ? entryFor(r.creator) : null;
+    const maker = r.creator
+      ? `<div class="sk-status good">${ICONS.checkFill}<span>Requested by ${esc(saved ? entryName(saved) : `${r.creator.slice(0, 14)}...${r.creator.slice(-6)}`)}</span></div>
+         ${r.creator.toLowerCase() !== r.address.toLowerCase() ? '<div class="muted tiny">Signed by their chatting address. The payment goes to the address above.</div>' : ""}`
+      : `<div class="sk-status bad">${ICONS.warning || ICONS.xCircle}<span>Not signed: who made this request can't be confirmed.</span></div>`;
+    return `
+      <div class="sk-card pay-request">
+        <div class="sk-label">Requested</div>
+        <div class="strong">${esc(`${paymentRequestAmountText(r)} ${KAS_UNIT}`)}</div>
+        ${r.memo ? `<div class="small">${esc(r.memo)}</div>` : ""}
+        ${r.toChattingAddress ? '<div class="muted tiny">Sent as a plain payment: the memo is for you only.</div>' : ""}
+        ${maker}
+      </div>`;
   };
 
   let resolveSeq = 0;
@@ -283,6 +323,7 @@ export function showSend(opts) {
             ? otherDomainsHtml({ resolutions: state.resolutions, selectedTld: state.recipient?.tld || splitTypedName(state.recipientInput).tld, open: state.othersOpen })
             : "",
         })}
+        ${requestHtml()}
         ${amountEntryHtml({
           display: amountField.display,
           unit: amountField.fiat ? state.currency.toUpperCase() : KAS_UNIT,
@@ -314,7 +355,10 @@ export function showSend(opts) {
     const recipient = $("#recipient");
     if (recipient) {
       recipient.oninput = () => {
+        if (applyRequestLink(recipient.value)) return;
         state.recipientInput = recipient.value;
+        // another recipient typed over a request's address: the request no longer applies
+        if (state.request && recipient.value.trim().toLowerCase() !== state.request.address) { state.request = null; paint(); }
         clearTimeout(recipientTimer);
         recipientTimer = setTimeout(resolveRecipient, 350);
       };
@@ -334,7 +378,10 @@ export function showSend(opts) {
     const paste = $("#paste");
     if (paste) paste.onclick = async () => {
       try {
-        state.recipientInput = (await navigator.clipboard.readText()).trim();
+        const text = (await navigator.clipboard.readText()).trim();
+        if (applyRequestLink(text)) return;
+        state.request = null;
+        state.recipientInput = text;
         resolveRecipient();
       } catch {
         toast("Clipboard unavailable - paste with ⌘V instead.");
@@ -344,7 +391,9 @@ export function showSend(opts) {
     if (scan) scan.onclick = async () => {
       const code = await scanQr({ title: "Scan QR Code", hint: "Point camera at a Kaspa address QR code" });
       if (!code) return;
-      // A payment URI's address, without its ?amount=... query.
+      // a KaChat payment request first; else a payment URI's address, without its ?amount=... query
+      if (applyRequestLink(String(code))) return;
+      state.request = null;
       state.recipientInput = String(code).trim().split("?")[0];
       resolveRecipient();
     };
@@ -514,7 +563,7 @@ export function showSend(opts) {
   load();
   // the recipient card marks one of your own addresses (iOS 56f004f)
   loadOwnAddresses().then((changed) => { if (changed) paint(); });
-  if (state.recipientInput && !opts.compound) resolveRecipient();
+  if (state.recipientInput && !opts.compound && !applyRequestLink(state.recipientInput)) resolveRecipient();
 }
 
 function friendlySendError(error) {

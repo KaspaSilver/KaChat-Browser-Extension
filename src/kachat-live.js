@@ -199,6 +199,27 @@ const isMine = (key) => {
 };
 const isChattingKey = (key) => Boolean(myKey && key && bytesEqual(myKey, key));
 
+/** The registry events that hand a name to a (new) owner. */
+const OWNERSHIP_OPS = new Set(["register", "import", "transfer", "sale", "offer_accepted", "offer_accept"]);
+
+/** MAINNET.md C6 (iOS 0312a3f KachatLiveNameDetail.currentOffers, KaChat-Desktop currentOffers): an
+ *  offer is bound to a seller key, so one made to this owner before the name last left them - and
+ *  came back - could be accepted again. Only offers made since the current owner got the name are
+ *  shown for them; others to other sellers (declined, on their way back to the buyer) stay. */
+function currentOffers(offers, owner, history) {
+  let since = null;
+  for (const e of history ?? []) {
+    if (!OWNERSHIP_OPS.has(e?.op) || e.at == null) continue;
+    const at = BigInt(e.at);
+    if (since == null || at > since) since = at;
+  }
+  if (since == null) return offers;
+  return (offers ?? []).filter((o) => {
+    if (!owner || !bytesEqual(o.seller, owner) || o.createdAt == null) return true;
+    return BigInt(o.createdAt) >= since;
+  });
+}
+
 const EVENT_ICONS = {
   register: SYMBOLS.atPlus, transfer: SYMBOLS.arrows, list: SYMBOLS.tag, delist: SYMBOLS.tagSlash,
   sale: SYMBOLS.cart, offer_accepted: SYMBOLS.cart, renew: SYMBOLS.renew, extend: SYMBOLS.calendarPlus, release: SYMBOLS.release, reclaim: SYMBOLS.reclaim,
@@ -1121,6 +1142,16 @@ const labeledRow = (title, value, bold = false) =>
  *   operation(): the Operation for the current inputs, or null
  *   inputsHtml / bindInputs(panel, changed): the sheet's own fields; `changed()` rebuilds
  */
+/** When the wallet's KAS is in more small coins than a name transaction can take, the slide first
+ *  sends a self-send combining them (the engine's `combinesCoins`): said above the slide, as on
+ *  iOS and Desktop (EXT-022). */
+function combineNoteHtml() {
+  return `<div class="kl-busy-notice kl-combine-note" role="note">
+    <span class="accent">${SYMBOLS.arrows}</span>
+    <span class="kl-busy-copy"><span class="muted tiny">Your KAS is in many small coins. When you slide, KaChat first combines them into one (a separate transaction with its own small fee), then sends this.</span></span>
+  </div>`;
+}
+
 /**
  * Every action's sheet, in the Send screens' style (iOS KachatTxSheet, e426432): its inputs, what it
  * costs (built against live UTXOs at the fee shown, nothing sent), the network fee with Normal /
@@ -1132,6 +1163,8 @@ const labeledRow = (title, value, bold = false) =>
 function openTxSheet({ title, confirmTitle, doneTitle = "Transaction sent", warning = null, footer = null, rows = [], operation, inputsHtml = "", bindInputs = null, onDone = () => {}, onFinished = null, back = null }) {
   const state = {
     plan: null, planError: null, building: false, sending: false, txId: null, sendError: null, token: 0, balance: null,
+    // the slide first combines many small coins (EXT-022)
+    combinesCoins: false,
     // the fee rate the plan was built at: the send uses exactly this (iOS 7e2b6cd, IOS-061)
     planFeerate: null,
     // the fee: a speed, or a typed total (sompi); `touched` once you chose - a busy network no
@@ -1173,6 +1206,7 @@ function openTxSheet({ title, confirmTitle, doneTitle = "Transaction sent", warn
       })}
       ${pill}
       ${warning ? `<div class="kl-warning-card" role="note">${SYMBOLS.warning}<span>${esc(warning)}</span></div>` : ""}
+      ${state.combinesCoins && p && !state.txId ? combineNoteHtml() : ""}
       ${state.txId
         ? `<div class="form-section"><div class="form-card"><div class="form-row kl-sent">
             <span class="kl-green kl-sent-title">${SYMBOLS.sent}<span>Sent</span></span>
@@ -1224,6 +1258,7 @@ function openTxSheet({ title, confirmTitle, doneTitle = "Transaction sent", warn
     state.plan = null;
     state.planFeerate = null;
     state.planError = null;
+    state.combinesCoins = false;
     const op = operation();
     state.building = Boolean(op);
     paint();
@@ -1238,6 +1273,7 @@ function openTxSheet({ title, confirmTitle, doneTitle = "Transaction sent", warn
         if (token !== state.token) return;
         state.plan = built.plan;
         state.planFeerate = built.feerate;
+        state.combinesCoins = Boolean(built.combinesCoins);
       } catch (error) {
         if (token !== state.token) return;
         state.planError = errorText(error);
@@ -1411,6 +1447,7 @@ function openClaimSheet(target) {
             : `The name is yours for the time you paid, at most ${periods(maxYears())} ahead. From ${duration(params()?.renewWindowMs ?? 0n)} before it expires you can renew it.`)}
         </div>
       </div>
+      ${q?.combinesCoins && q.affordable ? combineNoteHtml() : ""}
       ${slideButtonHtml({ title: `Claim ${target.name}.kachat`, busy: state.starting, enabled: Boolean(state.quote?.affordable) && state.quoteTier === state.feeTier })}
       ${state.startError ? `<p class="error-text small center-text">${esc(state.startError)}</p>` : ""}`;
   };
@@ -1514,7 +1551,28 @@ function openBuySheet(info) {
 /** Make an Offer (iOS KachatLiveOfferSheet, v3): made to the name's current owner, up to 7 days. */
 function openOfferSheet(name, info) {
   const state = { amount: null, days: 3, virtualDaa: null };
-  const refundAfter = () => (state.virtualDaa != null ? state.virtualDaa + BigInt(state.days) * 86_400n * DAA_PER_SECOND : null);
+  const wantedAfter = () => state.virtualDaa + BigInt(state.days) * 86_400n * DAA_PER_SECOND;
+  /** `days` from now, but never past the name's expiry (MAINNET.md C1, iOS 0312a3f, EXT-020):
+   *  with yearly names that rarely matters, near the end of a period it does. */
+  const refundAfter = () => {
+    if (state.virtualDaa == null) return null;
+    const msLeft = BigInt(info.expiresAt) - BigInt(Date.now()) - 600_000n; // 10 minutes of margin
+    if (msLeft <= 0n) return null;
+    const atExpiry = state.virtualDaa + (msLeft * DAA_PER_SECOND) / 1000n;
+    const wanted = wantedAfter();
+    return wanted < atExpiry ? wanted : atExpiry;
+  };
+  const cappedByExpiry = () => {
+    const after = refundAfter();
+    return after != null && after < wantedAfter();
+  };
+  /** The "Refundable after" card says so when the name's expiry caps the refund time. */
+  const paintCapped = (panel) => {
+    const el = panel.querySelector("[data-offer-capped]");
+    if (!el) return;
+    el.hidden = !cappedByExpiry();
+    el.textContent = cappedByExpiry() ? `This name expires sooner, so your offer is refundable from ${day(BigInt(info.expiresAt) - 600_000n)}.` : "";
+  };
   const belowListing = () => Boolean(info.isListed && state.amount != null && info.price < state.amount);
   openTxSheet({
     title: "Make an Offer", confirmTitle: "Send Offer", doneTitle: "Offer sent",
@@ -1535,12 +1593,13 @@ function openOfferSheet(name, info) {
       <div class="form-section">
         <div class="form-header">Refundable after</div>
         <div class="form-card"><div class="form-row">${segmented("days", [[1, "1 Day"], [3, "3 Days"], [7, "7 Days"]], 3)}</div></div>
+        <div class="form-footer" data-offer-capped hidden></div>
       </div>`,
     bindInputs(panel, changed) {
       const input = panel.querySelector("#kl-offer-amount");
       input.oninput = () => { state.amount = positive(parseSompi(input.value)); changed(); };
-      bindSegmented(panel, "days", (value) => { state.days = Number(value); changed(); });
-      runtime().then((rt) => rt.engine.currentVirtualDaaScore()).then((daa) => { state.virtualDaa = daa; changed(); }).catch(() => {});
+      bindSegmented(panel, "days", (value) => { state.days = Number(value); paintCapped(panel); changed(); });
+      runtime().then((rt) => rt.engine.currentVirtualDaaScore()).then((daa) => { state.virtualDaa = daa; paintCapped(panel); changed(); }).catch(() => {});
     },
   });
 }
@@ -1678,7 +1737,7 @@ function openTransferSheet(info) {
     if (!t) return;
     if (t.startsWith("kaspatest:") || t.startsWith("kaspa:")) {
       const key = KachatNamesRegistry.keyOf(t);
-      if (!key) { state.error = "Not a testnet Schnorr address."; return; }
+      if (!key) { state.error = "Not a Schnorr address on this network."; return; }
       try { KachatNamesActions.validateKey(key, ""); } catch { state.error = "That address's key is not valid."; return; }
       state.resolved = { address: t, key };
       return;
@@ -2008,8 +2067,9 @@ export async function showLiveNameDetail({ info: initial, onBack, screen = "kach
     if (!ownedByWallet() && owner) {
       try { state.ownerLabel = (await reg.identity(owner))?.label ?? null; } catch { /* no label */ }
     }
-    state.offers = await reg.offersFor(state.info.name).catch(() => []);
     state.history = await reg.history(state.info.name).catch(() => []);
+    // only offers made since the owner got the name (MAINNET.md C6, iOS 0312a3f, EXT-020)
+    state.offers = currentOffers(await reg.offersFor(state.info.name).catch(() => []), state.info.owner, state.history);
     if (state.offers.length) {
       const actions = (await runtime()).actions;
       await actions.refreshVirtualDaa().catch(() => {});
