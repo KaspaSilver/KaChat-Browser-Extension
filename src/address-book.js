@@ -38,7 +38,14 @@ let photos = {};         // address -> data: URL (JPEG)
 let loading = null;
 const listeners = new Set();
 
-const byName = (a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }) || a.address.localeCompare(b.address);
+/** The name an entry shows: the one you gave it, else the short address (iOS 2831fab:
+ *  `customName ?? displayName(for:)`). iOS falls back to the person's .kachat name; this book
+ *  stays local - it never asks a server about a saved address (EXT-011) - so it shows the address. */
+export function entryName(entry) {
+  if (!entry) return "";
+  return String(entry.name || "").trim() || shortAddress(entry.address);
+}
+const byName = (a, b) => entryName(a).localeCompare(entryName(b), undefined, { sensitivity: "base" }) || a.address.localeCompare(b.address);
 
 /** Loads the book of the wallet whose chatting address is `main` (call on every account change). */
 export function useWallet(main) {
@@ -54,7 +61,7 @@ export function useWallet(main) {
       getLocal(ENTRIES_PREFIX + key), getLocal(DELETED_PREFIX + key), getLocal(PHOTOS_PREFIX + key),
     ]).catch(() => [null, null, null]);
     if (walletKey !== key) return;
-    entries = (Array.isArray(stored) ? stored : []).filter((e) => e && e.address && e.name).sort(byName);
+    entries = (Array.isArray(stored) ? stored : []).filter((e) => e && e.address).sort(byName);
     deleted = tombstones && typeof tombstones === "object" ? tombstones : {};
     photos = storedPhotos && typeof storedPhotos === "object" ? storedPhotos : {};
     changed();
@@ -76,7 +83,7 @@ export function entryFor(address) {
 function search(query) {
   const q = String(query ?? "").trim().toLowerCase();
   if (!q) return entries;
-  return entries.filter((e) => e.name.toLowerCase().includes(q) || e.address.includes(q) || (e.note || "").toLowerCase().includes(q));
+  return entries.filter((e) => String(e.name || "").toLowerCase().includes(q) || e.address.includes(q) || (e.note || "").toLowerCase().includes(q));
 }
 
 async function persist() {
@@ -96,12 +103,12 @@ function invalidReason(address) {
 }
 
 /** Adds `address`, or updates its entry when it is already saved. `photo`: undefined (unchanged),
- *  a data: URL (set) or null (removed). */
+ *  a data: URL (set) or null (removed). An empty name is allowed (iOS 2831fab): the entry keeps
+ *  its note and photo, and goes by its address again. */
 async function save({ address, name, note = "", photo }) {
   if (!walletKey) throw new Error("Open a wallet first.");
   const a = normalize(address);
   const n = String(name ?? "").trim();
-  if (!n) throw new Error("Enter a name.");
   const bad = invalidReason(a);
   if (bad) throw new Error(bad);
   const now = Date.now();
@@ -182,7 +189,7 @@ function rowsHtml(list) {
     <button class="ab-row" data-ab="${esc(e.address)}">
       ${avatarHtml(e.address)}
       <span class="tx-meta">
-        <span class="strong small ellipsis">${esc(e.name)}</span>
+        <span class="strong small ellipsis">${esc(entryName(e))}</span>
         <span class="mono tiny muted ellipsis">${esc(shortAddress(e.address))}</span>
       </span>
       <span class="km-chevron">${ICONS.chevron}</span>
@@ -258,11 +265,11 @@ function showDetail(address) {
   }
   const action = (id, icon, label, cls = "") => `<button class="ab-action ${cls}" id="${id}">${icon}<span>${esc(label)}</span></button>`;
   render(`
-    ${navHeader({ title: entry.name })}
+    ${navHeader({ title: entryName(entry) })}
     <section class="ab-screen ab-detail">
       <div class="ab-head">
         ${avatarHtml(entry.address, 84)}
-        <div class="ab-name">${esc(entry.name)}</div>
+        <div class="ab-name">${esc(entryName(entry))}</div>
         ${entry.note ? `<p class="muted small center-text ab-note">${esc(entry.note)}</p>` : ""}
       </div>
       <div class="section-header">Address</div>
@@ -283,14 +290,14 @@ function showDetail(address) {
   };
   $("#ab-share").onclick = async () => {
     if (navigator.share) {
-      try { await navigator.share({ title: entry.name, text: entry.address }); return; } catch { /* closed, or not allowed here */ }
+      try { await navigator.share({ title: entryName(entry), text: entry.address }); return; } catch { /* closed, or not allowed here */ }
     }
     try { await navigator.clipboard.writeText(entry.address); toast("Address copied - paste it wherever you want to share it."); } catch { /* nothing to do */ }
   };
   $("#ab-send").onclick = () => openSend?.(entry.address, () => showDetail(entry.address));
   $("#ab-edit").onclick = () => openEditor({ existing: entry, onSaved: (e) => showDetail(e.address), onRemoved: showAddressBook });
   $("#ab-delete").onclick = () => showSheet({
-    title: `Delete ${entry.name} from your Address Book?`,
+    title: `Delete ${entryName(entry)} from your Address Book?`,
     rows: [{ label: "Delete", icon: TRASH, danger: true, onClick: async () => { await remove(entry.address); showAddressBook(); } }],
   });
 }
@@ -482,7 +489,7 @@ export function openAddressBookPicker(onPick) {
     const list = search(query);
     host.innerHTML = entries.length
       ? (list.length ? rowsHtml(list) : '<p class="muted small center-text">No matches.</p>')
-      : '<div class="ab-empty"><div class="strong">No saved addresses</div><p class="muted small">Add addresses in the Address Book tab.</p></div>';
+      : '<div class="ab-empty"><div class="strong">No saved addresses</div><p class="muted small">Add addresses in the Address Book on Profile.</p></div>';
     for (const row of host.querySelectorAll("[data-ab]")) {
       row.onclick = () => {
         const entry = entryFor(row.dataset.ab);
@@ -505,7 +512,7 @@ export function addressBookButtonHtml() {
 /** The saved name of `address` under the recipient card (iOS: book.closed.fill + the name). */
 export function savedNameHtml(address) {
   const entry = entryFor(address);
-  return entry ? `<div class="sk-status accent ab-saved">${BOOK_FILL}<span>${esc(entry.name)}</span></div>` : "";
+  return entry ? `<div class="sk-status accent ab-saved">${BOOK_FILL}<span>${esc(entryName(entry))}</span></div>` : "";
 }
 
 // --- Import / export (iOS 87b2a0b; files only) -------------------------------------------------
