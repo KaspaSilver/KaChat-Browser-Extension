@@ -92,10 +92,28 @@ export async function isUnlocked() {
   return Boolean(await getSession(SESSION_KEY));
 }
 
-async function sessionKeyBytes() {
-  const stored = await getSession(SESSION_KEY);
-  if (!stored) throw new Error("The wallet is locked.");
-  return fromBase64(stored);
+// The unlock key is kept with the salt of the vault it opens: `{ key, salt }`. Changing the password
+// writes the vault (new salt) and then the session key - two steps another open wallet window can
+// fall between. A write in that moment would seal the vault with the old key under the new salt,
+// which neither password opens. So the key is used only on the vault it was made for; between the
+// two steps a read or write is refused, never applied. (A plain string is a key kept by an earlier
+// build: no salt to check.)
+function storedKey(stored) {
+  return typeof stored === "string" ? { key: stored, salt: null } : stored;
+}
+function sessionRecord(keyBytes, kdf) {
+  return { key: toBase64(keyBytes), salt: kdf.salt };
+}
+
+/** The unlock key for `vault`. Throws when the wallet is locked, or when the vault was re-sealed
+ *  under a new password since this key was made (a password change in another window). */
+async function sessionKeyBytes(vault) {
+  const stored = storedKey(await getSession(SESSION_KEY));
+  if (!stored?.key) throw new Error("The wallet is locked.");
+  if (stored.salt && vault?.kdf?.salt && stored.salt !== vault.kdf.salt) {
+    throw new Error("The wallet password was just changed in another window. Try again.");
+  }
+  return fromBase64(stored.key);
 }
 
 /**
@@ -113,7 +131,7 @@ export async function createVault(password, account) {
   const payload = { accounts: [stored], activeAccountId: stored.id };
   await setLocal(VAULT_KEY, await seal(payload, keyBytes, kdf));
   await publishAccountIds(payload);
-  await setSession(SESSION_KEY, toBase64(keyBytes));
+  await setSession(SESSION_KEY, sessionRecord(keyBytes, kdf));
   return publicView(payload);
 }
 
@@ -129,7 +147,7 @@ export async function unlock(password) {
     // AES-GCM authentication failure: the key (so the password) is wrong.
     throw new Error("Wrong password.");
   }
-  await setSession(SESSION_KEY, toBase64(keyBytes));
+  await setSession(SESSION_KEY, sessionRecord(keyBytes, vault.kdf));
   await publishAccountIds(payload);
   return publicView(await migratePassphrases(payload));
 }
@@ -143,7 +161,7 @@ export async function lock() {
 async function readPayload() {
   const vault = await getLocal(VAULT_KEY);
   if (!vault) throw new Error("No wallet has been set up yet.");
-  return migratePassphrases(await open(vault, await sessionKeyBytes()));
+  return migratePassphrases(await open(vault, await sessionKeyBytes(vault)));
 }
 
 // BIP39 derives the seed from the NFKD form of the passphrase, as iOS does; the Kaspa WASM uses the
@@ -164,7 +182,7 @@ async function migratePassphrases(payload) {
 
 async function writePayload(payload) {
   const vault = await getLocal(VAULT_KEY);
-  await setLocal(VAULT_KEY, await seal(payload, await sessionKeyBytes(), vault.kdf));
+  await setLocal(VAULT_KEY, await seal(payload, await sessionKeyBytes(vault), vault.kdf));
   await publishAccountIds(payload);
 }
 
@@ -298,7 +316,7 @@ export async function changePassword(currentPassword, nextPassword) {
   const kdf = newKdf();
   const keyBytes = await deriveKeyBytes(nextPassword, fromBase64(kdf.salt), kdf.iterations);
   await setLocal(VAULT_KEY, await seal(payload, keyBytes, kdf));
-  await setSession(SESSION_KEY, toBase64(keyBytes));
+  await setSession(SESSION_KEY, sessionRecord(keyBytes, kdf));
 }
 
 /**
