@@ -105,16 +105,6 @@ export async function prepareOfferSigners(offers) {
   }
 }
 
-/** Buy From (iOS eb9b027): the address the marketplace pays and buys with - claims, buys, offers,
- *  extends and renews - `{ kind: "chatting" }` or `{ kind: "spending", index, address, label }`.
- *  Its key is made ready first. */
-export async function setKachatMarketSource(source) {
-  const rt = await kachatNames();
-  if (!rt) return;
-  if (source?.kind === "spending") await loadSpendingKey(source.index);
-  rt.actions.setMarketSource(source);
-}
-
 /** Derives the spending key an action signs with when a spending address holds the name. */
 export async function prepareSigner(op) {
   const payer = actions?.payerFor(op);

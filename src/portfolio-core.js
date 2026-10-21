@@ -19,6 +19,7 @@ import {
 } from "../shared/engine/prices.js";
 import { fetchNetworkStats, peekNetworkStats } from "../shared/engine/network-stats.js";
 import { getEndpoint } from "../shared/engine/endpoints.js";
+import { transactionBelongsInHistory } from "../shared/engine/sync.js";
 
 export { yearToDateDays, CHART_PAIRS, utcDayKey };
 
@@ -1158,7 +1159,9 @@ async function fetchHistoryResumable(address, onProgress) {
     }
     if (page === null) return { transactions: all, complete: false };
     if (!page.length) break;
-    all.push(...page);
+    // a block reward the chain never accepted paid nothing: not a ledger row (iOS d194a38; the
+    // page's full count still decides whether there is another page)
+    all.push(...page.filter(transactionBelongsInHistory));
     onProgress(`Fetching transactions… (${all.length})`);
     if (page.length < 50) break;
     offset += 50;

@@ -119,8 +119,11 @@ Like any web request, these services see the user's IP address.
   > check with `cd shared/kaspa && shasum -a 256 -c SHA256SUMS`). `kaspa.js` is the generated
   > glue with three small local patches that answer the SDK's three built-in JavaScript snippets
   > without `new Function` (the extension's CSP has no 'unsafe-eval'). `shared/kaspa/VERSION`
-  > records what is known and what is not: the exact rusty-kaspa commit and the wasm-pack version
-  > were not recorded, and the binary has not yet been rebuilt from a pinned commit.
+  > records its provenance: the source is pinned by rebuild to kaspanet/rusty-kaspa master
+  > 7de0d4ac4013b2081f3c3c924109a8f2e7824432 (rustc 1.95.0, wasm-pack 0.15.0 / binaryen 117), and
+  > KaChat-Desktop's `tools/build-kaspa-wasm.sh` (Docker) rebuilds it: the rebuilt `kaspa.js` glue
+  > is byte-identical to the original; the rebuilt `.wasm` differs by 92 bytes of code layout
+  > (function order), which `shared/kaspa/VERSION` explains.
 
 ## Screenshots
 

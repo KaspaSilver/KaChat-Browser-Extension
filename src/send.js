@@ -147,7 +147,7 @@ export function showSend(opts) {
     state.estimating = true;
     paint();
     try {
-      state.base = await wallet.maxFee(inputCount());
+      state.base = await wallet.maxFee(inputCount(), { sourceIndex: opts.source?.kind === "spending" ? opts.source.index : null });
     } catch {
       state.base = state.base || { policyKas: 0.002, sdkBaseKas: 0.00002 };
     }

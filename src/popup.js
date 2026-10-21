@@ -174,11 +174,11 @@ function graceBannerHtml(s) {
 function bindGraceBanner(s) {
   const banner = $("#grace-banner");
   if (!banner) return;
-  // one name opens it; several open Your Domains (its .kachat tab lists them)
+  // one name opens it; several open Your Domains' .kachat list
   banner.onclick = () => {
     const grace = s.graceNames || [];
     if (grace.length === 1) showLiveNameDetail({ info: grace[0].info, onBack: showHome });
-    else if (s.addresses?.main) showDomains({ address: s.addresses.main, onBack: showHome });
+    else if (s.addresses?.main) showDomains({ address: s.addresses.main, onBack: showHome, service: "kachat" });
   };
   $("#grace-dismiss").onclick = (event) => {
     event.stopPropagation();
@@ -347,7 +347,7 @@ function paintHome() {
     onChangeIdentity: s.account.imported ? () => { homeState = null; showHome(); } : null,
   });
   $("#address-book").onclick = () => addressBook.showAddressBook({ onBack: showHome });
-  $("#domains").onclick = () => { if (main) showDomains({ address: main, onBack: showHome }); };
+  $("#domains").onclick = () => { if (main) showDomains({ address: main, onBack: showHome, atCards: true }); };
   $("#edit-kachat-profile").onclick = () => showKachatProfileEditor({ onSaved: () => refreshHome() });
   // Claim Testnet Kaspa (testnet only): the faucet opens in a tab; a wallet open in its own tab
   // watches the chatting balance for a minute, the popup checks it next time it opens.
@@ -552,7 +552,10 @@ async function refreshHome() {
   const s = homeState;
   try {
     // Addresses first: derived from the phrase (a moment of CPU on first unlock), then cached.
-    if (!s.addresses || s.addresses.accountId !== s.account.id || !s.addresses.spending?.[s.spending.maxIndex]) {
+    // both chains' last slot (a quantum-safe one at QUANTUM_INDEX_BASE + qMaxIndex, iOS bba1b1e)
+    const lastQuantum = s.spending.qMaxIndex >= 0 ? wallet.QUANTUM_INDEX_BASE + s.spending.qMaxIndex : null;
+    if (!s.addresses || s.addresses.accountId !== s.account.id || !s.addresses.spending?.[s.spending.maxIndex]
+      || (lastQuantum != null && !s.addresses.spending?.[lastQuantum])) {
       s.addresses = await wallet.deriveAddresses();
       bell.useAccount(s.addresses.main);
       addressBook.useWallet(s.addresses.main);

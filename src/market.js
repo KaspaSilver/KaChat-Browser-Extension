@@ -15,38 +15,12 @@
 
 import { app, esc, render, $, ICONS, navHeader } from "./ui.js";
 import { SYMBOLS, kachatWordmark, openPanel } from "./kachat-ui.js";
-import { kachatLive, kachatLaunched, kachatNames, setKachatMarketSource } from "./kachat-names.js";
-import * as wallet from "./wallet.js";
-import * as vault from "./vault.js";
-import { onRender, showSheet, toast } from "./ui.js";
+import { kachatLive, kachatLaunched, kachatNames } from "./kachat-names.js";
 
-// --- Buy From (iOS eb9b027 KachatMarketSourcePill / KachatMarketSourceSheet) -----------------
-// The address the marketplace pays and buys with - claims, buys, offers, extends and renews - and
-// to which a name claimed or bought belongs: the chatting address by default, a fresh spending
-// address, or any one chosen. Leaving the .kachat tab switches back to the chatting address.
+// Names are always bought on the chatting address (iOS 6e938ff, the owner's call): there is no
+// Buy From any more - claims, purchases, offers, extend and renew pay from the chatting address.
 
-let sourceBalance = { address: null, sompi: null };
-
-async function chattingAddress() {
-  try { return (await wallet.cachedAddresses((await vault.readAccounts()).activeAccountId))?.main || null; } catch { return null; }
-}
-
-/** `{ title, address }` for the marketplace's address now. */
-async function sourceInfo() {
-  const source = (await kachatNames().catch(() => null))?.actions.marketSource;
-  if (source?.kind === "spending") return { title: source.label, address: source.address, source };
-  return { title: "Chatting Address", address: await chattingAddress(), source: source ?? { kind: "chatting" } };
-}
-
-const compact = (a) => (a ? `${a.slice(0, a.indexOf(":") + 1)}${a.slice(a.indexOf(":") + 1, a.indexOf(":") + 7)}...${a.slice(-6)}` : "");
-
-onRender((screen) => {
-  // leaving the marketplace: back to the chatting address (iOS eb9b027)
-  if (!/^kachat:/.test(screen)) {
-    kachatNames().then((rt) => { if (rt && rt.actions.marketSource?.kind === "spending") rt.actions.setMarketSource({ kind: "chatting" }); }).catch(() => {});
-  }
-});
-import { IS_TESTNET, KAS_UNIT } from "./net.js";
+import { IS_TESTNET } from "./net.js";
 import * as dock from "./dock.js";
 import * as live from "./kachat-live.js";
 
@@ -125,7 +99,6 @@ export function showKachatMarket({ onBack = null } = {}) {
         <div class="km-hero compact">
           ${kachatWordmark(64)}
           <div id="km-status">${heroStatus()}</div>
-          <div id="km-source-slot"></div>
         </div>
         <div class="km-search">
           <label class="km-card km-search-field">
@@ -147,7 +120,6 @@ export function showKachatMarket({ onBack = null } = {}) {
     if (onBack) $("#back").onclick = onBack;
     $("#how").onclick = () => showHowItWorks(isLive());
     bindClaims();
-    paintSourcePill();
     const search = $("#search");
     search.oninput = () => {
       state.search = search.value;
@@ -192,33 +164,11 @@ export function showKachatMarket({ onBack = null } = {}) {
     if (isLive()) live.bindSearchResult($("#search-result"), nav);
   };
   // Live updates redraw the parts in place, so typing in the search field keeps its focus.
-  /** The pill: the balance and the address the marketplace buys with; it opens Buy From. */
-  const paintSourcePill = async () => {
-    const slot = $("#km-source-slot");
-    if (!slot) return;
-    // only where the registry is live (the hub may become live after the first paint)
-    if (!isLive()) { slot.innerHTML = ""; return; }
-    if (!slot.firstElementChild) slot.innerHTML = '<button class="km-source-pill" id="km-source"><span class="spinner small-spin"></span></button>';
-    const pill = $("#km-source");
-    pill.onclick = () => showBuyFrom(paintSourcePill);
-    const info = await sourceInfo();
-    if (!info.address || !pill.isConnected) return;
-    // the KAS logo right beside the balance, the address line under them (iOS dbb8b9b)
-    const text = (sompi) => `
-      <span class="km-source-balance"><img src="icons/kaspa-logo.png" alt="" /><span>${sompi != null ? esc(wallet.formatKas(sompi, 8)) : "--"} ${esc(KAS_UNIT)}</span></span>
-      <span class="km-source-address muted">${esc(info.title)} · ${esc(compact(info.address))}</span>`;
-    pill.innerHTML = text(sourceBalance.address === info.address ? sourceBalance.sompi : null);
-    const sompi = (await wallet.balancesFor([info.address]).catch(() => ({})))[info.address] ?? null;
-    sourceBalance = { address: info.address, sompi };
-    if (pill.isConnected) pill.innerHTML = text(sompi);
-  };
-
   const paintParts = () => {
     if (app.dataset.screen !== "kachat:market") return;
     const scroller = app.querySelector(".km");
     const scroll = scroller?.scrollTop || 0;
     $("#km-status").innerHTML = heroStatus();
-    paintSourcePill();
     $("#km-claims").innerHTML = claimsButton();
     bindClaims();
     $("#km-page").innerHTML = pageHtml();
@@ -387,65 +337,3 @@ function showOffer() {
   });
 }
 
-/** Buy From (iOS KachatMarketSourceSheet, ca39de7): which address the marketplace pays with -
- *  Chatting Address (default) or Choose an Address (any of yours, a never-used one marked Unused) -
- *  with its balance, a copy button and, when it is empty, Fund. */
-async function showBuyFrom(onChanged) {
-  const rt = await kachatNames().catch(() => null);
-  if (!rt) return;
-  let handle = null;
-  const paint = async () => {
-    if (!handle?.isOpen()) return;
-    const info = await sourceInfo();
-    const spending = info.source.kind === "spending";
-    const sompi = info.address ? ((await wallet.balancesFor([info.address]).catch(() => ({})))[info.address] ?? null) : null;
-    const host = handle.panel.querySelector("[data-buyfrom]");
-    host.innerHTML = `
-      <div class="sk-card sk-from">
-        <div class="sel-pills">
-          <button type="button" class="sel-pill ${spending ? "" : "on"}" data-src="chatting">Chatting Address</button>
-          <button type="button" class="sel-pill ${spending ? "on" : ""}" data-src="choose">Choose an Address</button>
-        </div>
-        <div class="sk-from-row">
-          <span class="tx-meta"><span class="strong small">${esc(info.title)}</span><span class="mono tiny muted">${esc(compact(info.address))}</span></span>
-          <span class="small">${sompi != null ? `${esc(wallet.formatKas(sompi, 8))} ${KAS_UNIT}` : '<span class="spinner small-spin"></span>'}</span>
-        </div>
-        <div class="buyfrom-actions">
-          <button class="km-bordered small-button" data-copy>Copy Address</button>
-          ${sompi === 0n ? '<button class="km-prominent small-button" data-fund>Fund</button>' : ""}
-        </div>
-      </div>`;
-    host.querySelector("[data-copy]").onclick = async () => { try { await navigator.clipboard.writeText(info.address); toast("Address copied to clipboard."); } catch { /* blocked */ } };
-    const fund = host.querySelector("[data-fund]");
-    if (fund) fund.onclick = () => live.openAddressFundSheet({ address: info.address, title: "Send KAS to this address to buy with it.", onClose: () => { paint(); onChanged?.(); } });
-    for (const b of host.querySelectorAll("[data-src]")) {
-      b.onclick = async () => {
-        if (b.dataset.src === "chatting") await setKachatMarketSource({ kind: "chatting" });
-        else { chooseSource(); return; }
-        paint();
-        onChanged?.();
-      };
-    }
-  };
-  const chooseSource = async () => {
-    const sheet = showSheet({ title: "Choose an Address", headerHtml: '<div class="center-text"><span class="spinner small-spin"></span></div>', rows: [] });
-    let list;
-    try { list = await wallet.spendingList(); } catch { sheet.close(); return; }
-    const main = await chattingAddress();
-    const spending = list.rows.filter((r) => !r.hidden || r.balanceSompi > 0n).sort((a, b) => a.index - b.index);
-    const balances = await wallet.balancesFor([main, ...spending.map((r) => r.address)].filter(Boolean)).catch(() => ({}));
-    const rows = [];
-    if (main) rows.push({ label: "Chatting Address", subtitle: `${compact(main)} · ${wallet.formatKas(balances[main] ?? 0n, 8)} ${KAS_UNIT}`, onClick: async () => { await setKachatMarketSource({ kind: "chatting" }); paint(); onChanged?.(); } });
-    for (const r of spending) {
-      const used = r.balanceSompi > 0n ? true : await wallet.knownUsedState(r.address).catch(() => null);
-      rows.push({
-        label: r.label,
-        subtitle: `${compact(r.address)} · ${wallet.formatKas(r.balanceSompi, 8)} ${KAS_UNIT}${used == null ? "" : used ? " · Used" : " · Unused"}`,
-        onClick: async () => { await setKachatMarketSource({ kind: "spending", index: r.index, address: r.address, label: r.label }); paint(); onChanged?.(); },
-      });
-    }
-    sheet.update({ headerHtml: "", rows });
-  };
-  handle = openPanel({ title: "Buy From", trailing: "Done", full: true, body: '<div data-buyfrom class="req-form"></div>' });
-  paint();
-}

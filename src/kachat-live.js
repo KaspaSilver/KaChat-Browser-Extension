@@ -1411,9 +1411,8 @@ function openClaimSheet(target) {
     } else {
       rows = '<div class="form-row between"><span>Total</span><span class="spinner small-spin"></span></div>';
     }
-    const buyFrom = runtimeActions()?.marketSource;
     const foot = q && !q.affordable
-      ? `<span class="error-text">${esc(buyFrom?.kind === "spending" ? `Not enough KAS on ${buyFrom.label} for this name.` : "Not enough KAS on your chatting address for this name.")}</span>`
+      ? `<span class="error-text">${esc("Not enough KAS on your chatting address for this name.")}</span>`
       : "The price goes to the miners - KaChat takes nothing. The bond and the deposit come back when you release the name.";
     return `
       ${state.notOpen ? `
@@ -1436,7 +1435,7 @@ function openClaimSheet(target) {
         <div class="form-card">${rows}</div>
         <div class="form-footer">${unitText(foot)}</div>
       </div>
-      ${q ? `<div class="sk-pills">${(() => { const src = runtimeActions()?.marketSource; return src?.kind === "spending" ? `<span class="sk-pill">${esc(`From: ${src.label}`)}</span>` : ""; })()}<span class="sk-pill">Available: ${esc(amount(q.spendable))}</span></div>` : ""}
+      ${q ? `<div class="sk-pills"><span class="sk-pill">Available: ${esc(amount(q.spendable))}</span></div>` : ""}
       <div class="form-section">
         <div class="form-header">How claiming works</div>
         <div class="form-card">

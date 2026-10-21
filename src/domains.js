@@ -1,10 +1,10 @@
 // Your Domains - iOS KNSDomainsListView, KNSDomainDetailView and KNSDomainSendView.
 //
-//   list     an underline tab per name service, KaChat's own first: .kachat (live on testnet,
-//            kachat-live.js; coming on mainnet), .kas
-//            (KNS), .k (dotk), .kaspa (Kaspa Names). Each outside service's tab lists the
-//            chatting address's names as teal cards and pins "Get a <ending> domain at <site>",
-//            which opens that service's site - KaChat creates only its own .kachat names.
+//   cards    four Kaspa Hub style squares (iOS debd6fd, 2ee667c): .kachat, .kas (KNS), .k (dotk),
+//            .kaspa (Kaspa Names), each with who runs it and how many names you hold there (a
+//            dash until the answer is in). A card opens that service's own list.
+//   list     the names as teal cards; an outside service's list pins "Get a <ending> domain at
+//            <site>", which opens that service's site - KaChat creates only its own .kachat names.
 //            .kas cards carry "Primary"; a .kaspa name still settling carries "Settling".
 //   detail   (.kas) the card, Asset ID, Set as Primary / Primary Domain, Status: Listed, Send
 //   send     recipient (address or a name on any service, with "Other domains"), Normal /
@@ -42,10 +42,13 @@ function cardHtml(domain, primary) {
   return nameCardHtml(domain.fullName, primary ? "Primary" : null);
 }
 
-// Which tab Your Domains shows, kept while you go into a domain and back.
-let selectedTab = names.DEFAULT_TAB;
+// The service whose list is open (null: the cards), kept while you go into a domain and back.
+let selectedTab = null;
 
-export function showDomains({ address, onBack }) {
+export function showDomains({ address, onBack, atCards = false, service = null }) {
+  // opened from Profile: the cards; back from a domain: the list it came from; `service`: that list
+  if (atCards) selectedTab = null;
+  if (service && names.service(service)) selectedTab = service;
   const state = {
     data: wallet.cachedDomains(address), loading: true, error: "",
     owned: names.cachedOwnedNames(address), ownedLoading: true,
@@ -99,20 +102,49 @@ export function showDomains({ address, onBack }) {
       <p class="muted small">KaChat's own names will live here: claim one, set it as your name in chats, and share it as your profile link.</p>
     </div>`;
 
+  // How many names you hold on a service, or null until the answer is in (a dash).
+  const countOf = (tld) => {
+    if (tld === "kas") return state.data ? (state.data.domains || []).length : null;
+    if (tld === "kachat") {
+      // the same held-names read the .kachat list shows, reloaded when the registry moves
+      liveDomainsTab({ address, repaint: () => { if (here() && selectedTab == null) paint(); } });
+      const entry = liveDomainsTab.cache?.get(address);
+      return entry?.loaded ? entry.names.length : null;
+    }
+    if (state.owned?.failed?.[tld]) return null;
+    return state.owned?.[tld] ? state.owned[tld].length : null;
+  };
+  const cardsHtml = () => `
+    <div class="domains-grid your-domains-grid">${names.NAME_SERVICES.map((svc) => {
+      const count = countOf(svc.tld);
+      return `<button class="glass domains-service" data-tab="${svc.tld}">
+        <span class="accent">${ICONS.atCircle}</span>
+        <span class="strong">${esc(svc.suffix)}</span>
+        <span class="muted tiny">${esc(svc.serviceName)}</span>
+        <span class="domains-count-pill">${count == null ? "-" : esc(String(count))}</span>
+      </button>`;
+    }).join("")}</div>`;
+
   const paint = () => {
+    if (selectedTab == null) {
+      render(`
+        ${navHeader({ title: "Your Domains" })}
+        <section class="screen domains">${cardsHtml()}</section>`, "domains");
+      remember(() => paint());
+      $("#back").onclick = onBack;
+      for (const card of app.querySelectorAll("[data-tab]")) card.onclick = () => switchTo(card.dataset.tab);
+      return;
+    }
     const body = selectedTab === "kas" ? kasTab() : selectedTab === "kachat" ? kachatTab() : serviceTab(selectedTab);
     render(`
-      ${navHeader({ title: "Your Domains" })}
-      <div class="underline-tabs" role="tablist" aria-label="Name service">
-        ${names.NAME_SERVICES.map((s) => `<button role="tab" data-tab="${s.tld}" aria-selected="${s.tld === selectedTab}">${esc(s.suffix)}</button>`).join("")}
-      </div>
+      ${navHeader({ title: names.service(selectedTab)?.suffix || "Your Domains" })}
       <section class="screen domains" id="domains-body">${body}</section>
       ${selectedTab === "kachat"
         ? (liveTab?.showsInscribe ? '<div class="get-domain-bar"><button class="get-domain" id="inscribe">Inscribe</button></div>' : "")
         : `<div class="get-domain-bar">${getNameButton(selectedTab)}</div>`}`, "domains");
     remember(() => paint());
-    $("#back").onclick = onBack;
-    for (const tab of app.querySelectorAll("[data-tab]")) tab.onclick = () => switchTo(tab.dataset.tab);
+    // back to the cards
+    $("#back").onclick = () => { selectedTab = null; paint(); };
     const list = state.data?.domains || [];
     for (const button of app.querySelectorAll("[data-i]")) {
       button.onclick = () => showDomainDetail({ address, domain: list[Number(button.dataset.i)], primaryDomain: state.data.primaryDomain, onBack: back });
@@ -130,55 +162,13 @@ export function showDomains({ address, onBack }) {
     const inscribe = $("#inscribe");
     // the marketplace is its own tab (claiming lands back in Your Domains on its own: the registry refreshes)
     if (inscribe) inscribe.onclick = () => selectTab("kachat");
-    bindSwipe($("#domains-body"));
   };
 
   const switchTo = (tld) => {
-    if (!names.service(tld) || tld === selectedTab) return;
+    if (!names.service(tld)) return;
     selectedTab = tld;
     paint();
   };
-
-  // A sideways swipe (trackpad or touch) or the arrow keys change the name service, as the
-  // iOS swipe does.
-  const step = (delta) => {
-    const order = names.NAME_SERVICES.map((s) => s.tld);
-    const next = order[order.indexOf(selectedTab) + delta];
-    if (next) switchTo(next);
-  };
-  function bindSwipe(element) {
-    if (!element) return;
-    let wheelX = 0;
-    let wheelTimer = null;
-    let cooldown = false;
-    element.addEventListener("wheel", (event) => {
-      if (cooldown || Math.abs(event.deltaX) <= Math.abs(event.deltaY)) return;
-      wheelX += event.deltaX;
-      clearTimeout(wheelTimer);
-      wheelTimer = setTimeout(() => { wheelX = 0; }, 200);
-      if (Math.abs(wheelX) > 80) {
-        cooldown = true;
-        step(wheelX > 0 ? 1 : -1);
-        wheelX = 0;
-      }
-    }, { passive: true });
-    let start = null;
-    element.addEventListener("pointerdown", (event) => { if (event.pointerType !== "mouse") start = { x: event.clientX, y: event.clientY }; });
-    element.addEventListener("pointerup", (event) => {
-      if (!start) return;
-      const dx = event.clientX - start.x;
-      const dy = event.clientY - start.y;
-      start = null;
-      if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.5) step(dx < 0 ? 1 : -1);
-    });
-  }
-  const onKey = (event) => {
-    if (!here()) { document.removeEventListener("keydown", onKey); return; }
-    if (event.target.closest?.("input, textarea")) return;
-    if (event.key === "ArrowRight") step(1);
-    if (event.key === "ArrowLeft") step(-1);
-  };
-  document.addEventListener("keydown", onKey);
 
   const loadOwned = () => {
     state.ownedLoading = true;

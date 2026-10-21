@@ -12,9 +12,12 @@ import {
   generateMnemonicPhrase,
   importMnemonicWithFamily,
   deriveSpendingWallet,
-  spendingDerivationPath,
-  importPrivateKey,
+  deriveSpendingAddressRange,
 } from "../shared/engine/wallet.js";
+import {
+  QUANTUM_INDEX_BASE, QUANTUM_SCAN_FLOOR, KIP22_SIGNATURE_SCRIPT_SIZE, isQuantumIndex, chainLocalIndex, spendingIndexTitle,
+  spendingStateFromRecord, spendingRecordFromState, revealedSpendingIndices, nextFreshQuantumIndex, spendingChangeIndex,
+} from "../shared/engine/quantum.js";
 import { createRpc, probeRpc, disconnectRpc, getNodeRegistrySnapshot, forgetEndpoint, markBadNode, knownPublicNodes } from "../shared/engine/rpc.js";
 import { getEndpoint } from "../shared/engine/endpoints.js";
 import { getBalance, sendKaspa, sendMaxKaspa, sweepAllToSelf, estimateSendFeeDetail, estimateOnchainFeeDetail, submitConfirmingAcceptance } from "../shared/engine/transactions.js";
@@ -23,6 +26,7 @@ import { calculateMass, calculateFee, fetchQuotedFeeRateSompiPerGram } from "../
 import { looksLikeName, resolveEverywhere, primaryResolution, notFoundMessage, ownsAnyName, ownedNamesOfMany } from "./names.js";
 import { fetchKasPrice, peekKasPrice } from "../shared/engine/prices.js";
 import { getAddressInfo, fetchAddressInfo, peekAddressInfo, clearKnsCache } from "../shared/engine/kns.js";
+import { transactionBelongsInHistory } from "../shared/engine/sync.js";
 import {
   transferDomain as knsTransferDomain, setKnsPrimaryDomain, setKnsPendingStorage, listPendingKnsTransfers,
   resumeKnsTransfer, clearPendingKnsTransfer,
@@ -99,26 +103,45 @@ function spendingStateKey(accountId) { return netKey(`kachat.spending.${accountI
 function addressCacheKey(accountId) { return netKey(`kachat.addresses.${accountId}`); }
 
 /**
- * The account's spending-address bookkeeping - same shape as the desktop app's, so the ideas
- * carry over: `activeIndex` is the primary spending address, `maxIndex` the highest revealed.
+ * The account's spending-address bookkeeping - the desktop app's (engine/quantum.js
+ * spendingStateFromRecord): `activeIndex` is the primary (a public index on either chain),
+ * `maxIndex` the legacy chain's highest revealed index, `qMaxIndex` the quantum-safe chain's
+ * (-1 before its first slot; public index QUANTUM_INDEX_BASE + n is its slot n, iOS bba1b1e),
+ * `hidden` and `labels` keyed by public index, `qSpent` the quantum addresses that have spent.
  */
 export async function spendingState(accountId) {
   const raw = (await getLocal(spendingStateKey(accountId))) || {};
-  const activeIndex = Math.max(0, Math.floor(Number(raw.activeIndex) || 0));
-  const maxIndex = Math.max(activeIndex, Math.floor(Number(raw.maxIndex) || 0));
-  const hidden = Array.isArray(raw.hidden) ? raw.hidden.map(Number).filter((n) => Number.isInteger(n) && n >= 0) : [];
-  const labels = raw.labels && typeof raw.labels === "object" ? { ...raw.labels } : {};
   // Which index the Receive QR is handing out (iOS receiveAddressIndex) - separate from the
   // primary, which is where payments are SENT from.
   const receiveIndex = Number.isInteger(raw.receiveIndex) && raw.receiveIndex >= 0 ? raw.receiveIndex : null;
-  return { activeIndex, maxIndex, hidden, labels, receiveIndex };
+  return { ...spendingStateFromRecord(raw), receiveIndex };
 }
 
 export async function saveSpendingState(accountId, patch) {
+  const previous = (await getLocal(spendingStateKey(accountId))) || {};
   const next = { ...(await spendingState(accountId)), ...patch };
-  next.maxIndex = Math.max(next.activeIndex, next.maxIndex, Number.isInteger(next.receiveIndex) ? next.receiveIndex : 0);
-  await setLocal(spendingStateKey(accountId), next);
-  return next;
+  // a revealed index widens its own chain's bound only: a quantum one never the legacy chain
+  for (const index of [next.receiveIndex, next.activeIndex]) {
+    if (!Number.isInteger(index)) continue;
+    if (isQuantumIndex(index)) next.qMaxIndex = Math.max(next.qMaxIndex, chainLocalIndex(index));
+    else next.maxIndex = Math.max(next.maxIndex, index);
+  }
+  const record = { ...spendingRecordFromState(next, previous), receiveIndex: Number.isInteger(next.receiveIndex) ? next.receiveIndex : null };
+  await setLocal(spendingStateKey(accountId), record);
+  return { ...spendingStateFromRecord(record), receiveIndex: record.receiveIndex };
+}
+
+/** The patch that reveals `index` on its own chain. */
+function boundPatchFor(index, state) {
+  return isQuantumIndex(index) ? { qMaxIndex: Math.max(state.qMaxIndex, chainLocalIndex(index)) } : { maxIndex: Math.max(state.maxIndex, index) };
+}
+
+/** A quantum-safe address that has spent: its key is on chain for good (the shield comes off). */
+async function markQuantumSpent(accountId, address) {
+  const lowered = String(address || "").toLowerCase();
+  const state = await spendingState(accountId);
+  if (!lowered || state.qSpent.includes(lowered)) return;
+  await saveSpendingState(accountId, { qSpent: [...state.qSpent, lowered] });
 }
 
 /** Addresses already derived for an account (public data), so the popup paints instantly. */
@@ -138,10 +161,8 @@ export async function deriveAddresses() {
     index: account.identityIndex,
   });
   const state = await spendingState(account.id);
-  const spending = {};
-  for (let index = 0; index <= state.maxIndex; index += 1) {
-    spending[index] = deriveSpendingWallet(k, account.mnemonic, index, account.passphrase).address;
-  }
+  // both chains: legacy 0...maxIndex, then the quantum-safe slots (iOS allSpendingAddresses)
+  const spending = await spendingAddressesAt(revealedSpendingIndices(state), account);
   const result = { accountId: account.id, main: main.address, spending, derivedAt: Date.now() };
   await setLocal(addressCacheKey(account.id), result);
   return result;
@@ -384,7 +405,8 @@ async function sourceWallet(source) {
   const k = await kaspa();
   if (source?.kind === "spending") {
     const derived = deriveSpendingWallet(k, account.mnemonic, source.index, account.passphrase);
-    return { accountId: account.id, address: derived.address, privateKeyHex: derived.privateKeyHex };
+    // a quantum-safe address (KIP-22) spends with its redeem script pushed after each signature
+    return { accountId: account.id, address: derived.address, privateKeyHex: derived.privateKeyHex, redeemScript: derived.redeemScript || null, quantum: Boolean(derived.quantum) };
   }
   const derived = await importMnemonicWithFamily(k, account.mnemonic, account.passphrase, {
     family: account.family,
@@ -517,10 +539,14 @@ export async function estimateFee({ address, amountKas = "0.2", selectedOutpoint
   return { policyKas: Number(detail.policyFeeKas), sdkBaseKas: Number(detail.sdkFeeKas) };
 }
 
-/** Fee for spending `inputCount` coins into one output (Max, compound), at the live quoted rate. */
-export async function maxFee(inputCount) {
+/** Fee for spending `inputCount` coins into one output (Max, compound), at the live quoted rate.
+ *  `sourceIndex`: a quantum-safe source's inputs carry their redeem script (101-byte signature
+ *  scripts, iOS kip22SignatureScriptSize); outputs are priced as the bigger P2SH script (35 bytes,
+ *  iOS 40e8c50), which a quantum-safe address is. */
+export async function maxFee(inputCount, { sourceIndex = null } = {}) {
   const rate = await fetchQuotedFeeRateSompiPerGram();
-  const mass = calculateMass(Math.max(1, inputCount), [34, 34], 0);
+  const sigScriptLen = isQuantumIndex(sourceIndex) ? KIP22_SIGNATURE_SCRIPT_SIZE : 66;
+  const mass = calculateMass(Math.max(1, inputCount), [35, 35], 0, 1, sigScriptLen);
   return { policyKas: Number(calculateFee(mass, rate)) / 1e8, sdkBaseKas: Number(mass) / 1e8 };
 }
 
@@ -536,30 +562,44 @@ export async function send({ source, destination, amountKas = null, tipKas = "0"
   const node = await connection();
   const log = (...parts) => console.info("[KaChat Wallet]", ...parts);
   if (max) {
-    return sendMaxKaspa({
+    const result = await sendMaxKaspa({
       kaspa: k, rpc: node, withRpc, privateKey: from.privateKeyHex, sourceAddress: from.address,
       destinationAddress: destination,
       totalFeeSompi: totalFeeKas != null ? kasToSompi(String(totalFeeKas)) : null,
-      selectedOutpoints, log,
+      selectedOutpoints, redeemScript: from.redeemScript, log,
     });
+    if (from.quantum) await markQuantumSpent(from.accountId, from.address);
+    return result;
   }
-  // A spending address's change goes to a never-used address (iOS 6333dd3): nothing rotates a
-  // "primary" any more - the From choice picks the address on every send.
+  // Where a spending address's change goes (iOS sendFromSpendingAddress, bba1b1e; engine
+  // spendingChangeIndex): a quantum-safe source - its spend reveals its key - and the primary send
+  // their change to a brand-new quantum-safe slot, and the primary moves there once the node has
+  // the transaction; any other address keeps its change. A send to itself consolidates in place.
   let fresh = null;
+  let wasPrimary = false;
   if (source?.kind === "spending") {
     const state = await spendingState(from.accountId);
-    const account = await activeAccountSecrets();
-    const index = state.maxIndex + 1;
-    fresh = { index, address: deriveSpendingWallet(k, account.mnemonic, index, account.passphrase).address };
+    wasPrimary = source.index === state.activeIndex;
+    const index = spendingChangeIndex({
+      purpose: "withdraw", sourceIndex: source.index, primaryIndex: state.activeIndex, qMaxIndex: state.qMaxIndex,
+      selfSend: String(destination).toLowerCase() === String(from.address).toLowerCase(),
+    });
+    if (index != null) {
+      const account = await accountSecretsById(from.accountId);
+      try { fresh = { index, address: deriveSpendingWallet(k, account.mnemonic, index, account.passphrase).address }; } catch { fresh = null; }
+      // a quantum source's change never goes back to it: no fresh slot, no send
+      if (!fresh && from.quantum) throw new Error("Couldn't prepare a new address for the change. Please try again.");
+    }
   }
   const result = await sendKaspa({
     kaspa: k, rpc: node, withRpc, privateKey: from.privateKeyHex, sourceAddress: from.address,
     destinationAddress: destination, amountKas: String(amountKas), feeKas: String(tipKas || "0"),
-    selectedOutpoints, changeAddress: fresh?.address || null, log,
+    selectedOutpoints, changeAddress: fresh?.address || null, redeemScript: from.redeemScript, log,
   });
+  if (from.quantum) await markQuantumSpent(from.accountId, from.address);
   if (fresh) {
     const state = await spendingState(from.accountId);
-    await saveSpendingState(from.accountId, { activeIndex: state.activeIndex, maxIndex: fresh.index });
+    await saveSpendingState(from.accountId, { ...boundPatchFor(fresh.index, state), ...(wasPrimary ? { activeIndex: fresh.index } : {}) });
     await cacheSpendingAddress(from.accountId, fresh.index, fresh.address);
   }
   return result;
@@ -568,12 +608,16 @@ export async function send({ source, destination, amountKas = null, tipKas = "0"
 /** Merges every coin at the source into one (a self-send with no change). */
 export async function compound(source, totalFeeKas = null) {
   const from = await sourceWallet(source);
-  return sweepAllToSelf({
+  const result = await sweepAllToSelf({
     kaspa: await kaspa(), rpc: await connection(), withRpc,
     privateKey: from.privateKeyHex, sourceAddress: from.address,
     totalFeeSompi: totalFeeKas != null ? kasToSompi(String(totalFeeKas)) : null,
+    redeemScript: from.redeemScript,
     log: (...parts) => console.info("[KaChat Wallet]", ...parts),
   });
+  // consolidating spends too: the key is on chain now (the shield comes off)
+  if (from.quantum) await markQuantumSpent(from.accountId, from.address);
+  return result;
 }
 
 /** The source's private key as hex - for the reveal screen, behind the password. */
@@ -631,7 +675,8 @@ export async function history(address) {
     if (response.ok) {
       const txs = await response.json().catch(() => null);
       if (!Array.isArray(txs)) return { txs: [], complete: false };
-      return { txs: txs.map((tx) => describeTransaction(tx, address)), complete: true };
+      // a block reward the chain never accepted paid nothing: not history (iOS d194a38)
+      return { txs: txs.filter(transactionBelongsInHistory).map((tx) => describeTransaction(tx, address)), complete: true };
     }
     if (response.status !== 429 && response.status < 500) break;
   }
@@ -749,17 +794,27 @@ async function cacheSpendingAddress(accountId, index, address) {
   await setLocal(addressCacheKey(accountId), cached);
 }
 
-/** Addresses for a run of spending indexes, deriving the seed only once for the whole run. */
-export async function spendingAddressRange(start, count) {
-  const account = await activeAccountSecrets();
+/** Addresses for a run of spending indexes, deriving the seed only once for the whole run (a run
+ *  from QUANTUM_INDEX_BASE up is the quantum-safe chain, engine deriveSpendingAddressRange). */
+export async function spendingAddressRange(start, count, account = null) {
+  const secrets = account || (await activeAccountSecrets());
   const k = await kaspa();
-  const master = new k.XPrv(new k.Mnemonic(account.mnemonic).toSeed(String(account.passphrase || "").normalize("NFKD")));
   const result = {};
-  for (let index = start; index < start + count; index += 1) {
-    const key = master.derivePath(spendingDerivationPath(index)).toPrivateKey().toString();
-    result[index] = importPrivateKey(k, key).address;
-  }
+  for (const { index, address } of deriveSpendingAddressRange(k, secrets.mnemonic, secrets.passphrase, { start, count })) result[index] = address;
   return result;
+}
+
+/** Addresses for any public indexes, both chains (each chain's run derived once). */
+async function spendingAddressesAt(indexes, account = null) {
+  const secrets = account || (await activeAccountSecrets());
+  const legacy = indexes.filter((i) => !isQuantumIndex(i));
+  const quantum = indexes.filter((i) => isQuantumIndex(i));
+  const out = {};
+  if (legacy.length) Object.assign(out, await spendingAddressRange(Math.min(...legacy), Math.max(...legacy) - Math.min(...legacy) + 1, secrets));
+  if (quantum.length) Object.assign(out, await spendingAddressRange(Math.min(...quantum), Math.max(...quantum) - Math.min(...quantum) + 1, secrets));
+  const wanted = new Set(indexes);
+  for (const key of Object.keys(out)) if (!wanted.has(Number(key))) delete out[key];
+  return out;
 }
 
 /** Every revealed spending address of the active account, with balances (one node call). */
@@ -767,15 +822,14 @@ export async function spendingList() {
   const account = await activeAccountSecrets();
   const state = await spendingState(account.id);
   const cached = (await cachedAddresses(account.id))?.spending || {};
-  const missing = [];
-  for (let index = 0; index <= state.maxIndex; index += 1) if (!cached[index]) missing.push(index);
+  const indexes = revealedSpendingIndices(state);
+  const missing = indexes.filter((index) => !cached[index]);
   let addresses = { ...cached };
   if (missing.length) {
-    addresses = { ...addresses, ...(await spendingAddressRange(0, state.maxIndex + 1)) };
+    addresses = { ...addresses, ...(await spendingAddressesAt(missing, account)) };
     const all = (await cachedAddresses(account.id)) || { accountId: account.id, main: null };
     await setLocal(addressCacheKey(account.id), { ...all, accountId: account.id, spending: addresses });
   }
-  const indexes = Array.from({ length: state.maxIndex + 1 }, (_, i) => i);
   const balancesByAddress = await balancesFor(indexes.map((i) => addresses[i]));
   return {
     state,
@@ -787,8 +841,37 @@ export async function spendingList() {
       hidden: state.hidden.includes(index),
       primary: index === state.activeIndex,
       balanceSompi: balancesByAddress[addresses[index]] ?? 0n,
+      // quantum-safe (KIP-22): the shield, off once the address has spent (its key is public)
+      quantum: isQuantumIndex(index),
+      spent: isQuantumIndex(index) && state.qSpent.includes(String(addresses[index] || "").toLowerCase()),
     })),
   };
+}
+
+// Whether a quantum-safe address has ever SPENT - the one event that puts its key on chain
+// (receiving reveals nothing; iOS ChatService.quantumAddressSpentState). true is remembered for
+// good; false = no spend in its history (reused for a minute, so repaints don't flood the REST
+// server); null = the history can't be read now. Quantum addresses are young: one page covers them.
+const quantumUnspentSeenAt = new Map();
+export async function quantumSpentState(address) {
+  const account = await activeAccountSecrets();
+  const lowered = String(address || "").toLowerCase();
+  if (!lowered) return null;
+  if ((await spendingState(account.id)).qSpent.includes(lowered)) return true;
+  if (Date.now() - (quantumUnspentSeenAt.get(lowered) || 0) < 60_000) return false;
+  try {
+    const url = `${restBase()}/addresses/${encodeURIComponent(address)}/full-transactions?limit=200&offset=0&resolve_previous_outpoints=light`;
+    const response = await fetch(url, { headers: { Accept: "application/json" }, cache: "no-store", signal: AbortSignal.timeout(15_000) });
+    if (!response.ok) return null;
+    const txs = await response.json();
+    if (!Array.isArray(txs)) return null;
+    const spent = txs.some((tx) => (tx?.inputs || []).some((input) => String(input?.previous_outpoint_address || "").toLowerCase() === lowered));
+    if (spent) await markQuantumSpent(account.id, address);
+    else quantumUnspentSeenAt.set(lowered, Date.now());
+    return spent;
+  } catch {
+    return null;
+  }
 }
 
 /** The address's own label, or "" - iOS SpendingAddressEntry.label. */
@@ -796,9 +879,10 @@ export function customLabel(state, index) {
   return String(state.labels?.[index] ?? state.labels?.[String(index)] ?? "").trim();
 }
 
-/** iOS displayLabel: the label you gave it, else "Address #<index>". */
+/** iOS displayLabel: the label you gave it, else "Address #<n>" - numbered on its own chain, so a
+ *  quantum-safe slot is "Address #0" again and the shield tells them apart (iOS e001786). */
 export function labelFor(state, index) {
-  return customLabel(state, index) || `Address #${index}`;
+  return customLabel(state, index) || spendingIndexTitle(index);
 }
 
 /** Balances for many addresses in one node call: { address: sompi }. */
@@ -827,7 +911,7 @@ async function activeState() {
  *  over with only the chatting address. */
 export async function hideAllSpending() {
   const { account, state } = await activeState();
-  return saveSpendingState(account.id, { hidden: Array.from({ length: state.maxIndex + 1 }, (_, i) => i) });
+  return saveSpendingState(account.id, { hidden: revealedSpendingIndices(state) });
 }
 
 export async function setSpendingHidden(index, hidden) {
@@ -849,7 +933,7 @@ export async function setSpendingLabel(index, label) {
 export async function setPrimarySpending(index) {
   const { account, state } = await activeState();
   const hidden = state.hidden.filter((i) => i !== index);
-  return saveSpendingState(account.id, { activeIndex: index, maxIndex: Math.max(state.maxIndex, index), hidden });
+  return saveSpendingState(account.id, { activeIndex: index, ...boundPatchFor(index, state), hidden });
 }
 
 /**
@@ -862,7 +946,8 @@ export async function setPrimarySpending(index) {
  *  (iOS spendingAddress(at: maxSpendingAddressIndex + 1)). */
 export async function nextFreshSpendingAddress() {
   const { state } = await activeState();
-  const index = state.maxIndex + 1;
+  // new addresses are quantum-safe (KIP-22, iOS bba1b1e)
+  const index = nextFreshQuantumIndex(state.qMaxIndex);
   return { index, address: (await spendingAddressRange(index, 1))[index] };
 }
 
@@ -870,19 +955,23 @@ export async function nextFreshSpendingAddress() {
  *  chain moves past it, so nothing hands it out again (iOS reserveFreshSpendingAddresses). */
 export async function reserveFreshSpendingAddress() {
   const { account, state } = await activeState();
-  const index = state.maxIndex + 1;
+  const index = nextFreshQuantumIndex(state.qMaxIndex);
   const address = (await spendingAddressRange(index, 1))[index];
-  await saveSpendingState(account.id, { maxIndex: index });
+  await saveSpendingState(account.id, boundPatchFor(index, state));
   await cacheSpendingAddress(account.id, index, address);
   return { index, address };
 }
 
+// New addresses are on the quantum-safe chain (iOS bba1b1e lowestUnusedQuantumAddress): a hidden
+// quantum slot that is confirmed unused is recycled, else the chain extends by one. Legacy
+// addresses are never handed out again, and stay spendable.
 export async function generateSpendingAddress() {
   const { account, state } = await activeState();
   const cached = (await cachedAddresses(account.id))?.spending || {};
-  const candidates = [...state.hidden].sort((a, b) => a - b).filter((i) => i !== state.activeIndex && i <= state.maxIndex);
+  const candidates = [...state.hidden].sort((a, b) => a - b)
+    .filter((i) => isQuantumIndex(i) && i !== state.activeIndex && chainLocalIndex(i) <= state.qMaxIndex);
   if (candidates.length) {
-    const addresses = { ...(await spendingAddressRange(0, state.maxIndex + 1)), ...cached };
+    const addresses = { ...(await spendingAddressesAt(candidates, account)), ...cached };
     const balances = await balancesFor(candidates.map((i) => addresses[i]));
     const deadline = Date.now() + 2000;
     for (const index of candidates) {
@@ -900,9 +989,9 @@ export async function generateSpendingAddress() {
       }
     }
   }
-  const index = state.maxIndex + 1;
+  const index = nextFreshQuantumIndex(state.qMaxIndex);
   const [address] = Object.values(await spendingAddressRange(index, 1));
-  await saveSpendingState(account.id, { maxIndex: index, hidden: state.hidden.filter((i) => i !== index) });
+  await saveSpendingState(account.id, { ...boundPatchFor(index, state), hidden: state.hidden.filter((i) => i !== index) });
   await cacheSpendingAddress(account.id, index, address);
   return index;
 }
@@ -964,6 +1053,7 @@ export async function freshReceiveAddress() {
  */
 export async function discoverSpendingAddresses(onProgress = () => {}) {
   const { account, state } = await activeState();
+  // the master key is derived once per run (both chains)
   const DEEP_FLOOR = 1000;
   const MAX_INDEX = 5000;
   const BATCH = 100;
@@ -1009,16 +1099,33 @@ export async function discoverSpendingAddresses(onProgress = () => {}) {
     }
   }
 
+  // The quantum-safe chain (KIP-22, iOS discoverQuantumAddresses): young, extended one slot at a
+  // time, so its first QUANTUM_SCAN_FLOOR slots are looked at - a restored seed finds what another
+  // device received there. Coins only (a domain is never sent to a P2SH address).
+  const quantumFound = new Set();
+  const quantumAddresses = await spendingAddressRange(QUANTUM_INDEX_BASE, QUANTUM_SCAN_FLOOR, account);
+  const quantumList = Object.keys(quantumAddresses).map(Number).sort((a, b) => a - b);
+  const quantumActive = await addressesActive(quantumList.map((i) => quantumAddresses[i]));
+  const quantumCandidates = quantumActive ? quantumList.filter((i) => quantumActive[quantumAddresses[i]]) : quantumList;
+  if (quantumCandidates.length) {
+    const balances = await balancesFor(quantumCandidates.map((i) => quantumAddresses[i]));
+    for (const index of quantumCandidates) if ((balances[quantumAddresses[index]] ?? 0n) > 0n) quantumFound.add(index);
+  }
+  onProgress({ checkingIndex: QUANTUM_INDEX_BASE + QUANTUM_SCAN_FLOOR - 1, foundCount: found.size + quantumFound.size });
+
   const highest = Math.max(state.maxIndex, ...found);
+  const quantumHighest = Math.max(state.qMaxIndex, ...[...quantumFound].map(chainLocalIndex));
   const hidden = new Set(state.hidden);
   for (let index = state.maxIndex + 1; index <= highest; index += 1) if (!found.has(index)) hidden.add(index);
-  for (const index of found) hidden.delete(index);
-  await saveSpendingState(account.id, { maxIndex: highest, hidden: [...hidden] });
+  for (let n = state.qMaxIndex + 1; n <= quantumHighest; n += 1) if (!quantumFound.has(QUANTUM_INDEX_BASE + n)) hidden.add(QUANTUM_INDEX_BASE + n);
+  for (const index of [...found, ...quantumFound]) hidden.delete(index);
+  await saveSpendingState(account.id, { maxIndex: highest, qMaxIndex: quantumHighest, hidden: [...hidden] });
   const cached = (await cachedAddresses(account.id)) || { accountId: account.id, main: null, spending: {} };
   const spending = { ...(cached.spending || {}) };
   for (let index = 0; index <= highest; index += 1) if (addresses[index]) spending[index] = addresses[index];
+  for (let n = 0; n <= quantumHighest; n += 1) if (quantumAddresses[QUANTUM_INDEX_BASE + n]) spending[QUANTUM_INDEX_BASE + n] = quantumAddresses[QUANTUM_INDEX_BASE + n];
   await setLocal(addressCacheKey(account.id), { ...cached, spending });
-  return found.size;
+  return found.size + quantumFound.size;
 }
 
 // --- Explorer -----------------------------------------------------------------------------
@@ -1231,6 +1338,7 @@ export async function ksptEngine() {
 
 /** Bulk "was this ever used" for the cold account screen and its visibility list. */
 export { knownUsedState as usedStateKnown };
+export { QUANTUM_INDEX_BASE, isQuantumIndex };
 
 // --- .kachat names (testnet) --------------------------------------------------------------
 

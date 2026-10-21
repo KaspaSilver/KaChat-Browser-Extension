@@ -30,6 +30,9 @@ const PERSON_TEXT = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none"
 const NO_PERSON = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="10" cy="8" r="4"/><path d="M2.5 21a7.5 7.5 0 0 1 12-6M19 14v4M19 21v.01"/></svg>';
 const NO_WIFI = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M2 8.5a15 15 0 0 1 16-2.5M5 12a10 10 0 0 1 9-2.6M8.5 15.5a5 5 0 0 1 4-1.2"/><path d="M20 10v6M20 19.5v.01"/></svg>';
 
+// xmark.circle.fill: one tap empties a filled field (iOS 9638498)
+const CLEAR = '<svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10" fill="currentColor"/><path d="m9 9 6 6m0-6-6 6" stroke="var(--bg)" stroke-width="2" stroke-linecap="round"/></svg>';
+
 const sourceOf = (field, kind) => SocialSource.from(field.platform, field.handle, kind);
 const isEmpty = (field) => !field.handle.trim();
 const isBad = (field, kind) => !isEmpty(field) && !sourceOf(field, kind);
@@ -169,6 +172,7 @@ function showLiveProfileEditor({ onSaved }) {
     const input = panel.querySelector(`[data-handle="${kind}"]`);
     input.value = field.handle;
     input.placeholder = field.platform === "discord" ? "invite" : "handle";
+    panel.querySelector(`[data-clear="${kind}"]`).hidden = isEmpty(field);
   };
 
   const sourceSection = (kind) => `
@@ -183,6 +187,7 @@ function showLiveProfileEditor({ onSaved }) {
         <div class="form-row kp-handle-row">
           <span class="muted" data-prefix="${kind}">${esc(SocialPlatform.prefix("x"))}</span>
           <input class="plain-input" data-handle="${kind}" placeholder="handle" autocomplete="off" autocapitalize="off" spellcheck="false" />
+          <button class="icon plain kp-clear" data-clear="${kind}" aria-label="Clear" hidden>${CLEAR}</button>
         </div>
         <div data-preview="${kind}"></div>
       </div>
@@ -197,6 +202,8 @@ function showLiveProfileEditor({ onSaved }) {
     if (!handle?.isOpen()) return;
     const button = panel.querySelector("#kp-save");
     button.disabled = !state.loaded || blocked();
+    panel.querySelector("#kp-clear-profile").disabled = !state.loaded;
+    panel.querySelector("#kp-linktree-clear").hidden = !state.linktree.trim();
     panel.querySelector("#kp-save-footer").innerHTML = saveFooter();
     const linkFooter = panel.querySelector("#kp-link-footer");
     linkFooter.className = `form-footer ${badLinktree() ? "error-text" : ""}`;
@@ -211,6 +218,14 @@ function showLiveProfileEditor({ onSaved }) {
     select.innerHTML = `<option value="">None</option>${state.activeNames.map((n) => `<option value="${esc(n)}">${esc(n)}.kachat</option>`).join("")}`;
     select.value = state.primary;
   };
+
+  // Clear Profile (iOS 9638498): the same review sheet, stamping the EMPTY profile record - the
+  // newest record is the whole profile, so the indexer and every app show nothing for the address.
+  const clearProfile = () => openProfileSaveSheet({
+    title: "Clear Profile", confirmTitle: "Clear Profile", doneTitle: "Profile cleared",
+    makeProfile: async () => new Profile({}),
+    onSaved: () => { handle.close(); onSaved(); },
+  });
 
   // Save confirms on the save sheet with the network fee (iOS 7e238e5); once it is sent the
   // editor closes with it.
@@ -238,6 +253,7 @@ function showLiveProfileEditor({ onSaved }) {
         <div class="form-card"><div class="form-row kp-handle-row">
           <span class="muted">linktr.ee/</span>
           <input class="plain-input" id="kp-linktree" placeholder="username" autocomplete="off" autocapitalize="off" spellcheck="false" />
+          <button class="icon plain kp-clear" id="kp-linktree-clear" aria-label="Clear" hidden>${CLEAR}</button>
         </div></div>
         <div class="form-footer" id="kp-link-footer"></div>
       </div>
@@ -253,6 +269,10 @@ function showLiveProfileEditor({ onSaved }) {
       <div class="form-section">
         <div class="form-card"><button class="form-row km-form-button" id="kp-save" disabled>Save Profile</button></div>
         <div class="form-footer" id="kp-save-footer"></div>
+      </div>
+      <div class="form-section">
+        <div class="form-card"><button class="form-row km-form-button danger-text" id="kp-clear-profile" disabled>Clear Profile</button></div>
+        <div class="form-footer">Clearing writes an empty profile to the chain from your address to itself, for a network fee, so KaChat shows nothing for your address again.</div>
       </div>`,
   });
   panel = handle.panel;
@@ -272,10 +292,19 @@ function showLiveProfileEditor({ onSaved }) {
         syncInputs(kind);
       }
       lookup(kind);
+      panel.querySelector(`[data-clear="${kind}"]`).hidden = isEmpty(fields[kind]);
+    };
+    // one tap empties the field; saving then writes the profile without it (iOS 9638498)
+    panel.querySelector(`[data-clear="${kind}"]`).onclick = () => {
+      fields[kind].handle = "";
+      syncInputs(kind);
+      lookup(kind, 0);
     };
   }
   const linktree = panel.querySelector("#kp-linktree");
   linktree.oninput = () => { state.linktree = linktree.value; paintSave(); };
+  panel.querySelector("#kp-linktree-clear").onclick = () => { state.linktree = ""; linktree.value = ""; paintSave(); };
+  panel.querySelector("#kp-clear-profile").onclick = clearProfile;
   const primary = panel.querySelector("#kp-primary");
   if (primary) primary.onchange = () => { state.primary = primary.value; };
   panel.querySelector("#kp-save").onclick = save;

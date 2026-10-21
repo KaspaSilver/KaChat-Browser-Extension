@@ -32,6 +32,18 @@ import { followAccount } from "./approve.js";
 import { sompiFromUserText } from "./amounts.js";
 import { showAddToPortfolio } from "./portfolio.js";
 
+// The quantum-safe shield (iOS bba1b1e): green while the address's key has never been on chain
+// (receiving any number of times is fine); slashed once it has spent - orange when funds sit on it
+// again, gray when empty.
+const SHIELD = '<svg width="13" height="13" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.2 4 5.3v6.2c0 5 3.4 9.3 8 10.5 4.6-1.2 8-5.5 8-10.5V5.3Z" fill="currentColor"/></svg>';
+const SHIELD_SLASH = '<svg width="13" height="13" viewBox="0 0 24 24" aria-hidden="true"><defs><mask id="q-shield-cut"><rect width="24" height="24" fill="#fff"/><path d="M3.5 3.5 20.5 20.5" stroke="#000" stroke-width="5.4" stroke-linecap="round"/></mask></defs><path mask="url(#q-shield-cut)" d="M12 2.2 4 5.3v6.2c0 5 3.4 9.3 8 10.5 4.6-1.2 8-5.5 8-10.5V5.3Z" fill="currentColor"/><path d="M3.5 3.5 20.5 20.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
+export function quantumShieldHtml(row) {
+  if (!row?.quantum) return "";
+  return row.spent
+    ? `<span class="q-shield ${row.balanceSompi > 0n ? "q-funded" : "q-empty"}" role="img" aria-label="Key revealed by a spend" title="Key revealed by a spend">${SHIELD_SLASH}</span>`
+    : '<span class="q-shield q-safe" role="img" aria-label="Quantum-safe" title="Quantum-safe">' + SHIELD + "</span>";
+}
+
 // SF Symbols these screens use, drawn to match.
 const SF = {
   arrowUpFill: '<svg width="26" height="26" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10" fill="currentColor"/><path d="M12 17V7.5M7.8 11.5L12 7.3l4.2 4.2" fill="none" stroke="var(--bg)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
@@ -431,6 +443,18 @@ export function showManageAddresses({ onBack, onChangeIdentity = null }) {
     if (here()) paint();
     probeUsed();
     probeDomains();
+    probeQuantumSpent();
+  };
+
+  // The chain's word on each quantum-safe row, for spends made on another device or before a
+  // restore (a spent mark is permanent), one row at a time as iOS does.
+  const probeQuantumSpent = async () => {
+    for (const row of state.list?.rows || []) {
+      if (!row.quantum || row.spent) continue;
+      if ((await wallet.quantumSpentState(row.address)) !== true) continue;
+      row.spent = true;
+      if (here()) paint();
+    }
   };
 
   // iOS: funded rows are used; the rest use what is known, then transactions-count 8 at a time,
@@ -539,7 +563,7 @@ export function showManageAddresses({ onBack, onChangeIdentity = null }) {
     return `
       <div class="discovery">
         <span class="spinner"></span>
-        <div class="strong">Checking address #${d.checkingIndex}</div>
+        <div class="strong">${wallet.isQuantumIndex(d.checkingIndex) ? "Checking quantum-safe addresses" : `Checking address #${d.checkingIndex}`}</div>
         <div class="muted small">${d.foundCount ? `${d.foundCount} found so far` : "No addresses with a balance or domain yet"}</div>
         <div class="muted tiny">Checks the first thousand addresses whatever the gaps, then keeps going while it keeps finding.</div>
         <button class="sheet-row center-text" id="keep-scanning"><span class="sheet-label">Close and Keep Scanning</span></button>
@@ -570,7 +594,8 @@ export function showManageAddresses({ onBack, onChangeIdentity = null }) {
     paint();
     try {
       const index = await wallet.generateSpendingAddress();
-      toast(`Spending address #${index} is ready.`);
+      // numbered on its own chain (iOS e001786): a quantum-safe slot is #0, #1, ...
+      toast(`Spending address #${wallet.isQuantumIndex(index) ? index - wallet.QUANTUM_INDEX_BASE : index} is ready.`);
     } catch (error) {
       toast(error.message);
     }
@@ -624,7 +649,7 @@ export function showManageAddresses({ onBack, onChangeIdentity = null }) {
         ${rows.map((row) => `
           <div class="glass address-card" data-open="${row.index}" role="button" tabindex="0">
             <div class="address-card-main">
-              <span class="muted small medium">${esc(displayLabel(row))}</span>
+              <span class="muted small medium">${esc(displayLabel(row))}${quantumShieldHtml(row)}</span>
               <span class="mono small">${esc(shortAddress(row.address))}</span>
               <span class="strong small">${esc(formatKas8(row.balanceSompi))} KAS</span>
               <span class="address-status">${usedBadge(row)}${domainOwners.get(row.address) ? '<span class="domain-tag">Contains domain</span>' : ""}</span>
@@ -745,7 +770,16 @@ function showVisibility({ onBack }) {
       const addresses = await wallet.spendingAddressRange(start, PAGE);
       const balances = await wallet.balancesFor(Object.values(addresses));
       const st = state.list.state;
-      state.rows = Object.entries(addresses).map(([index, address]) => {
+      // the revealed quantum-safe slots lead the first page, so a hidden one can come back
+      const quantumRows = state.page === 0 ? state.list.rows.filter((r) => r.quantum) : [];
+      const quantumBalances = quantumRows.length ? await wallet.balancesFor(quantumRows.map((r) => r.address)) : {};
+      state.rows = [...quantumRows.map((r) => ({
+        index: r.index, address: r.address, revealed: true, quantum: true, spent: r.spent,
+        visible: !st.hidden.includes(r.index),
+        primary: r.index === st.activeIndex,
+        customLabel: wallet.customLabel(st, r.index),
+        balanceSompi: quantumBalances[r.address] ?? 0n,
+      }))].concat(Object.entries(addresses).map(([index, address]) => {
         const i = Number(index);
         const revealed = i <= st.maxIndex;
         return {
@@ -755,7 +789,7 @@ function showVisibility({ onBack }) {
           customLabel: wallet.customLabel(st, i),
           balanceSompi: balances[address] ?? 0n,
         };
-      });
+      }));
     } catch {
       state.rows = [];
     }
@@ -812,7 +846,7 @@ function showVisibility({ onBack }) {
                 <button class="vis-row ${locked ? "locked" : ""}" data-vis="${row.index}" ${locked ? "aria-disabled=\"true\"" : ""}>
                   <span class="${row.visible ? "accent" : "muted"}">${row.visible ? ICONS.circleCheck : ICONS.circle}</span>
                   <span class="tx-meta">
-                    <span><span class="strong small mono-digits">#${row.index}</span>${row.customLabel ? ` <span class="muted tiny">${esc(row.customLabel)}</span>` : ""}</span>
+                    <span><span class="strong small mono-digits">#${row.quantum ? row.index - wallet.QUANTUM_INDEX_BASE : row.index}</span>${quantumShieldHtml(row)}${row.customLabel ? ` <span class="muted tiny">${esc(row.customLabel)}</span>` : ""}</span>
                     <span class="mono tiny muted">${esc(`${row.address.slice(0, 16)}…${row.address.slice(-6)}`)}</span>
                   </span>
                   ${trailing(row)}
@@ -930,7 +964,7 @@ async function showConsolidate({ list, onBack }) {
       try {
         const coins = await wallet.utxos(source.address);
         if (!coins.length) continue;
-        const base = (await wallet.maxFee(coins.length)).policyKas;
+        const base = (await wallet.maxFee(coins.length, { sourceIndex: source.index })).policyKas;
         const total = state.customKas != null ? Math.max(state.customKas, base) : base * multiplier;
         const result = await wallet.send({ source: { kind: "spending", index: source.index }, destination: primary.address, max: true, totalFeeKas: total.toFixed(8) });
         txids.push(...(result?.txids || []));
