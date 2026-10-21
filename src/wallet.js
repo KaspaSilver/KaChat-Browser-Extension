@@ -136,6 +136,26 @@ function boundPatchFor(index, state) {
   return isQuantumIndex(index) ? { qMaxIndex: Math.max(state.qMaxIndex, chainLocalIndex(index)) } : { maxIndex: Math.max(state.maxIndex, index) };
 }
 
+/**
+ * The next fresh quantum-safe slot, checked on chain first (iOS da2c8e2 verifiedFreshQuantumIndex,
+ * IOS-101): this browser's end of the chain can sit below slots used elsewhere (another device, a
+ * restore that hasn't looked far enough). While the REST server says the slot has history it is
+ * skipped - the end raised past it, the slot listed like any revealed one - up to 20 times; a check that can't be answered takes the
+ * slot as is, so an unreachable server never blocks a send. -> `{ index, address }`
+ */
+async function verifiedFreshQuantumSlot(account) {
+  let state = await spendingState(account.id);
+  let index = nextFreshQuantumIndex(state.qMaxIndex);
+  let address = (await spendingAddressRange(index, 1, account))[index];
+  for (let i = 0; i < 20 && address; i += 1) {
+    if ((await addressUsed(address)) !== true) break;
+    state = await saveSpendingState(account.id, { qMaxIndex: chainLocalIndex(index) });
+    index = nextFreshQuantumIndex(state.qMaxIndex);
+    address = (await spendingAddressRange(index, 1, account))[index];
+  }
+  return { index, address };
+}
+
 /** A quantum-safe address that has spent: its key is on chain for good (the shield comes off). */
 async function markQuantumSpent(accountId, address) {
   const lowered = String(address || "").toLowerCase();
@@ -586,9 +606,11 @@ export async function send({ source, destination, amountKas = null, tipKas = "0"
     });
     if (index != null) {
       const account = await accountSecretsById(from.accountId);
-      try { fresh = { index, address: deriveSpendingWallet(k, account.mnemonic, index, account.passphrase).address }; } catch { fresh = null; }
-      // a quantum source's change never goes back to it: no fresh slot, no send
-      if (!fresh && from.quantum) throw new Error("Couldn't prepare a new address for the change. Please try again.");
+      // a fresh quantum slot, checked on chain first (iOS da2c8e2)
+      try { fresh = await verifiedFreshQuantumSlot(account); } catch { fresh = null; }
+      if (!fresh?.address) fresh = null;
+      // a quantum source's change never goes back to the key its spend reveals (IOS-104)
+      if (!fresh && from.quantum) throw new Error("Couldn't prepare the next address. Try again.");
     }
   }
   const result = await sendKaspa({
@@ -850,8 +872,8 @@ export async function spendingList() {
 
 // Whether a quantum-safe address has ever SPENT - the one event that puts its key on chain
 // (receiving reveals nothing; iOS ChatService.quantumAddressSpentState). true is remembered for
-// good; false = no spend in its history (reused for a minute, so repaints don't flood the REST
-// server); null = the history can't be read now. Quantum addresses are young: one page covers them.
+// good; false = no spend in its whole history (reused for a minute, so repaints don't flood the
+// REST server); null = the history can't be read now.
 const quantumUnspentSeenAt = new Map();
 export async function quantumSpentState(address) {
   const account = await activeAccountSecrets();
@@ -859,16 +881,26 @@ export async function quantumSpentState(address) {
   if (!lowered) return null;
   if ((await spendingState(account.id)).qSpent.includes(lowered)) return true;
   if (Date.now() - (quantumUnspentSeenAt.get(lowered) || 0) < 60_000) return false;
+  // the whole history, page by page, until a spend is found (iOS da2c8e2 / IOS-105): an unreadable
+  // page, or a history deeper than 10,000, answers unknown - never "not spent"
+  const PAGE = 500;
   try {
-    const url = `${restBase()}/addresses/${encodeURIComponent(address)}/full-transactions?limit=200&offset=0&resolve_previous_outpoints=light`;
-    const response = await fetch(url, { headers: { Accept: "application/json" }, cache: "no-store", signal: AbortSignal.timeout(15_000) });
-    if (!response.ok) return null;
-    const txs = await response.json();
-    if (!Array.isArray(txs)) return null;
-    const spent = txs.some((tx) => (tx?.inputs || []).some((input) => String(input?.previous_outpoint_address || "").toLowerCase() === lowered));
-    if (spent) await markQuantumSpent(account.id, address);
-    else quantumUnspentSeenAt.set(lowered, Date.now());
-    return spent;
+    for (let offset = 0; offset < 10_000; offset += PAGE) {
+      const url = `${restBase()}/addresses/${encodeURIComponent(address)}/full-transactions?limit=${PAGE}&offset=${offset}&resolve_previous_outpoints=light`;
+      const response = await fetch(url, { headers: { Accept: "application/json" }, cache: "no-store", signal: AbortSignal.timeout(20_000) });
+      if (!response.ok) return null;
+      const txs = await response.json();
+      if (!Array.isArray(txs)) return null;
+      if (txs.some((tx) => (tx?.inputs || []).some((input) => String(input?.previous_outpoint_address || "").toLowerCase() === lowered))) {
+        await markQuantumSpent(account.id, address);
+        return true;
+      }
+      if (txs.length < PAGE) {
+        quantumUnspentSeenAt.set(lowered, Date.now());
+        return false;
+      }
+    }
+    return null;
   } catch {
     return null;
   }
@@ -945,19 +977,17 @@ export async function setPrimarySpending(index) {
 /** The next never-revealed spending address (the slot after the last one) - shown, not reserved
  *  (iOS spendingAddress(at: maxSpendingAddressIndex + 1)). */
 export async function nextFreshSpendingAddress() {
-  const { state } = await activeState();
-  // new addresses are quantum-safe (KIP-22, iOS bba1b1e)
-  const index = nextFreshQuantumIndex(state.qMaxIndex);
-  return { index, address: (await spendingAddressRange(index, 1))[index] };
+  const { account } = await activeState();
+  // new addresses are quantum-safe (KIP-22, iOS bba1b1e), checked on chain first (iOS da2c8e2)
+  return verifiedFreshQuantumSlot(account);
 }
 
 /** Reserves the next never-revealed spending address for one use (a payment request): the
  *  chain moves past it, so nothing hands it out again (iOS reserveFreshSpendingAddresses). */
 export async function reserveFreshSpendingAddress() {
-  const { account, state } = await activeState();
-  const index = nextFreshQuantumIndex(state.qMaxIndex);
-  const address = (await spendingAddressRange(index, 1))[index];
-  await saveSpendingState(account.id, boundPatchFor(index, state));
+  const { account } = await activeState();
+  const { index, address } = await verifiedFreshQuantumSlot(account);
+  await saveSpendingState(account.id, boundPatchFor(index, await spendingState(account.id)));
   await cacheSpendingAddress(account.id, index, address);
   return { index, address };
 }
@@ -989,9 +1019,9 @@ export async function generateSpendingAddress() {
       }
     }
   }
-  const index = nextFreshQuantumIndex(state.qMaxIndex);
-  const [address] = Object.values(await spendingAddressRange(index, 1));
-  await saveSpendingState(account.id, { ...boundPatchFor(index, state), hidden: state.hidden.filter((i) => i !== index) });
+  const { index, address } = await verifiedFreshQuantumSlot(account);
+  const now = await spendingState(account.id);
+  await saveSpendingState(account.id, { ...boundPatchFor(index, now), hidden: now.hidden.filter((i) => i !== index) });
   await cacheSpendingAddress(account.id, index, address);
   return index;
 }
@@ -1099,22 +1129,33 @@ export async function discoverSpendingAddresses(onProgress = () => {}) {
     }
   }
 
-  // The quantum-safe chain (KIP-22, iOS discoverQuantumAddresses): young, extended one slot at a
-  // time, so its first QUANTUM_SCAN_FLOOR slots are looked at - a restored seed finds what another
-  // device received there. Coins only (a domain is never sent to a P2SH address).
+  // The quantum-safe chain (KIP-22, iOS discoverQuantumAddresses, da2c8e2 / IOS-101): windows of
+  // QUANTUM_SCAN_FLOOR slots while a window shows any activity, up to 10,000. Funded slots are shown
+  // again, and the chain's end goes past every slot that EVER saw activity - not only funded ones -
+  // so an already-used (maybe key-revealed) slot is never handed out as fresh. Without the bulk
+  // activity answer only the first window's balances can be read. Coins only (no domain goes to P2SH).
+  const QUANTUM_SCAN_LIMIT = 10_000;
   const quantumFound = new Set();
-  const quantumAddresses = await spendingAddressRange(QUANTUM_INDEX_BASE, QUANTUM_SCAN_FLOOR, account);
-  const quantumList = Object.keys(quantumAddresses).map(Number).sort((a, b) => a - b);
-  const quantumActive = await addressesActive(quantumList.map((i) => quantumAddresses[i]));
-  const quantumCandidates = quantumActive ? quantumList.filter((i) => quantumActive[quantumAddresses[i]]) : quantumList;
-  if (quantumCandidates.length) {
-    const balances = await balancesFor(quantumCandidates.map((i) => quantumAddresses[i]));
-    for (const index of quantumCandidates) if ((balances[quantumAddresses[index]] ?? 0n) > 0n) quantumFound.add(index);
+  const quantumAddresses = {};
+  let quantumUsedHighest = -1;
+  for (let start = 0; start < QUANTUM_SCAN_LIMIT; start += QUANTUM_SCAN_FLOOR) {
+    const window = await spendingAddressRange(QUANTUM_INDEX_BASE + start, QUANTUM_SCAN_FLOOR, account);
+    Object.assign(quantumAddresses, window);
+    const list = Object.keys(window).map(Number).sort((a, b) => a - b);
+    if (!list.length) break;
+    const active = await addressesActive(list.map((i) => window[i]));
+    const touched = active ? list.filter((i) => active[window[i]]) : list;
+    if (active && touched.length) quantumUsedHighest = Math.max(quantumUsedHighest, chainLocalIndex(touched[touched.length - 1]));
+    if (touched.length) {
+      const balances = await balancesFor(touched.map((i) => window[i]));
+      for (const index of touched) if ((balances[window[index]] ?? 0n) > 0n) quantumFound.add(index);
+    }
+    onProgress({ checkingIndex: QUANTUM_INDEX_BASE + start + QUANTUM_SCAN_FLOOR - 1, foundCount: found.size + quantumFound.size });
+    if (!active || !touched.length) break;
   }
-  onProgress({ checkingIndex: QUANTUM_INDEX_BASE + QUANTUM_SCAN_FLOOR - 1, foundCount: found.size + quantumFound.size });
 
   const highest = Math.max(state.maxIndex, ...found);
-  const quantumHighest = Math.max(state.qMaxIndex, ...[...quantumFound].map(chainLocalIndex));
+  const quantumHighest = Math.max(state.qMaxIndex, quantumUsedHighest, ...[...quantumFound].map(chainLocalIndex));
   const hidden = new Set(state.hidden);
   for (let index = state.maxIndex + 1; index <= highest; index += 1) if (!found.has(index)) hidden.add(index);
   for (let n = state.qMaxIndex + 1; n <= quantumHighest; n += 1) if (!quantumFound.has(QUANTUM_INDEX_BASE + n)) hidden.add(QUANTUM_INDEX_BASE + n);
