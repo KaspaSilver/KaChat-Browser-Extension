@@ -180,9 +180,25 @@ async function migratePassphrases(payload) {
   return payload;
 }
 
+// Vault changes take turns across every open window - popup, tab, approval window - through one
+// Web Lock (audit EXT-027): an account change reads, edits and writes the vault inside it, and a
+// password change re-seals and stores the new key inside it, so a write can never start before a
+// password change and land after it (that put the old-password seal back and quietly undid the
+// change). Web Locks are not reentrant: only the public entry points take it.
+const VAULT_LOCK = "kachat-vault";
+function withVaultLock(fn) {
+  const locks = globalThis.navigator?.locks;
+  return locks?.request ? locks.request(VAULT_LOCK, fn) : fn();
+}
+
 async function writePayload(payload) {
   const vault = await getLocal(VAULT_KEY);
-  await setLocal(VAULT_KEY, await seal(payload, await sessionKeyBytes(vault), vault.kdf));
+  const sealed = await seal(payload, await sessionKeyBytes(vault), vault.kdf);
+  // still the vault this seal is for - never write an old-password seal over a re-sealed vault
+  if ((await getLocal(VAULT_KEY))?.kdf?.salt !== vault.kdf.salt) {
+    throw new Error("The wallet password was just changed in another window. Try again.");
+  }
+  await setLocal(VAULT_KEY, sealed);
   await publishAccountIds(payload);
 }
 
@@ -239,13 +255,15 @@ export async function accountSecretsById(id) {
 }
 
 export async function renameAccount(id, name) {
-  const clean = String(name || "").trim();
-  if (!clean) return readAccounts();
-  const payload = await readPayload();
-  const account = payload.accounts.find((a) => a.id === id);
-  if (account) account.name = clean.slice(0, 40);
-  await writePayload(payload);
-  return publicView(payload);
+  return withVaultLock(async () => {
+    const clean = String(name || "").trim();
+    if (!clean) return readAccounts();
+    const payload = await readPayload();
+    const account = payload.accounts.find((a) => a.id === id);
+    if (account) account.name = clean.slice(0, 40);
+    await writePayload(payload);
+    return publicView(payload);
+  });
 }
 
 /**
@@ -253,35 +271,41 @@ export async function renameAccount(id, name) {
  * Refuses a phrase that is already in the vault with the same passphrase and address family.
  */
 export async function addAccount(account) {
-  const payload = await readPayload();
-  const next = normalizeAccount(account);
-  const duplicate = payload.accounts.find((a) =>
-    a.mnemonic === next.mnemonic && (a.passphrase || "") === next.passphrase
-    && (a.family || "kaspaStandard") === next.family && (a.identityIndex || 0) === next.identityIndex);
-  if (duplicate) throw new Error(`This account is already in the wallet as "${duplicate.name}".`);
-  const stored = { ...next, id: newAccountId(), createdAt: Date.now() };
-  payload.accounts.push(stored);
-  payload.activeAccountId = stored.id;
-  await writePayload(payload);
-  return publicView(payload);
+  return withVaultLock(async () => {
+    const payload = await readPayload();
+    const next = normalizeAccount(account);
+    const duplicate = payload.accounts.find((a) =>
+      a.mnemonic === next.mnemonic && (a.passphrase || "") === next.passphrase
+      && (a.family || "kaspaStandard") === next.family && (a.identityIndex || 0) === next.identityIndex);
+    if (duplicate) throw new Error(`This account is already in the wallet as "${duplicate.name}".`);
+    const stored = { ...next, id: newAccountId(), createdAt: Date.now() };
+    payload.accounts.push(stored);
+    payload.activeAccountId = stored.id;
+    await writePayload(payload);
+    return publicView(payload);
+  });
 }
 
 /** Moves an account's chatting (identity) address to another index of its family. */
 export async function setIdentityIndex(id, index) {
-  const payload = await readPayload();
-  const account = payload.accounts.find((a) => a.id === id);
-  if (!account) throw new Error("That account is no longer in the wallet.");
-  account.identityIndex = Math.max(0, Math.floor(Number(index) || 0));
-  await writePayload(payload);
-  return publicView(payload);
+  return withVaultLock(async () => {
+    const payload = await readPayload();
+    const account = payload.accounts.find((a) => a.id === id);
+    if (!account) throw new Error("That account is no longer in the wallet.");
+    account.identityIndex = Math.max(0, Math.floor(Number(index) || 0));
+    await writePayload(payload);
+    return publicView(payload);
+  });
 }
 
 export async function switchAccount(id) {
-  const payload = await readPayload();
-  if (!payload.accounts.some((a) => a.id === id)) throw new Error("That account is no longer in the wallet.");
-  payload.activeAccountId = id;
-  await writePayload(payload);
-  return publicView(payload);
+  return withVaultLock(async () => {
+    const payload = await readPayload();
+    if (!payload.accounts.some((a) => a.id === id)) throw new Error("That account is no longer in the wallet.");
+    payload.activeAccountId = id;
+    await writePayload(payload);
+    return publicView(payload);
+  });
 }
 
 /**
@@ -289,12 +313,14 @@ export async function switchAccount(id) {
  * Reset Wallet. Returns the new public view (the next account becomes active).
  */
 export async function removeAccount(id) {
-  const payload = await readPayload();
-  if (payload.accounts.length <= 1) throw new Error("This is the only account. Use Reset Wallet to remove everything.");
-  payload.accounts = payload.accounts.filter((a) => a.id !== id);
-  if (payload.activeAccountId === id) payload.activeAccountId = payload.accounts[0].id;
-  await writePayload(payload);
-  return publicView(payload);
+  return withVaultLock(async () => {
+    const payload = await readPayload();
+    if (payload.accounts.length <= 1) throw new Error("This is the only account. Use Reset Wallet to remove everything.");
+    payload.accounts = payload.accounts.filter((a) => a.id !== id);
+    if (payload.activeAccountId === id) payload.activeAccountId = payload.accounts[0].id;
+    await writePayload(payload);
+    return publicView(payload);
+  });
 }
 
 /** An account's recovery phrase (and passphrase), after the password is checked again. */
@@ -312,11 +338,13 @@ export async function changePassword(currentPassword, nextPassword) {
     throw new Error(`Use a password of at least ${MIN_PASSWORD_LENGTH} characters.`);
   }
   if (!(await verifyPassword(currentPassword))) throw new Error("The current password is wrong.");
-  const payload = await readPayload();
-  const kdf = newKdf();
-  const keyBytes = await deriveKeyBytes(nextPassword, fromBase64(kdf.salt), kdf.iterations);
-  await setLocal(VAULT_KEY, await seal(payload, keyBytes, kdf));
-  await setSession(SESSION_KEY, sessionRecord(keyBytes, kdf));
+  await withVaultLock(async () => {
+    const payload = await readPayload();
+    const kdf = newKdf();
+    const keyBytes = await deriveKeyBytes(nextPassword, fromBase64(kdf.salt), kdf.iterations);
+    await setLocal(VAULT_KEY, await seal(payload, keyBytes, kdf));
+    await setSession(SESSION_KEY, sessionRecord(keyBytes, kdf));
+  });
 }
 
 /**
