@@ -135,21 +135,25 @@ export async function createVault(password, account) {
   return publicView(payload);
 }
 
-/** Unlocks with the password. Throws "Wrong password." when it does not open the vault. */
+/** Unlocks with the password. Throws "Wrong password." when it does not open the vault. Inside the
+ *  vault lock (audit EXT-030): an unlock racing a password change can't store a key for the vault
+ *  it read before the change - it reads the vault the change left, or finishes before it. */
 export async function unlock(password) {
-  const vault = await getLocal(VAULT_KEY);
-  if (!vault) throw new Error("No wallet has been set up yet.");
-  const keyBytes = await deriveKeyBytes(password, fromBase64(vault.kdf.salt), vault.kdf.iterations);
-  let payload;
-  try {
-    payload = await open(vault, keyBytes);
-  } catch {
-    // AES-GCM authentication failure: the key (so the password) is wrong.
-    throw new Error("Wrong password.");
-  }
-  await setSession(SESSION_KEY, sessionRecord(keyBytes, vault.kdf));
-  await publishAccountIds(payload);
-  return publicView(await migratePassphrases(payload));
+  return withVaultLock(async () => {
+    const vault = await getLocal(VAULT_KEY);
+    if (!vault) throw new Error("No wallet has been set up yet.");
+    const keyBytes = await deriveKeyBytes(password, fromBase64(vault.kdf.salt), vault.kdf.iterations);
+    let payload;
+    try {
+      payload = await open(vault, keyBytes);
+    } catch {
+      // AES-GCM authentication failure: the key (so the password) is wrong.
+      throw new Error("Wrong password.");
+    }
+    await setSession(SESSION_KEY, sessionRecord(keyBytes, vault.kdf));
+    await publishAccountIds(payload);
+    return publicView(await migratePassphrases(payload));
+  });
 }
 
 export async function lock() {

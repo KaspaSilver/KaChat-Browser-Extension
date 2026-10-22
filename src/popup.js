@@ -610,6 +610,8 @@ async function refreshHome() {
       s.balances = await wallet.balances(s.addresses, []);
       // The bell: Kaspa that arrived in any of this account's addresses since the last look.
       bellReceipts(s);
+      // a restored phrase's address discovery, if it never completed (audit EXT-031)
+      wallet.runPendingDiscovery(s.account.id);
       // "Your own address" on every To field, KasSigner's send included (iOS 56f004f)
       loadOwnAddresses();
       // A faucet visit's payment landed: Claim Testnet Kaspa locks for 24 hours.

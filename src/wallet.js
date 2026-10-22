@@ -1074,6 +1074,30 @@ export async function freshReceiveAddress() {
   return addressAt(index);
 }
 
+// A restored recovery phrase discovers its addresses by itself (iOS da2c8e2). The sweep runs in the
+// page that is open, and the toolbar popup can close at any moment, taking it along (audit EXT-031):
+// so the import leaves a per-account, per-network mark, every open of the wallet runs the sweep
+// while the mark is there, and only a sweep that completed clears it.
+const pendingDiscoveryKey = (accountId) => netKey(`kachat.pendingDiscovery.${accountId}`);
+let pendingDiscoveryRunning = false;
+export async function markDiscoveryPending(accountId) {
+  if (accountId) await setLocal(pendingDiscoveryKey(accountId), Date.now());
+}
+/** Runs the restore sweep for `accountId` when one is still owed (the active account only). */
+export async function runPendingDiscovery(accountId) {
+  if (!accountId || pendingDiscoveryRunning || !(await getLocal(pendingDiscoveryKey(accountId)))) return;
+  pendingDiscoveryRunning = true;
+  try {
+    if ((await activeAccountSecrets()).id !== accountId) return;
+    await discoverSpendingAddresses();
+    await removeLocal(pendingDiscoveryKey(accountId));
+  } catch (error) {
+    console.warn("[KaChat Wallet] restore discovery (tried again next time):", error);
+  } finally {
+    pendingDiscoveryRunning = false;
+  }
+}
+
 /**
  * iOS "Discover Addresses" (WalletManager.discoverSpendingAddresses). A match is an address
  * holding Kaspa or a KNS domain.

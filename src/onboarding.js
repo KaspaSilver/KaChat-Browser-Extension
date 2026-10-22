@@ -196,12 +196,13 @@ function confirmRemoveAccount(account, count) {
 
 /** A typed-in recovery phrase runs the full Discover Addresses sweep - both chains - in the
  *  background once the wallet is open (iOS da2c8e2, owner: yes), so what this phrase received on
- *  another device shows up without a manual scan. Creating or switching accounts doesn't scan. */
-function discoverAfterRestore(account) {
-  if (!account?.imported) return;
-  setTimeout(() => {
-    wallet.discoverSpendingAddresses().catch((error) => console.warn("[KaChat Wallet] restore discovery:", error));
-  }, 3000);
+ *  another device shows up without a manual scan. Creating or switching accounts doesn't scan.
+ *  The sweep is owed until it completes (audit EXT-031): a popup closed mid-sweep runs it again
+ *  the next time the wallet opens. */
+async function discoverAfterRestore(account, accountId) {
+  if (!account?.imported || !accountId) return;
+  try { await wallet.markDiscoveryPending(accountId); } catch { return; }
+  wallet.runPendingDiscovery(accountId);
 }
 
 /**
@@ -219,7 +220,7 @@ async function finishAccount(account, onBack, buttonLabel) {
       importDraft = null;
       noteActivity();
       goHome();
-      discoverAfterRestore(account);
+      discoverAfterRestore(account, view.activeAccountId);
     } catch (error) {
       toast(error.message);
     }
@@ -808,7 +809,7 @@ function showSetPassword(account, onBack, buttonLabel = "Create Account") {
       importDraft = null;
       noteActivity();
       goHome();
-      discoverAfterRestore(account);
+      discoverAfterRestore(account, view.activeAccountId);
     } catch (err) {
       error.textContent = err.message;
       button.disabled = false;
