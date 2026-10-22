@@ -451,7 +451,7 @@ export function showManageAddresses({ onBack, onChangeIdentity = null }) {
   const probeQuantumSpent = async () => {
     for (const row of state.list?.rows || []) {
       if (!row.quantum || row.spent) continue;
-      if ((await wallet.quantumSpentState(row.address)) !== true) continue;
+      if ((await wallet.quantumSpentState(row.address, state.list?.accountId)) !== true) continue;
       row.spent = true;
       if (here()) paint();
     }

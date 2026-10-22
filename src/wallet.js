@@ -34,7 +34,7 @@ import {
 } from "../shared/engine/kns-write.js";
 import { getLocal, setLocal, removeLocal } from "./browser.js";
 import { IS_TESTNET, NETWORK as ACTIVE_NETWORK, NETWORK_ID, ADDRESS_PREFIX, netKey, MAINNET_REST, TESTNET_REST, MAINNET_KNS, TESTNET_KNS, isValidKaspaAddress, networkOfAddress } from "./net.js";
-import { activeAccountSecrets, accountSecretsById } from "./vault.js";
+import { activeAccountSecrets, accountSecretsById, ACCOUNT_IDS_KEY } from "./vault.js";
 import { sompiFromUserText } from "./amounts.js";
 
 let kaspaPromise = null;
@@ -118,7 +118,27 @@ export async function spendingState(accountId) {
   return { ...spendingStateFromRecord(raw), receiveIndex };
 }
 
+/** Used, as far as anyone can tell: on-chain history (REST), or - when that server's history has
+ *  gaps (testnet's REST answered "0 transactions" for an address holding 50 TKAS) - a balance now.
+ *  true / false, or null when neither can be read. */
+async function addressUsedOrFunded(address) {
+  const used = await addressUsed(address);
+  if (used === true) return true;
+  let funded = null;
+  try { funded = ((await balancesFor([address]))[address] ?? 0n) > 0n; } catch { funded = null; }
+  if (funded) return true;
+  return used;
+}
+
+// Writes go to the account a send, sweep or probe started on, even if another one is active when it
+// answers (iOS IOS-107/109) - and an account removed meanwhile gets nothing (no orphaned records).
+async function accountStillExists(accountId) {
+  const ids = await getLocal(ACCOUNT_IDS_KEY);
+  return !Array.isArray(ids) || ids.includes(accountId);
+}
+
 export async function saveSpendingState(accountId, patch) {
+  if (!(await accountStillExists(accountId))) return spendingState(accountId);
   const previous = (await getLocal(spendingStateKey(accountId))) || {};
   const next = { ...(await spendingState(accountId)), ...patch };
   // a revealed index widens its own chain's bound only: a quantum one never the legacy chain
@@ -149,7 +169,7 @@ async function verifiedFreshQuantumSlot(account) {
   let index = nextFreshQuantumIndex(state.qMaxIndex);
   let address = (await spendingAddressRange(index, 1, account))[index];
   for (let i = 0; i < FRESH_QUANTUM_PROBE_LIMIT && address; i += 1) {
-    if ((await addressUsed(address)) !== true) break;
+    if ((await addressUsedOrFunded(address)) !== true) break;
     state = await saveSpendingState(account.id, { qMaxIndex: chainLocalIndex(index) });
     index = nextFreshQuantumIndex(state.qMaxIndex);
     address = (await spendingAddressRange(index, 1, account))[index];
@@ -812,6 +832,7 @@ export async function addressUsed(address) {
 // --- Spending addresses -------------------------------------------------------------------
 
 async function cacheSpendingAddress(accountId, index, address) {
+  if (!(await accountStillExists(accountId))) return;
   const cached = (await cachedAddresses(accountId)) || { accountId, main: null, spending: {} };
   cached.spending = { ...(cached.spending || {}), [index]: address };
   await setLocal(addressCacheKey(accountId), cached);
@@ -855,6 +876,7 @@ export async function spendingList() {
   }
   const balancesByAddress = await balancesFor(indexes.map((i) => addresses[i]));
   return {
+    accountId: account.id,
     state,
     rows: indexes.map((index) => ({
       index,
@@ -876,8 +898,9 @@ export async function spendingList() {
 // good; false = no spend in its whole history (reused for a minute, so repaints don't flood the
 // REST server); null = the history can't be read now.
 const quantumUnspentSeenAt = new Map();
-export async function quantumSpentState(address) {
-  const account = await activeAccountSecrets();
+export async function quantumSpentState(address, accountId = null) {
+  // marks go to the account whose row was probed (IOS-109), not whichever is active when it answers
+  const account = accountId ? { id: accountId } : await activeAccountSecrets();
   const lowered = String(address || "").toLowerCase();
   if (!lowered) return null;
   if ((await spendingState(account.id)).qSpent.includes(lowered)) return true;
@@ -947,8 +970,8 @@ export async function hideAllSpending() {
   return saveSpendingState(account.id, { hidden: revealedSpendingIndices(state) });
 }
 
-export async function setSpendingHidden(index, hidden) {
-  const { account, state } = await activeState();
+export async function setSpendingHidden(index, hidden, accountId = null) {
+  const { account, state } = accountId ? { account: { id: accountId }, state: await spendingState(accountId) } : await activeState();
   // every address toggles both ways, funded ones too (iOS 245a5d2); totals count hidden ones
   const set = new Set(state.hidden);
   if (hidden) set.add(index); else set.delete(index);
@@ -996,8 +1019,8 @@ export async function reserveFreshSpendingAddress() {
 // New addresses are on the quantum-safe chain (iOS bba1b1e lowestUnusedQuantumAddress): a hidden
 // quantum slot that is confirmed unused is recycled, else the chain extends by one. Legacy
 // addresses are never handed out again, and stay spendable.
-export async function generateSpendingAddress() {
-  const { account, state } = await activeState();
+export async function generateSpendingAddress(forAccount = null) {
+  const { account, state } = forAccount ? { account: forAccount, state: await spendingState(forAccount.id) } : await activeState();
   const cached = (await cachedAddresses(account.id))?.spending || {};
   const candidates = [...state.hidden].sort((a, b) => a - b)
     .filter((i) => isQuantumIndex(i) && i !== state.activeIndex && chainLocalIndex(i) <= state.qMaxIndex);
@@ -1052,26 +1075,31 @@ export async function freshReceiveAddress() {
   const { account, state } = await activeState();
   // Derived from the recovery phrase every time (audit EXT-006): a cached address that doesn't
   // match is replaced, never shown.
+  // every derivation and write is this account's, even if another becomes active meanwhile (IOS-109)
   const addressAt = async (index) => {
     const cached = (await cachedAddresses(account.id))?.spending?.[index];
-    const derived = (await spendingAddressRange(index, 1))[index];
+    const derived = (await spendingAddressRange(index, 1, account))[index];
     if (cached && cached !== derived) await cacheSpendingAddress(account.id, index, derived);
     // the address Receive shows is on the list again (iOS 245a5d2: un-hidden when handed out)
-    if ((await spendingState(account.id)).hidden.includes(index)) await setSpendingHidden(index, false);
+    if ((await spendingState(account.id)).hidden.includes(index)) await setSpendingHidden(index, false, account.id);
     return derived;
   };
+  // an answer that comes back after an account switch is dropped (iOS fb2323e): never show one
+  // account's address under another
+  const stillActive = async () => (await activeAccountSecrets()).id === account.id;
   if (Number.isInteger(state.receiveIndex)) {
     const address = await addressAt(state.receiveIndex);
-    if ((await addressUsed(address)) !== true) return address;
+    if ((await addressUsedOrFunded(address)) !== true) return (await stillActive()) ? address : null;
   }
   const primary = await addressAt(state.activeIndex);
-  if ((await addressUsed(primary)) !== true) {
+  if ((await addressUsedOrFunded(primary)) !== true) {
     await saveSpendingState(account.id, { receiveIndex: state.activeIndex });
-    return primary;
+    return (await stillActive()) ? primary : null;
   }
-  const index = await generateSpendingAddress();
+  const index = await generateSpendingAddress(account);
   await saveSpendingState(account.id, { receiveIndex: index });
-  return addressAt(index);
+  const address = await addressAt(index);
+  return (await stillActive()) ? address : null;
 }
 
 // A restored recovery phrase discovers its addresses by itself (iOS da2c8e2). The sweep runs in the
@@ -1123,7 +1151,7 @@ export async function discoverSpendingAddresses(onProgress = () => {}) {
   const knsOwns = (address) => ownsAnyName(address, async (a) => ((await getAddressInfo(a, knsOptions()))?.allDomains || []).length > 0);
 
   onProgress({ checkingIndex: 0, foundCount: 0 });
-  Object.assign(addresses, await spendingAddressRange(0, DEEP_FLOOR));
+  Object.assign(addresses, await spendingAddressRange(0, DEEP_FLOOR, account));
   const floorList = Array.from({ length: DEEP_FLOOR }, (_, i) => addresses[i]);
   const active = await addressesActive(floorList);
   if (active) {
@@ -1144,7 +1172,7 @@ export async function discoverSpendingAddresses(onProgress = () => {}) {
   } else {
     let misses = 0;
     for (let start = 0; start < MAX_INDEX; start += BATCH) {
-      if (start >= DEEP_FLOOR) Object.assign(addresses, await spendingAddressRange(start, BATCH));
+      if (start >= DEEP_FLOOR) Object.assign(addresses, await spendingAddressRange(start, BATCH, account));
       const indexes = Array.from({ length: BATCH }, (_, i) => start + i);
       const balances = await balancesFor(indexes.map((i) => addresses[i]));
       for (const index of indexes) {
@@ -1187,6 +1215,8 @@ export async function discoverSpendingAddresses(onProgress = () => {}) {
   for (let index = state.maxIndex + 1; index <= highest; index += 1) if (!found.has(index)) hidden.add(index);
   for (let n = state.qMaxIndex + 1; n <= quantumHighest; n += 1) if (!quantumFound.has(QUANTUM_INDEX_BASE + n)) hidden.add(QUANTUM_INDEX_BASE + n);
   for (const index of [...found, ...quantumFound]) hidden.delete(index);
+  // the account it started for, even if another is active now; nothing for a removed one (IOS-107)
+  if (!(await accountStillExists(account.id))) return 0;
   await saveSpendingState(account.id, { maxIndex: highest, qMaxIndex: quantumHighest, hidden: [...hidden] });
   const cached = (await cachedAddresses(account.id)) || { accountId: account.id, main: null, spending: {} };
   const spending = { ...(cached.spending || {}) };
