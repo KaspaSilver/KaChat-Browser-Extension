@@ -17,6 +17,7 @@ import {
 import {
   QUANTUM_INDEX_BASE, QUANTUM_SCAN_FLOOR, KIP22_SIGNATURE_SCRIPT_SIZE, isQuantumIndex, chainLocalIndex, spendingIndexTitle,
   spendingStateFromRecord, spendingRecordFromState, revealedSpendingIndices, nextFreshQuantumIndex, spendingChangeIndex,
+  QUANTUM_SCAN_LIMIT, FRESH_QUANTUM_PROBE_LIMIT, QUANTUM_CHANGE_UNAVAILABLE,
 } from "../shared/engine/quantum.js";
 import { createRpc, probeRpc, disconnectRpc, getNodeRegistrySnapshot, forgetEndpoint, markBadNode, knownPublicNodes } from "../shared/engine/rpc.js";
 import { getEndpoint } from "../shared/engine/endpoints.js";
@@ -147,7 +148,7 @@ async function verifiedFreshQuantumSlot(account) {
   let state = await spendingState(account.id);
   let index = nextFreshQuantumIndex(state.qMaxIndex);
   let address = (await spendingAddressRange(index, 1, account))[index];
-  for (let i = 0; i < 20 && address; i += 1) {
+  for (let i = 0; i < FRESH_QUANTUM_PROBE_LIMIT && address; i += 1) {
     if ((await addressUsed(address)) !== true) break;
     state = await saveSpendingState(account.id, { qMaxIndex: chainLocalIndex(index) });
     index = nextFreshQuantumIndex(state.qMaxIndex);
@@ -610,7 +611,7 @@ export async function send({ source, destination, amountKas = null, tipKas = "0"
       try { fresh = await verifiedFreshQuantumSlot(account); } catch { fresh = null; }
       if (!fresh?.address) fresh = null;
       // a quantum source's change never goes back to the key its spend reveals (IOS-104)
-      if (!fresh && from.quantum) throw new Error("Couldn't prepare the next address. Try again.");
+      if (!fresh && from.quantum) throw new Error(QUANTUM_CHANGE_UNAVAILABLE);
     }
   }
   const result = await sendKaspa({
@@ -1026,17 +1027,20 @@ export async function generateSpendingAddress() {
   return index;
 }
 
-/** Extends the revealed range to `index` (Address Visibility past the end): the ones between are hidden. */
+/** Extends `index`'s own chain to it (Address Visibility past the end): the ones between are hidden.
+ *  A quantum-safe index extends the quantum chain, never the legacy one. */
 export async function revealSpendingAddress(index) {
   const { account, state } = await activeState();
-  if (index <= state.maxIndex) return setSpendingHidden(index, false);
+  const quantum = isQuantumIndex(index);
+  const end = quantum ? QUANTUM_INDEX_BASE + state.qMaxIndex : state.maxIndex;
+  if (index <= end) return setSpendingHidden(index, false);
   const hidden = new Set(state.hidden);
-  for (let i = state.maxIndex + 1; i < index; i += 1) hidden.add(i);
+  for (let i = end + 1; i < index; i += 1) hidden.add(i);
   hidden.delete(index);
-  const range = await spendingAddressRange(state.maxIndex + 1, index - state.maxIndex);
+  const range = await spendingAddressRange(end + 1, index - end, account);
   const cached = (await cachedAddresses(account.id)) || { accountId: account.id, main: null, spending: {} };
   await setLocal(addressCacheKey(account.id), { ...cached, spending: { ...(cached.spending || {}), ...range } });
-  return saveSpendingState(account.id, { maxIndex: index, hidden: [...hidden] });
+  return saveSpendingState(account.id, { ...boundPatchFor(index, state), hidden: [...hidden] });
 }
 
 /**
@@ -1134,7 +1138,6 @@ export async function discoverSpendingAddresses(onProgress = () => {}) {
   // again, and the chain's end goes past every slot that EVER saw activity - not only funded ones -
   // so an already-used (maybe key-revealed) slot is never handed out as fresh. Without the bulk
   // activity answer only the first window's balances can be read. Coins only (no domain goes to P2SH).
-  const QUANTUM_SCAN_LIMIT = 10_000;
   const quantumFound = new Set();
   const quantumAddresses = {};
   let quantumUsedHighest = -1;

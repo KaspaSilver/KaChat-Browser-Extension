@@ -756,40 +756,43 @@ function showSpendingAddress({ row, onBack }) {
 // The primary never toggles; an address holding Kaspa can be shown but not hidden.
 
 function showVisibility({ onBack }) {
+  // Two Kaspa Hub style cards first (iOS d7e6dd1): Quantum Addresses and Non-Quantum Addresses,
+  // each with how many of its addresses Manage Addresses shows; a card opens that chain's
+  // checklist, paging from the chain's own start and numbered from #0. Hide All and Done stay on
+  // the cards and cover both chains.
   const PAGE = 50;
-  const state = { page: 0, rows: null, loading: true, list: null, used: new Map() };
+  const state = { chain: null, page: 0, rows: null, loading: true, list: null, used: new Map() };
   const here = () => app.dataset.screen === "visibility";
+  const base = () => (state.chain === "quantum" ? wallet.QUANTUM_INDEX_BASE : 0);
+  const local = (index) => (wallet.isQuantumIndex(index) ? index - wallet.QUANTUM_INDEX_BASE : index);
+
+  const loadList = async () => {
+    try { state.list = await wallet.spendingList(); } catch { state.list = null; }
+  };
 
   const loadPage = async () => {
     state.loading = true;
     state.rows = null;
     paint();
     try {
-      state.list = await wallet.spendingList();
-      const start = state.page * PAGE;
+      await loadList();
+      const start = base() + state.page * PAGE;
       const addresses = await wallet.spendingAddressRange(start, PAGE);
       const balances = await wallet.balancesFor(Object.values(addresses));
       const st = state.list.state;
-      // the revealed quantum-safe slots lead the first page, so a hidden one can come back
-      const quantumRows = state.page === 0 ? state.list.rows.filter((r) => r.quantum) : [];
-      const quantumBalances = quantumRows.length ? await wallet.balancesFor(quantumRows.map((r) => r.address)) : {};
-      state.rows = [...quantumRows.map((r) => ({
-        index: r.index, address: r.address, revealed: true, quantum: true, spent: r.spent,
-        visible: !st.hidden.includes(r.index),
-        primary: r.index === st.activeIndex,
-        customLabel: wallet.customLabel(st, r.index),
-        balanceSompi: quantumBalances[r.address] ?? 0n,
-      }))].concat(Object.entries(addresses).map(([index, address]) => {
+      state.rows = Object.entries(addresses).map(([index, address]) => {
         const i = Number(index);
-        const revealed = i <= st.maxIndex;
+        const quantum = wallet.isQuantumIndex(i);
+        const revealed = quantum ? local(i) <= st.qMaxIndex : i <= st.maxIndex;
         return {
-          index: i, address, revealed,
+          index: i, address, revealed, quantum,
+          spent: quantum && st.qSpent.includes(String(address).toLowerCase()),
           visible: revealed && !st.hidden.includes(i),
           primary: i === st.activeIndex,
           customLabel: wallet.customLabel(st, i),
           balanceSompi: balances[address] ?? 0n,
         };
-      }));
+      });
     } catch {
       state.rows = [];
     }
@@ -798,12 +801,13 @@ function showVisibility({ onBack }) {
     // Used / Unused, lazily, 8 at a time.
     const queue = (state.rows || []).filter((r) => r.balanceSompi === 0n);
     const page = state.page;
+    const chain = state.chain;
     const worker = async () => {
       for (let row = queue.shift(); row; row = queue.shift()) {
         const known = await wallet.knownUsedState(row.address);
         const used = known ?? (await wallet.addressUsed(row.address));
         state.used.set(row.address, used);
-        if (here() && state.page === page) paint();
+        if (here() && state.page === page && state.chain === chain) paint();
       }
     };
     Promise.all(Array.from({ length: 8 }, worker));
@@ -828,45 +832,73 @@ function showVisibility({ onBack }) {
     await loadPage();
   };
 
-  function paint() {
-    const start = state.page * PAGE;
+  /** "n of m shown" for one chain's revealed addresses. */
+  const shownText = (quantum) => {
+    const rows = (state.list?.rows || []).filter((r) => Boolean(r.quantum) === quantum);
+    if (!state.list) return "-";
+    return `${rows.filter((r) => !r.hidden).length} of ${rows.length} shown`;
+  };
+
+  function paintCards() {
     render(`
       <header class="navbar form-bar">
         <span></span>
         <div class="nav-title">Address Visibility</div>
         <button class="bar-text strong" id="done">Done</button>
       </header>
-      <div class="manage-scroll flush">
+      <div class="manage-scroll">
+        <div class="domains-grid your-domains-grid">
+          <button class="glass domains-service" data-chain="quantum">
+            <span class="q-shield q-safe">${SHIELD.replace('width="13" height="13"', 'width="28" height="28"')}</span>
+            <span class="strong">Quantum Addresses</span>
+            <span class="domains-count-pill">${esc(shownText(true))}</span>
+          </button>
+          <button class="glass domains-service" data-chain="legacy">
+            <span class="accent">${SF.creditcard.replace('width="40" height="40"', 'width="28" height="28"')}</span>
+            <span class="strong">Non-Quantum Addresses</span>
+            <span class="domains-count-pill">${esc(shownText(false))}</span>
+          </button>
+        </div>
         <button class="ghost vis-hide-all" id="hide-all">Hide All</button>
-        ${state.loading ? '<div class="center-text pad"><span class="spinner"></span></div>'
-          : !state.rows?.length ? '<p class="muted center-text pad">These addresses couldn\'t be derived right now. Go back a page or reopen this screen to retry.</p>'
-          : `<div class="plain-list">${state.rows.map((row) => {
-              const locked = false; // every address toggles both ways (iOS 245a5d2)
-              return `
-                <button class="vis-row ${locked ? "locked" : ""}" data-vis="${row.index}" ${locked ? "aria-disabled=\"true\"" : ""}>
-                  <span class="${row.visible ? "accent" : "muted"}">${row.visible ? ICONS.circleCheck : ICONS.circle}</span>
-                  <span class="tx-meta">
-                    <span><span class="strong small mono-digits">#${row.quantum ? row.index - wallet.QUANTUM_INDEX_BASE : row.index}</span>${quantumShieldHtml(row)}${row.customLabel ? ` <span class="muted tiny">${esc(row.customLabel)}</span>` : ""}</span>
-                    <span class="mono tiny muted">${esc(`${row.address.slice(0, 16)}…${row.address.slice(-6)}`)}</span>
-                  </span>
-                  ${trailing(row)}
-                </button>`;
-            }).join("")}</div>`}
-      </div>
-      <div class="pager">
-        <button class="icon plain accent" id="prev" ${state.page === 0 ? "disabled" : ""} aria-label="Previous page">${SF.chevronLeft}</button>
-        <span class="strong small mono-digits">#${start} - #${start + PAGE - 1}</span>
-        <button class="icon plain accent" id="next" aria-label="Next page">${SF.chevronRight}</button>
       </div>`, "visibility");
     $("#done").onclick = onBack;
+    for (const card of app.querySelectorAll("[data-chain]")) {
+      card.onclick = () => { state.chain = card.dataset.chain; state.page = 0; loadPage(); };
+    }
     // Hide All (confirmed): the list starts over with only the chatting address (iOS 245a5d2)
     $("#hide-all").onclick = () => showAlert({
       title: "Hide All Addresses?",
       message: "Every spending address leaves the list; only the chatting address stays. Their Kaspa still counts in your totals, and you can show any of them again here.",
       confirmLabel: "Hide All",
       cancelLabel: "Cancel",
-      onConfirm: async () => { try { await wallet.hideAllSpending(); } catch (error) { toast(error.message); } loadPage(); },
+      onConfirm: async () => { try { await wallet.hideAllSpending(); } catch (error) { toast(error.message); } await loadList(); if (here()) paint(); },
     });
+  }
+
+  function paint() {
+    if (state.chain == null) { paintCards(); return; }
+    const start = state.page * PAGE;
+    render(`
+      ${navHeader({ title: state.chain === "quantum" ? "Quantum Addresses" : "Non-Quantum Addresses" })}
+      <div class="manage-scroll flush">
+        ${state.loading ? '<div class="center-text pad"><span class="spinner"></span></div>'
+          : !state.rows?.length ? '<p class="muted center-text pad">These addresses couldn\'t be derived right now. Go back a page or reopen this screen to retry.</p>'
+          : `<div class="plain-list">${state.rows.map((row) => `
+                <button class="vis-row" data-vis="${row.index}">
+                  <span class="${row.visible ? "accent" : "muted"}">${row.visible ? ICONS.circleCheck : ICONS.circle}</span>
+                  <span class="tx-meta">
+                    <span><span class="strong small mono-digits">#${local(row.index)}</span>${quantumShieldHtml(row)}${row.customLabel ? ` <span class="muted tiny">${esc(row.customLabel)}</span>` : ""}</span>
+                    <span class="mono tiny muted">${esc(`${row.address.slice(0, 16)}…${row.address.slice(-6)}`)}</span>
+                  </span>
+                  ${trailing(row)}
+                </button>`).join("")}</div>`}
+      </div>
+      <div class="pager">
+        <button class="icon plain accent" id="prev" ${state.page === 0 ? "disabled" : ""} aria-label="Previous page">${SF.chevronLeft}</button>
+        <span class="strong small mono-digits">#${start} - #${start + PAGE - 1}</span>
+        <button class="icon plain accent" id="next" aria-label="Next page">${SF.chevronRight}</button>
+      </div>`, "visibility");
+    $("#back").onclick = () => { state.chain = null; paint(); };
     $("#prev").onclick = () => { if (state.page > 0) { state.page -= 1; loadPage(); } };
     $("#next").onclick = () => { state.page += 1; loadPage(); };
     for (const button of app.querySelectorAll("[data-vis]")) {
@@ -875,7 +907,7 @@ function showVisibility({ onBack }) {
   }
 
   paint();
-  loadPage();
+  loadList().then(() => { state.loading = false; if (here()) paint(); });
 }
 
 // --- Send All Kaspa To Primary: iOS ConsolidateToPrimaryConfirmView ----------------------------
