@@ -300,7 +300,7 @@ async function finishTransfer(record, after) {
     if (result.revealTxid) showDomainSent({ txid: result.revealTxid, onDone: after });
     else after();
   } catch (error) {
-    toast(String(error?.message || error));
+    if (error?.code !== wallet.SEND_CANCELLED) toast(String(error?.message || error));
     after();
   }
 }
@@ -487,7 +487,8 @@ export function showSendDomain({ domain, onBack, onSent, source = { kind: "main"
         return;
       }
       state.sending = false;
-      state.error = String(error?.message || error);
+      // a cancelled password prompt: nothing was sent, back to the form as it was
+      state.error = error?.code === wallet.SEND_CANCELLED ? "" : String(error?.message || error);
       paint();
     }
   };

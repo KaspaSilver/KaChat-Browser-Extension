@@ -242,7 +242,7 @@ export function showSend(opts) {
       } else if (state.maxMode) {
         result = await wallet.send({
           source: opts.source, destination: state.recipient.address, max: true,
-          totalFeeKas: fee.toFixed(8), selectedOutpoints: selectedOutpoints(),
+          totalFeeKas: fee.toFixed(8), selectedOutpoints: selectedOutpoints(), maxAmountSompi: amountSompi(),
         });
       } else {
         const tip = Math.max(0, fee - (state.base?.sdkBaseKas || 0));
@@ -262,8 +262,10 @@ export function showSend(opts) {
         onDone: opts.onClose,
       });
     } catch (error) {
-      console.warn("[KaChat Wallet] send failed:", error);
       state.sending = false;
+      // the password prompt was cancelled: nothing was sent, the screen stays as it was
+      if (error?.code === wallet.SEND_CANCELLED) { paint(); return; }
+      console.warn("[KaChat Wallet] send failed:", error);
       state.error = friendlySendError(error);
       paint();
     }

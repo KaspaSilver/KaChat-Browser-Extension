@@ -276,7 +276,6 @@ async function showSendApproval(request, respond, reject, markSending = () => {}
     $("#ok").onclick = async () => {
       state.sending = true;
       state.error = "";
-      markSending(true);
       paint();
       try {
         const tip = Math.max(0, state.fee - state.sdkBase) + Number(priorityFee) / 1e8;
@@ -285,6 +284,9 @@ async function showSendApproval(request, respond, reject, markSending = () => {}
           destination: to,
           amountKas: wallet.sompiToKasText(amount),
           tipKas: tip.toFixed(8),
+          // "may have been sent" (EXT-012) only once the password let it go: closing the window at
+          // the password prompt is a plain rejection
+          onAuthorized: () => markSending(true),
         });
         const txid = (result?.txids || [])[result?.txids?.length - 1] || "";
         if (!txid) throw new Error("The node did not return a transaction id.");
@@ -292,7 +294,8 @@ async function showSendApproval(request, respond, reject, markSending = () => {}
       } catch (error) {
         state.sending = false;
         markSending(false);
-        state.error = String(error?.message || error);
+        // the password prompt was cancelled: nothing was sent; Approve or Reject again
+        state.error = error?.code === wallet.SEND_CANCELLED ? "" : String(error?.message || error);
         paint();
       }
     };

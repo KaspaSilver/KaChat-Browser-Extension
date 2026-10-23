@@ -30,6 +30,10 @@ import { KachatNamesRegistry } from "../shared/engine/kachat-names/registry.js";
 import { faucetCardHtml, startFaucetClaim, noteFaucetBalance, faucetPending } from "./faucet.js";
 import { showSettings, showLicenses } from "./settings.js";
 import { showApproval } from "./approve.js";
+import { confirmSpend } from "./spend-auth.js";
+
+// The password before every KAS you send (KaChat-Desktop Build 228): the prompt every send asks.
+wallet.setSpendAuthorizer(confirmSpend);
 import * as dock from "./dock.js";
 import { NETWORK, NETWORK_MIRROR_KEY, IS_TESTNET, syncNetworkMirror, toActiveNetworkAddress } from "./net.js";
 

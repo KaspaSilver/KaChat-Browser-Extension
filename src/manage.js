@@ -998,9 +998,11 @@ async function showConsolidate({ list, onBack }) {
         if (!coins.length) continue;
         const base = (await wallet.maxFee(coins.length, { sourceIndex: source.index })).policyKas;
         const total = state.customKas != null ? Math.max(state.customKas, base) : base * multiplier;
-        const result = await wallet.send({ source: { kind: "spending", index: source.index }, destination: primary.address, max: true, totalFeeKas: total.toFixed(8) });
+        const result = await wallet.send({ source: { kind: "spending", index: source.index }, destination: primary.address, max: true, totalFeeKas: total.toFixed(8), maxAmountSompi: source.balanceSompi });
         txids.push(...(result?.txids || []));
       } catch (error) {
+        // a cancelled password prompt stops the run: nothing more is sent
+        if (error?.code === wallet.SEND_CANCELLED) break;
         lastError = error;
       }
     }

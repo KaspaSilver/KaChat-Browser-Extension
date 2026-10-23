@@ -118,6 +118,22 @@ export async function spendingState(accountId) {
   return { ...spendingStateFromRecord(raw), receiveIndex };
 }
 
+// The password before every KAS you send (KaChat-Desktop Build 228, the owner's rule): asked here,
+// before anything is built or a node is touched, so no screen can skip it. The page registers the
+// prompt (spend-auth.js); with none registered nothing is sent. Cancelling is "nothing sent"
+// (`SEND_CANCELLED`): callers just stop, no error shown.
+export const SEND_CANCELLED = "SEND_CANCELLED";
+let spendAuthorizer = null;
+export function setSpendAuthorizer(fn) { spendAuthorizer = typeof fn === "function" ? fn : null; }
+async function confirmSpend(details) {
+  if (!spendAuthorizer) throw new Error("Open KaChat Wallet to confirm this send with your password.");
+  if (await spendAuthorizer(details)) return;
+  const error = new Error("Nothing was sent.");
+  error.code = SEND_CANCELLED;
+  throw error;
+}
+const sompiText = (sompi) => (sompi == null ? "" : `${formatKas(sompi, 8)} ${IS_TESTNET ? "TKAS" : "KAS"}`);
+
 /** Used, as far as anyone can tell: on-chain history (REST), or - when that server's history has
  *  gaps (testnet's REST answered "0 transactions" for an address holding 50 TKAS) - a balance now.
  *  true / false, or null when neither can be read. */
@@ -597,7 +613,10 @@ export async function maxFee(inputCount, { sourceIndex = null } = {}) {
  * `tipKas` on top of the SDK's base fee. Sending from the PRIMARY spending address sends change
  * to a fresh address and moves the primary there once the node accepts it (iOS/desktop parity).
  */
-export async function send({ source, destination, amountKas = null, tipKas = "0", totalFeeKas = null, selectedOutpoints = null, max = false }) {
+export async function send({ source, destination, amountKas = null, tipKas = "0", totalFeeKas = null, selectedOutpoints = null, max = false, maxAmountSompi = null, onAuthorized = null }) {
+  await confirmSpend({ amountText: max ? sompiText(maxAmountSompi) : sompiText(kasToSompi(String(amountKas ?? ""))), recipient: destination, max });
+  // past the password: from here on the send may reach the network (the approval window says so)
+  onAuthorized?.();
   const from = await sourceWallet(source);
   const k = await kaspa();
   const node = await connection();
@@ -651,6 +670,7 @@ export async function send({ source, destination, amountKas = null, tipKas = "0"
 /** Merges every coin at the source into one (a self-send with no change). */
 export async function compound(source, totalFeeKas = null) {
   const from = await sourceWallet(source);
+  await confirmSpend({ title: "Confirm Compound", amountText: "Every coin into one", recipient: from.address });
   const result = await sweepAllToSelf({
     kaspa: await kaspa(), rpc: await connection(), withRpc,
     privateKey: from.privateKeyHex, sourceAddress: from.address,
@@ -1288,15 +1308,17 @@ export async function setPrimaryDomain(domainId) {
  * for the KNS API to show the new owner. onStatus gets the engine's stage names.
  */
 export async function transferDomain({ domain, assetId, toAddress, priorityFeeSompi, source = { kind: "main" }, onStatus = () => {} }) {
+  await confirmSpend({ title: "Confirm Transfer", amountText: String(domain?.fullName || domain?.name || domain || "Domain"), recipient: toAddress });
   const engine = await knsEngine(source);
-  // From the PRIMARY spending address the change goes to a fresh index and the primary moves
-  // there once it is accepted (iOS KNSDomainTransferService fromSpendingAddressIndex).
+  // From the PRIMARY spending address the change goes to a fresh quantum-safe slot, checked on chain,
+  // and the primary moves there once it is accepted (iOS KNSDomainTransferService, engine
+  // spendingChangeIndex "kns").
   let fresh = null;
   if (source?.kind === "spending") {
     const { account, state } = await activeState();
     if (source.index === state.activeIndex) {
-      const index = Math.max(state.maxIndex, source.index) + 1;
-      fresh = { accountId: account.id, index, address: (await spendingAddressRange(index, 1))[index] };
+      const slot = await verifiedFreshQuantumSlot(account);
+      if (slot?.address) fresh = { accountId: account.id, index: slot.index, address: slot.address };
     }
   }
   const account = await activeAccountSecrets();
@@ -1311,7 +1333,8 @@ export async function transferDomain({ domain, assetId, toAddress, priorityFeeSo
     log: (...parts) => console.info("[KaChat Wallet]", ...parts),
   });
   if (fresh) {
-    await saveSpendingState(fresh.accountId, { activeIndex: fresh.index, maxIndex: fresh.index });
+    // the primary moves to the change slot, which widens its own (quantum) chain only
+    await saveSpendingState(fresh.accountId, { activeIndex: fresh.index, ...boundPatchFor(fresh.index, await spendingState(fresh.accountId)) });
     await cacheSpendingAddress(fresh.accountId, fresh.index, fresh.address);
   }
   return result;
@@ -1326,6 +1349,7 @@ export async function pendingDomainTransfers() {
 /** Finishes an unfinished transfer: reveals its commit with the key that sent it.
  *  -> { status: "revealed" | "already-transferred" | "no-commit", ... } */
 export async function finishDomainTransfer(record, onStatus = () => {}) {
+  await confirmSpend({ title: "Finish Transfer", amountText: String(record?.domainName || record?.name || "Domain transfer"), recipient: record?.toAddress || "" });
   const source = record.source?.kind === "spending" ? { kind: "spending", index: record.source.index } : { kind: "main" };
   const engine = await knsEngine(source);
   return resumeKnsTransfer({
