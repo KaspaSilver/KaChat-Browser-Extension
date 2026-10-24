@@ -1070,6 +1070,29 @@ export async function generateSpendingAddress(forAccount = null) {
   return index;
 }
 
+// ChangeNOW Swap's payout (KaChat-Desktop Build 217, iOS 28ecee0): the next LEGACY slot, never a
+// quantum-safe one - one past the legacy chain.
+/** The next legacy slot, shown before the swap is real (not reserved). -> { index, address } */
+export async function nextSwapPayoutAddress() {
+  const { account, state } = await activeState();
+  const index = state.maxIndex + 1;
+  return { index, address: (await spendingAddressRange(index, 1, account))[index] };
+}
+/** Reserves the next legacy slot for a swap that was just created. -> { index, address } */
+export async function reserveSwapPayoutAddress() {
+  const { account, state } = await activeState();
+  const index = state.maxIndex + 1;
+  const address = (await spendingAddressRange(index, 1, account))[index];
+  await saveSpendingState(account.id, { maxIndex: index });
+  await cacheSpendingAddress(account.id, index, address);
+  return { index, address };
+}
+/** A legacy address of yours for a swap payout, by index. */
+export async function swapPayoutAddressAt(index) {
+  const { account } = await activeState();
+  return (await spendingAddressRange(index, 1, account))[index];
+}
+
 /** Extends `index`'s own chain to it (Address Visibility past the end): the ones between are hidden.
  *  A quantum-safe index extends the quantum chain, never the legacy one. */
 export async function revealSpendingAddress(index) {

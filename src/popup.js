@@ -460,9 +460,12 @@ function openWalletPlus() {
     receive: () => openReceive(back),
     request: () => showRequestPayment(),
     fund: () => openChattingQr(s, back),
+    // ChangeNOW Swap (KaChat-Desktop Build 217)
+    swap: () => import("./swaps.js").then((m) => m.showSwap()),
   });
 }
 const TILE = {
+  swap: '<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h15M15 4l4 4-4 4"/><path d="M20 16H5M9 12l-4 4 4 4"/></svg>',
   send: '<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9.5"/><path d="M12 16.5v-9M8 11l4-4 4 4"/></svg>',
   receive: '<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9.5"/><path d="M12 7.5v9M8 13l4 4 4-4"/></svg>',
   request: '<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3.5H7.4A1.9 1.9 0 0 0 5.5 5.4v13.2a1.9 1.9 0 0 0 1.9 1.9h9.2a1.9 1.9 0 0 0 1.9-1.9V8Z"/><path d="M14 3.5V8h4.5M9 13h6M9 16.5h4"/></svg>',
@@ -485,6 +488,7 @@ function showWalletPlus(actions) {
         ${tile("receive", "Receive Kaspa", TILE.receive)}
         ${tile("request", "Request Payment", TILE.request)}
         ${tile("fund", "Fund Chatting Address", TILE.fund)}
+        ${tile("swap", "Swap", TILE.swap)}
       </div>
     </div>`;
   const close = () => { backdrop.remove(); document.removeEventListener("keydown", onKey); };

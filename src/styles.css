@@ -1119,3 +1119,34 @@ button.kl-tile:not(:disabled), .kl-tile-split { cursor: pointer; }
 .your-domains-grid .domains-service { gap: 4px; padding: 18px 10px 14px; }
 .domains-count-pill { margin-top: 4px; min-width: 28px; padding: 2px 10px; border-radius: 999px; background: var(--panel-2); font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .kp-clear { color: #8e8e93; padding: 0 2px; flex: 0 0 auto; }
+/* ChangeNOW Swap (KaChat-Desktop Build 217) */
+.swap-root { display: flex; flex-direction: column; gap: 12px; }
+.swap-page { display: flex; flex-direction: column; gap: 10px; }
+.swap-card-row { display: flex; align-items: center; gap: 10px; }
+.swap-amount { flex: 1; min-width: 0; background: transparent; border: 0; color: var(--text); font-size: 24px; font-weight: 700; outline: none; font-variant-numeric: tabular-nums; }
+.swap-quoting { flex: 1; display: flex; align-items: center; min-height: 34px; }
+.swap-badge { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: 999px; background: var(--panel-2); color: var(--text); font-size: 13px; font-weight: 600; white-space: nowrap; flex: 0 0 auto; }
+.swap-badge.pickable { cursor: pointer; }
+.swap-coin-icon { width: 22px; height: 22px; border-radius: 50%; object-fit: contain; flex: 0 0 auto; }
+.swap-coin-text { display: inline-flex; align-items: center; justify-content: center; font-size: 8px; font-weight: 800; background: var(--panel); }
+.swap-actions-row { display: flex; align-items: center; gap: 10px; }
+.swap-go { flex: 1; }
+.swap-payout { width: 100%; box-sizing: border-box; background: transparent; border: 0; color: var(--text); font: inherit; outline: none; }
+.swap-result { display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center; }
+.swap-qr-button { padding: 8px; background: #fff; border-radius: 12px; }
+.swap-qr { display: block; width: 160px; height: 160px; }
+.swap-mono { background: transparent; color: var(--text); word-break: break-all; text-align: center; padding: 2px 0; }
+.swap-links { display: flex; justify-content: center; gap: 18px; flex-wrap: wrap; }
+.swap-powered { display: block; margin-top: 4px; }
+.swap-history { display: flex; flex-direction: column; gap: 8px; }
+.swap-history-item { display: flex; align-items: center; gap: 6px; }
+.swap-history-row { flex: 1; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px; border-radius: 14px; color: var(--text); text-align: left; }
+.swap-disclaimer { display: flex; flex-direction: column; gap: 10px; }
+.swap-terms { display: flex; align-items: flex-start; gap: 8px; }
+.swap-empty { display: flex; flex-direction: column; align-items: center; gap: 10px; text-align: center; padding: 24px 12px; }
+.swap-coins { display: flex; flex-direction: column; margin-top: 10px; }
+.swap-coin-row { display: flex; align-items: center; gap: 10px; padding: 11px 6px; background: transparent; color: var(--text); border-bottom: 1px solid var(--hairline, rgba(255,255,255,.06)); text-align: left; border-radius: 0; }
+.swap-coin-row.indented { padding-left: 34px; }
+.swap-coin-name { flex: 1; font-size: 14px; }
+.swap-details { display: flex; flex-direction: column; gap: 8px; }
+.pad-x { padding: 0 14px; }
