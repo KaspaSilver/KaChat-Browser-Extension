@@ -131,7 +131,7 @@ function base() {
       // otherwise the registry walks the chain itself (iOS 7aa6c6d)
       virtualDaaScore: () => engine.currentVirtualDaaScore(),
       storage: localStorageAdapter,
-      log: (...parts) => console.info("[KaChat Wallet]", ...parts),
+      log: (...parts) => console.info("[KaPay]", ...parts),
     });
     actions = new KachatNamesActions({ engine, service, registry, storage: localStorageAdapter, wallet: walletHooks });
   }

@@ -124,10 +124,10 @@ export async function showApproval(id) {
     render(`
       <section class="screen approve">
         ${siteHeader(request.origin)}
-        <h2 class="center-text">Set up KaChat Wallet first</h2>
-        <p class="muted center-text">This site wants to connect, but there is no wallet in this browser yet. Create or import an account in KaChat Wallet, then try again on the site.</p>
+        <h2 class="center-text">Set up KaPay first</h2>
+        <p class="muted center-text">This site wants to connect, but there is no wallet in this browser yet. Create or import an account in KaPay, then try again on the site.</p>
         <div class="spacer"></div>
-        <button id="setup">Open KaChat Wallet</button>
+        <button id="setup">Open KaPay</button>
         <button id="cancel" class="soft">Cancel</button>
       </section>`, "approve");
     $("#setup").onclick = async () => { await ext.tabs.create({ url: ext.runtime.getURL("popup.html?view=tab") }); reject(); };
@@ -143,7 +143,7 @@ function showApprovalUnlock(request, onUnlocked, reject) {
   render(`
     <section class="screen approve">
       ${siteHeader(request.origin)}
-      <p class="muted center-text">Unlock KaChat Wallet to continue.</p>
+      <p class="muted center-text">Unlock KaPay to continue.</p>
       <form id="form" class="stack">
         <input id="pw" type="password" autocomplete="current-password" placeholder="Password" aria-label="Password" autofocus />
         <p class="error" id="error"></p>

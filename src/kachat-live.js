@@ -364,8 +364,8 @@ export function confirmAlert({ title, message, confirmLabel, cancelLabel = "Canc
 /** What the receipt says under its title for each stage (iOS KachatTxDoneSheet.stageText). */
 function txStageText(stage) {
   switch (stage) {
-    case TxStage.accepted: return "It's in a block. Updating KaChat Wallet...";
-    case TxStage.shown: return "Done. It shows in KaChat Wallet now.";
+    case TxStage.accepted: return "It's in a block. Updating KaPay...";
+    case TxStage.shown: return "Done. It shows in KaPay now.";
     case TxStage.dropped: return "The network hasn't taken it. Nothing was spent if it never lands - try again with a faster fee.";
     default: return "Waiting for the network to put it in a block. Usually a few seconds; longer when it's busy.";
   }
@@ -382,7 +382,7 @@ function txStepHtml(text, { done = false, active = false } = {}) {
 /**
  * The receipt every name transaction (and profile save) ends on (iOS KachatTxDoneSheet, e426432),
  * in the Send receipt's style: its progress followed on a node (actions.follow) - a spinner until
- * it lands, then a check; steps Sent to the network / In a block / Updated in KaChat Wallet;
+ * it lands, then a check; steps Sent to the network / In a block / Updated in KaPay;
  * dropped says so and suggests a faster fee - and the transaction id (click to copy) with View in
  * Explorer. Closing it early is fine: the change still lands. `accepted`: already known to be in a
  * block (a registration the driver saw land). A transaction `perform` didn't send (a profile save)
@@ -410,7 +410,7 @@ export function showTxDone({ txId, title = "Transaction sent", onClose = () => {
         <div class="kl-receipt-steps">
           ${txStepHtml("Sent to the network", { done: true })}
           ${txStepHtml("In a block", { done: inBlock, active: !inBlock && st !== TxStage.dropped })}
-          ${txStepHtml("Updated in KaChat Wallet", { done: st === TxStage.shown, active: st === TxStage.accepted })}
+          ${txStepHtml("Updated in KaPay", { done: st === TxStage.shown, active: st === TxStage.accepted })}
         </div>
         <button class="kl-txid" id="kl-copy-tx" title="Copy">
           <span class="mono tiny ellipsis">${esc(txId)}</span><span class="kl-copy-icon">${ICONS.copy || ""}</span>
@@ -656,7 +656,7 @@ function registrationCardHtml(r) {
     if (r.stage === Stage.waiting) {
       stage = r.commitDaa == null
         ? "Waiting for the commit to confirm..."
-        : "The commit has to age for about a minute before the name can be registered. Keep KaChat Wallet open - it registers by itself, and picks up where it left off if you leave.";
+        : "The commit has to age for about a minute before the name can be registered. Keep KaPay open - it registers by itself, and picks up where it left off if you leave.";
     }
     let progress = "";
     const virtualDaa = runtimeActions()?.virtualDaa ?? hub.virtualDaa;
@@ -732,7 +732,7 @@ function notifyFinished(pending) {
 const progressSheet = { el: null, id: null };
 const claimsList = { handle: null };
 let watchedActions = null;
-const KEEP_OPEN_NOTE = "Keep KaChat Wallet open: the name is registered about a minute after the hidden commit confirms. If you close it, it picks up where it left off next time.";
+const KEEP_OPEN_NOTE = "Keep KaPay open: the name is registered about a minute after the hidden commit confirms. If you close it, it picks up where it left off next time.";
 
 /** Follows this wallet's claims for as long as the wallet is open (popup.js starts it once
  *  connected, the hub when it opens): the progress sheet, the claims list, the claims button's
@@ -1148,7 +1148,7 @@ const labeledRow = (title, value, bold = false) =>
 function combineNoteHtml() {
   return `<div class="kl-busy-notice kl-combine-note" role="note">
     <span class="accent">${SYMBOLS.arrows}</span>
-    <span class="kl-busy-copy"><span class="muted tiny">Your KAS is in many small coins. When you slide, KaChat first combines them into one (a separate transaction with its own small fee), then sends this.</span></span>
+    <span class="kl-busy-copy"><span class="muted tiny">Your KAS is in many small coins. When you slide, KaPay first combines them into one (a separate transaction with its own small fee), then sends this.</span></span>
   </div>`;
 }
 
@@ -1440,7 +1440,7 @@ function openClaimSheet(target) {
         <div class="form-header">How claiming works</div>
         <div class="form-card">
           ${step(1, "A hidden commit goes on chain first. Nobody can see which name it is for.")}
-          ${step(2, "About a minute later KaChat Wallet registers the name by itself. Keep it open; if you close it, it continues next time.")}
+          ${step(2, "About a minute later KaPay registers the name by itself. Keep it open; if you close it, it continues next time.")}
           ${step(3, yearlyPeriods()
             ? "The name is yours for the years you paid, at most 2 ahead. A 1-year name can be extended to 2 years; from 10 days before it expires you can renew it."
             : `The name is yours for the time you paid, at most ${periods(maxYears())} ahead. From ${duration(params()?.renewWindowMs ?? 0n)} before it expires you can renew it.`)}

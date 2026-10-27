@@ -137,7 +137,7 @@ async function showSecurity({ onBack, appSettings }) {
         ${rowHtml("autolock", "", "Auto-Lock", label)}
         ${unlocked ? rowHtml("password", "", "Change Password") : ""}
       </div>
-      <p class="form-footer">KaChat Wallet locks itself after this long without use, and whenever the browser closes. Your seed phrase and private keys always ask for the wallet password.</p>
+      <p class="form-footer">KaPay locks itself after this long without use, and whenever the browser closes. Your seed phrase and private keys always ask for the wallet password.</p>
     </section>`, "settings");
   $("#back").onclick = onBack;
   const again = () => showSecurity({ onBack, appSettings });
@@ -207,7 +207,7 @@ function showChangePassword({ onBack }) {
 
 // iOS ConnectionHubPage: the Testnet toggle first (no footer, iOS 010167f), Connection Settings,
 // then Kaspa Explorer in its own section. iOS applies a switch on the next launch; the extension reloads its
-// pages straight away (every open KaChat Wallet window follows).
+// pages straight away (every open KaPay window follows).
 function showConnectionHub({ onBack }) {
   const explorer = wallet.EXPLORERS[wallet.currentExplorer()].name;
   render(`
@@ -486,7 +486,7 @@ async function showConnectionSettings({ onBack }) {
       if (parsed.value !== defaultRest && parsed.value !== ENDPOINT_DEFAULTS.kaspaApi && ext?.permissions?.request) {
         let granted = false;
         try { granted = await ext.permissions.request({ origins: [`${new URL(parsed.value).origin}/*`] }); } catch { granted = false; }
-        if (!granted) { draft.error = "KaChat Wallet needs your permission to reach that address."; connectionTab = "explorer"; paint(); return; }
+        if (!granted) { draft.error = "KaPay needs your permission to reach that address."; connectionTab = "explorer"; paint(); return; }
       }
       setEndpoint("kaspaApi", parsed.value);
       // The background worker has no localStorage; it reads the REST API from here.
@@ -513,7 +513,7 @@ async function showConnectedSites({ onBack }) {
             <button class="link-button small danger-text" data-origin="${esc(origin)}">Disconnect</button>
           </div>`).join("") : '<div class="list-row muted">No sites are connected.</div>'}
       </div>
-      <p class="form-footer">A connected site can see that account's chatting address and balance, and can ask you to send Kaspa or sign a message - every request opens KaChat Wallet for your approval.</p>
+      <p class="form-footer">A connected site can see that account's chatting address and balance, and can ask you to send Kaspa or sign a message - every request opens KaPay for your approval.</p>
     </section>`, "settings");
   $("#back").onclick = onBack;
   for (const button of app.querySelectorAll("[data-origin]")) {
@@ -596,7 +596,7 @@ export function showLicenses({ onBack }) {
   render(`
     ${navHeader({ title: "Open Source Licenses" })}
     <section class="screen licenses">
-      <p class="muted">KaChat Wallet is built with these open source libraries. Their authors ask that these notices travel with the app.</p>
+      <p class="muted">KaPay is built with these open source libraries. Their authors ask that these notices travel with the app.</p>
       ${LICENSES.map((item) => `
         <div class="glass license-card">
           <div class="license-head"><span class="strong">${esc(item.name)}</span><span class="muted tiny">${esc(item.license)}</span></div>

@@ -1,4 +1,4 @@
-// KaChat Wallet popup (and the same page opened as a full tab with ?view=tab): boot and the home
+// KaPay popup (and the same page opened as a full tab with ?view=tab): boot and the home
 // screen, which is the iOS Profile tab. Sign-in, create and import live in onboarding.js; Send
 // and Manage in send.js / manage.js; Your Domains in domains.js; Settings in settings.js.
 
@@ -50,7 +50,7 @@ const isApproval = params.get("view") === "approve";
 
 async function boot() {
   if (!isExtension) {
-    render('<section class="screen center"><p class="center-text">Open this page from the KaChat Wallet extension.</p></section>');
+    render('<section class="screen center"><p class="center-text">Open this page from the KaPay extension.</p></section>');
     return;
   }
   await syncNetworkMirror();
@@ -91,7 +91,7 @@ setHandlers({
 // The wallet can lock under an open popup (auto-lock alarm, or the lock button in another
 // window): the unlock key disappears from storage.session, and the popup follows.
 ext?.storage?.onChanged?.addListener((changes, area) => {
-  // The network was switched in another KaChat Wallet window: this one follows (net.js).
+  // The network was switched in another KaPay window: this one follows (net.js).
   if (area === "local" && changes[NETWORK_MIRROR_KEY] && changes[NETWORK_MIRROR_KEY].newValue !== NETWORK) {
     location.reload();
     return;
@@ -629,7 +629,7 @@ async function refreshHome() {
     } catch (error) {
       s.connection = "bad";
       dock.setStatus({ connection: "bad" });
-      console.warn("[KaChat Wallet] network:", error);
+      console.warn("[KaPay] network:", error);
     }
   } catch (error) {
     s.error = error.message;

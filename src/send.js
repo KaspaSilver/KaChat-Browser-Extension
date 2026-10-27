@@ -265,7 +265,7 @@ export function showSend(opts) {
       state.sending = false;
       // the password prompt was cancelled: nothing was sent, the screen stays as it was
       if (error?.code === wallet.SEND_CANCELLED) { paint(); return; }
-      console.warn("[KaChat Wallet] send failed:", error);
+      console.warn("[KaPay] send failed:", error);
       state.error = friendlySendError(error);
       paint();
     }

@@ -49,7 +49,7 @@ async function connectionsKey() {
 }
 const MAX_MESSAGE_LENGTH = 4096;
 
-const rejected = () => ({ error: { code: 4001, message: "The request was rejected in KaChat Wallet." } });
+const rejected = () => ({ error: { code: 4001, message: "The request was rejected in KaPay." } });
 // The approval window went away while it was sending an approved payment: it may have reached the
 // network, so this is never "rejected" (audit EXT-012) - the site must check before asking again.
 const maybeSent = () => ({ error: { code: 4002, message: "The payment may have been sent. Check your wallet before trying again." } });
@@ -102,7 +102,7 @@ async function balanceOf(address) {
 
 async function openApproval(origin, kind, params) {
   for (const entry of approvals.values()) {
-    if (entry.origin === origin) return { error: { code: -32002, message: "A request from this site is already waiting in KaChat Wallet." } };
+    if (entry.origin === origin) return { error: { code: -32002, message: "A request from this site is already waiting in KaPay." } };
   }
   const id = crypto.randomUUID();
   const entry = { id, origin, kind, params, createdAt: Date.now(), windowId: null };
@@ -116,7 +116,7 @@ async function openApproval(origin, kind, params) {
     entry.windowId = win?.id ?? null;
   } catch {
     approvals.delete(id);
-    return { error: { code: 4900, message: "Couldn't open KaChat Wallet." } };
+    return { error: { code: 4900, message: "Couldn't open KaPay." } };
   }
   const result = await answer;
   approvals.delete(id);
@@ -169,7 +169,7 @@ async function handleSiteRequest(method, params, origin) {
       return openApproval(origin, "signMessage", [message]);
     }
     default:
-      return { error: { code: 4200, message: `KaChat Wallet does not support ${String(method).slice(0, 40)}.` } };
+      return { error: { code: 4200, message: `KaPay does not support ${String(method).slice(0, 40)}.` } };
   }
 }
 
@@ -192,7 +192,7 @@ ext.runtime.onMessage.addListener((message, sender, sendResponse) => {
       const origin = siteOrigin(sender);
       if (!origin) { sendResponse({ error: { code: 4100, message: "Requests are only accepted from the page itself." } }); return false; }
       handleSiteRequest(String(message.method || ""), Array.isArray(message.params) ? message.params : [], origin)
-        .then(sendResponse, () => sendResponse({ error: { code: 4900, message: "KaChat Wallet hit an error." } }));
+        .then(sendResponse, () => sendResponse({ error: { code: 4900, message: "KaPay hit an error." } }));
       return true;
     }
     case "approval-get": {

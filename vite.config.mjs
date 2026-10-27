@@ -1,7 +1,7 @@
 import { defineConfig } from "vite";
 import { fileURLToPath } from "node:url";
 
-// Builds the KaChat Wallet browser extension into dist - a folder that loads as-is
+// Builds the KaPay browser extension into dist - a folder that loads as-is
 // with "Load unpacked" in chrome://extensions (Chrome, Brave, Edge, Opera, Arc).
 //
 //   npm run build      one build

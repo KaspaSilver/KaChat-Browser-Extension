@@ -245,7 +245,7 @@ function showLiveProfileEditor({ onSaved }) {
           <span class="accent">${PERSON_TEXT}</span>
           <span class="small">Your profile belongs to your address, not to a name: it stays the same when you buy, sell or let a name go.</span>
         </div></div>
-        <div class="form-footer">Each piece comes from a social profile you link, exactly as that platform shows it, so its moderation applies here too. You can use one account for all three, or mix them. To show them, KaChat Wallet reads those public profile pages once you allow it.</div>
+        <div class="form-footer">Each piece comes from a social profile you link, exactly as that platform shows it, so its moderation applies here too. You can use one account for all three, or mix them. To show them, KaPay reads those public profile pages once you allow it.</div>
       </div>
       ${KINDS.map(sourceSection).join("")}
       <div class="form-section">

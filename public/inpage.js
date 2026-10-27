@@ -1,4 +1,4 @@
-// KaChat Wallet's website provider: window.kachat, injected into the page's own JavaScript world.
+// KaPay's website provider: window.kachat, injected into the page's own JavaScript world.
 //
 // Websites talk to the wallet only through these calls; each one travels page -> content
 // script -> extension background, and anything that reveals an address, moves Kaspa or signs

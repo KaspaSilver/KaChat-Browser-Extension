@@ -65,7 +65,7 @@ function shortAddr(address) {
 function wordmarkHtml(tagline) {
   return `
     <div class="hero">
-      <div class="wordmark"><h1>KaChat</h1><img src="icons/kachat-logo.png" alt="KaChat logo" /></div>
+      <div class="wordmark"><h1>KaPay</h1><img src="icons/kapay-logo.png" alt="KaPay logo" /></div>
       <p class="tagline">${esc(tagline)}</p>
     </div>`;
 }
@@ -293,7 +293,7 @@ function showSeedExplainer({ onBack }) {
     ${navHeader({ title: "What is a seed phrase?" })}
     <section class="screen explainer">
       ${section("The short version", "A seed phrase is a list of 12 or 24 ordinary words that works as the master key to your account. Your wallet, your chatting address and your messages all come from it.")}
-      ${section("Anyone with it can take everything", "Anyone who has these words can take everything in your account. If you lose them and lose this device, nobody can get your account back, not even KaChat.")}
+      ${section("Anyone with it can take everything", "Anyone who has these words can take everything in your account. If you lose them and lose this device, nobody can get your account back, not even KaPay.")}
       ${section("How to keep it safe", "Write the words on paper, in order, and keep them somewhere safe and private. Never type them into a website, send them in a chat, or keep them in a screenshot or cloud notes.")}
       ${section("12 or 24 words?", "12 words are already very secure. 24 words add even more protection.")}
     </section>`, "create");
@@ -546,7 +546,7 @@ function showImportSource() {
       <div class="source-head">
         <span class="source-head-icon">${ICONS.wallet}</span>
         <h2>Where is this seed phrase from?</h2>
-        <p class="muted">Different wallets store your Kaspa on different address paths. Pick where this seed phrase comes from so KaChat finds your funds and domains.</p>
+        <p class="muted">Different wallets store your Kaspa on different address paths. Pick where this seed phrase comes from so KaPay finds your funds and domains.</p>
       </div>
       <div class="source-list" role="radiogroup" aria-label="Wallet">
         ${IMPORT_SOURCES.map((source) => `
@@ -784,7 +784,7 @@ function showSetPassword(account, onBack, buttonLabel = "Create Account") {
     ${navHeader({ title: "Wallet Password" })}
     <section class="screen">
       <h2>Set a wallet password</h2>
-      <p class="muted">This password unlocks KaChat Wallet in this browser and keeps your seed phrase encrypted on this computer. It can't recover your account - only your seed phrase can.</p>
+      <p class="muted">This password unlocks KaPay in this browser and keeps your seed phrase encrypted on this computer. It can't recover your account - only your seed phrase can.</p>
       <input id="pw" type="password" autocomplete="new-password" placeholder="Password (at least ${vault.MIN_PASSWORD_LENGTH} characters)" aria-label="Password" autofocus />
       <input id="pw2" type="password" autocomplete="new-password" placeholder="Re-enter password" aria-label="Re-enter password" />
       <p class="error" id="error"></p>
@@ -857,7 +857,7 @@ function showReset() {
     <header class="topbar"><button class="icon" id="back" aria-label="Back">${ICONS.back}</button><div class="title">Reset wallet</div></header>
     <section class="screen">
       <p>Without the password, the only way back in is your recovery phrase.</p>
-      <p class="muted">Resetting removes KaChat Wallet's data from this browser. Your Kaspa stays on the network - import your recovery phrase afterwards to get it back. If you don't have the phrase, resetting loses access for good.</p>
+      <p class="muted">Resetting removes KaPay's data from this browser. Your Kaspa stays on the network - import your recovery phrase afterwards to get it back. If you don't have the phrase, resetting loses access for good.</p>
       <label class="field">Type RESET to confirm
         <input id="confirm" autocomplete="off" autocapitalize="characters" />
       </label>

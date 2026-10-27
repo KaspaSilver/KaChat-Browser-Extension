@@ -275,12 +275,12 @@ export async function showSwap() {
     if (state.availability === "checking") return '<div class="center-text pad"><span class="spinner"></span></div>';
     if (state.availability === "permission") {
       return `<div class="swap-empty"><span class="accent">${SWAP}</span><div class="strong">ChangeNOW Swap</div>
-        <p class="muted small">Swaps go through KaChat's server (desktop.kachat.app), which talks to ChangeNOW for you. Allow KaChat Wallet to reach it to swap.</p>
+        <p class="muted small">Swaps go through KaChat's server (desktop.kachat.app), which talks to ChangeNOW for you. Allow KaPay to reach it to swap.</p>
         <button class="big" data-swap-allow>Allow</button></div>`;
     }
     if (state.availability !== "on") {
       return `<div class="swap-empty"><span class="accent">${SWAP}</span><div class="strong">${esc(SWAP_UNAVAILABLE_TITLE)}</div>
-        <p class="muted small">KaChat Wallet is not connected to ChangeNOW at the moment. Please try again later.</p>
+        <p class="muted small">KaPay is not connected to ChangeNOW at the moment. Please try again later.</p>
         <button class="ghost" data-swap-retry>Try Again</button></div>`;
     }
     if (!state.agreed) return disclaimerHtml();

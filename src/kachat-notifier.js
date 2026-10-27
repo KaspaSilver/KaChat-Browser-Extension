@@ -196,7 +196,7 @@ export async function checkKachatNamesNews() {
 
     writeSnapshot(walletAddress, next);
   } catch (error) {
-    console.warn("[KaChat Wallet] .kachat news check failed:", error);
+    console.warn("[KaPay] .kachat news check failed:", error);
   } finally {
     checking = false;
   }

@@ -275,7 +275,7 @@ export function showColdSend(opts) {
         errorCorrectionLevel: "M", margin: 1, width: 560, color: { dark: "#000000", light: "#ffffff" },
       });
     } catch (error) {
-      console.warn("[KaChat Wallet] KSPT QR failed:", error);
+      console.warn("[KaPay] KSPT QR failed:", error);
     }
     canvas.style.width = "";
     canvas.style.height = "";

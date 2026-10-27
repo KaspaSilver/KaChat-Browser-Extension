@@ -471,7 +471,7 @@ export function showSendDomain({ domain, onBack, onSent, source = { kind: "main"
       toast(result.verified ? `${domain.fullName} transferred to ${who}.` : `Transfer submitted for ${domain.fullName}.`);
       showDomainSent({ txid: result.revealTxid, onDone: onSent });
     } catch (error) {
-      console.warn("[KaChat Wallet] domain transfer failed:", error);
+      console.warn("[KaPay] domain transfer failed:", error);
       // The commit went out (or a transfer of this domain is already unfinished): never commit
       // again - finish that one instead (audit EXT-005).
       if ((error?.code === "knsTransferRevealPending" || error?.code === "knsTransferPending") && error.pendingTransfer) {

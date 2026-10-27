@@ -1,31 +1,31 @@
-# KaChat Wallet - store listing and review answers
+# KaPay Extension - store listing and review answers
 
 Everything the Chrome Web Store, Microsoft Edge Add-ons and Firefox Add-ons (AMO) forms ask for,
 ready to paste. Build the upload files with `npm run package` (see README.md).
 
 | Store | Upload | Developer dashboard |
 |---|---|---|
-| Chrome Web Store (also Brave, Opera, Vivaldi, Arc) | `packages/kachat-wallet-<version>-chromium.zip` | https://chrome.google.com/webstore/devconsole |
+| Chrome Web Store (also Brave, Opera, Vivaldi, Arc) | `packages/kapay-extension-<version>-chromium.zip` | https://chrome.google.com/webstore/devconsole |
 | Microsoft Edge Add-ons | the same chromium zip | https://partner.microsoft.com/dashboard/microsoftedge |
-| Firefox Add-ons | `kachat-wallet-<version>-firefox.zip`, plus `kachat-wallet-<version>-source.zip` when asked for source code | https://addons.mozilla.org/developers/ |
+| Firefox Add-ons | `kapay-extension-<version>-firefox.zip`, plus `kapay-extension-<version>-source.zip` when asked for source code | https://addons.mozilla.org/developers/ |
 
 Privacy policy URL (all stores): **https://kachat.app/wallet-privacy.html** - live once the
 kachat.app link site is redeployed with `web_site/wallet-privacy.html` (KaChat repo).
 
 ## Listing
 
-**Name:** KaChat Wallet
+**Name:** KaPay Extension
 
 **Summary (Chrome, max 132 characters):**
-Kaspa wallet by KaChat. Send and receive KAS, manage addresses and domains, and connect to Kaspa websites.
+KaPay, the Kaspa wallet from KaChat. Send and receive KAS, manage addresses and domains, and connect to Kaspa websites.
 
 **Category:** Chrome: Productivity > Tools (or "Workflow & Planning"; there is no finance category).
 Firefox: Privacy & Security is wrong for this - use "Other". Edge: Productivity.
 
 **Description:**
 
-KaChat Wallet brings the wallet from the KaChat app to your browser. Your recovery phrase opens
-the same addresses as KaChat on iPhone, Android and desktop.
+KaPay brings the wallet from the KaPay and KaChat apps to your browser. Your recovery phrase opens
+the same addresses as KaPay on iPhone and KaChat on iPhone, Android and desktop.
 
 - Create a new account or import one from KaChat, KasWare, Kaspium, Kastle, KDX, OKX, OneKey,
   Ledger or the Kaspa CLI wallet
@@ -43,7 +43,7 @@ the same addresses as KaChat on iPhone, Android and desktop.
 - Your recovery phrase is encrypted with your password and never leaves your computer
 - No accounts, no tracking, no ads
 
-KaChat Wallet is self-custody: only you hold your keys. Keep your recovery phrase written down and
+KaPay is self-custody: only you hold your keys. Keep your recovery phrase written down and
 safe - it is the only way to restore your wallet.
 
 ## Chrome Web Store: Privacy practices tab
@@ -110,7 +110,7 @@ Like any web request, these services see the user's IP address.
 
   > Requirements: Node.js 20+ and npm. From the repository root: `npm install`, then
   > `npm run package`. The Firefox build is `dist-firefox/`; the zip is
-  > `packages/kachat-wallet-<version>-firefox.zip`. `shared/kaspa/kaspa.js` and
+  > `packages/kapay-extension-<version>-firefox.zip`. `shared/kaspa/kaspa.js` and
   > `shared/kaspa/kaspa_bg.wasm` are a build of the rusty-kaspa WASM SDK (ISC licence) version
   > 2.0.1 from a rusty-kaspa master snapshot with covenant support, committed prebuilt (web
   > target, `wasm/build-web --sdk`, rustc commit 59807616e1fa2540724bfbac14d7976d7e4a3860,

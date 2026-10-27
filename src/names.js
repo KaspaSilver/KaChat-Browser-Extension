@@ -80,7 +80,7 @@ async function getJson(url) {
     if (!response.ok) return { status: "failed" };
     return { status: "found", body: await response.json() };
   } catch (error) {
-    console.info("[KaChat Wallet] name lookup failed:", new URL(url).host, error?.message || error);
+    console.info("[KaPay] name lookup failed:", new URL(url).host, error?.message || error);
     return { status: "failed" };
   } finally {
     clearTimeout(timer);
@@ -135,7 +135,7 @@ async function resolveKachat(label) {
     const active = found.kind === "registered" && found.info.status(registry.graceMs) !== Status.lapsed;
     return { tld: "kachat", display, address: active ? KachatNamesRegistry.addressOf(found.info.owner) : null, failed: false };
   } catch (error) {
-    console.info("[KaChat Wallet] .kachat lookup failed:", error?.message || error);
+    console.info("[KaPay] .kachat lookup failed:", error?.message || error);
     return { tld: "kachat", display, address: null, failed: true };
   }
 }

@@ -1,9 +1,9 @@
 // Turns dist (the Chromium build) into everything the stores take:
 //
 //   dist-firefox/                 the same build with a Firefox manifest
-//   packages/kachat-wallet-<v>-chromium.zip   Chrome Web Store, Edge Add-ons, Opera
-//   packages/kachat-wallet-<v>-firefox.zip    addons.mozilla.org
-//   packages/kachat-wallet-<v>-source.zip     AMO wants the source of bundled code
+//   packages/kapay-extension-<v>-chromium.zip   Chrome Web Store, Edge Add-ons, Opera
+//   packages/kapay-extension-<v>-firefox.zip    addons.mozilla.org
+//   packages/kapay-extension-<v>-source.zip     AMO wants the source of bundled code
 //
 //   npm run package        (runs build first)
 //
@@ -51,9 +51,9 @@ const zip = (from, name) => {
   execFileSync("zip", ["-qr", "-X", out, "."], { cwd: from });
   console.log("wrote", out.replace(root, ""));
 };
-zip(dist, `kachat-wallet-${version}-chromium.zip`);
-zip(firefox, `kachat-wallet-${version}-firefox.zip`);
-const source = `${packages}/kachat-wallet-${version}-source.zip`;
+zip(dist, `kapay-extension-${version}-chromium.zip`);
+zip(firefox, `kapay-extension-${version}-firefox.zip`);
+const source = `${packages}/kapay-extension-${version}-source.zip`;
 rmSync(source, { force: true });
 execFileSync("git", ["archive", "--format=zip", "-o", source, "HEAD"], { cwd: root });
 console.log("wrote", source.replace(root, ""));

@@ -355,7 +355,7 @@ export async function changePassword(currentPassword, nextPassword) {
  * Wipes the wallet from this browser: the vault and the unlock key. The only way back is the
  * recovery phrase, which is why the UI makes this a deliberate, typed confirmation.
  */
-/** Removes everything KaChat Wallet keeps in this browser (audit EXT-002): the vault and every
+/** Removes everything KaPay keeps in this browser (audit EXT-002): the vault and every
  *  kachat.* record on both networks - connections, address caches, spending state, Cold Storage,
  *  portfolios, settings - and the pages' own storage. */
 export async function resetWallet() {

@@ -113,7 +113,7 @@ export async function copySecret(text, message) {
   // background worker 30 s later, through an offscreen page (audit EXT-003). A browser without
   // offscreen pages (Firefox) can't, and the message says so instead of promising it.
   const reply = await ext.runtime.sendMessage({ type: "clear-clipboard-soon" }).catch(() => null);
-  toast(reply?.supported ? message : message.replace(/\s*Clipboard will clear in 30s\.?/, " Clear your clipboard after pasting: this browser doesn't let KaChat Wallet clear it."));
+  toast(reply?.supported ? message : message.replace(/\s*Clipboard will clear in 30s\.?/, " Clear your clipboard after pasting: this browser doesn't let KaPay clear it."));
 }
 
 /**

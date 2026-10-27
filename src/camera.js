@@ -4,7 +4,7 @@
 // which corrupts binary frames, so it is not used.
 //
 // A toolbar popup can't show the browser's camera permission prompt (the request just fails).
-// When that happens the scanner offers to open KaChat Wallet in a tab, where the prompt works;
+// When that happens the scanner offers to open KaPay in a tab, where the prompt works;
 // the browser then remembers the answer for the extension, and the popup can scan from then on.
 
 import jsQR from "jsqr";
@@ -62,8 +62,8 @@ export function scanQr({ title = "Scan QR Code", hint = "Point camera at a QR co
         <div class="scanner-denied">
           <div class="strong">Camera Access Required</div>
           <p class="muted small">${inPopup
-            ? "The toolbar window can't ask for the camera. Open KaChat Wallet in a tab once and allow the camera there - after that, scanning works here too."
-            : "Allow the camera for KaChat Wallet in your browser's site settings, then try again."}</p>
+            ? "The toolbar window can't ask for the camera. Open KaPay in a tab once and allow the camera there - after that, scanning works here too."
+            : "Allow the camera for KaPay in your browser's site settings, then try again."}</p>
           ${inPopup ? '<button id="camera-tab">Allow Camera in a Tab</button>' : ""}
         </div>`;
       const button = overlay.querySelector("#camera-tab");
@@ -124,14 +124,14 @@ export function scanQr({ title = "Scan QR Code", hint = "Point camera at a QR co
 export async function showCameraPermissionPage(app) {
   app.innerHTML = `
     <section class="screen center camera-permission">
-      <h2 class="center-text">Camera for KaChat Wallet</h2>
+      <h2 class="center-text">Camera for KaPay</h2>
       <p class="muted center-text" id="camera-status">Allow the camera when your browser asks.</p>
     </section>`;
   const status = app.querySelector("#camera-status");
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
     for (const track of stream.getTracks()) track.stop();
-    status.textContent = "Camera allowed. Close this tab and scan again in KaChat Wallet.";
+    status.textContent = "Camera allowed. Close this tab and scan again in KaPay.";
   } catch {
     status.textContent = "The camera wasn't allowed. Allow it for this extension in your browser's site settings, then reload this tab.";
   }

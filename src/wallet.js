@@ -126,7 +126,7 @@ export const SEND_CANCELLED = "SEND_CANCELLED";
 let spendAuthorizer = null;
 export function setSpendAuthorizer(fn) { spendAuthorizer = typeof fn === "function" ? fn : null; }
 async function confirmSpend(details) {
-  if (!spendAuthorizer) throw new Error("Open KaChat Wallet to confirm this send with your password.");
+  if (!spendAuthorizer) throw new Error("Open KaPay to confirm this send with your password.");
   if (await spendAuthorizer(details)) return;
   const error = new Error("Nothing was sent.");
   error.code = SEND_CANCELLED;
@@ -234,7 +234,7 @@ export async function deriveAddresses() {
  */
 // Every connection step goes to the console (right-click the popup > Inspect > Console), which
 // is where to look when the dot stays yellow.
-const logConnection = (...parts) => console.info("[KaChat Wallet]", ...parts);
+const logConnection = (...parts) => console.info("[KaPay]", ...parts);
 const LAST_NODE_KEY = netKey("kachat.lastNode");
 
 export async function connection(log = logConnection) {
@@ -546,7 +546,7 @@ export function otherNetworkReason(address) {
   if (!isValidKaspaAddress(clean)) return null;
   const network = networkOfAddress(clean);
   if (!network || network === ACTIVE_NETWORK) return null;
-  return network === "testnet" ? "This is a Testnet address. KaChat Wallet is on Mainnet." : "This is a Mainnet address. KaChat Wallet is on Testnet.";
+  return network === "testnet" ? "This is a Testnet address. KaPay is on Mainnet." : "This is a Mainnet address. KaPay is on Testnet.";
 }
 
 /**
@@ -620,7 +620,7 @@ export async function send({ source, destination, amountKas = null, tipKas = "0"
   const from = await sourceWallet(source);
   const k = await kaspa();
   const node = await connection();
-  const log = (...parts) => console.info("[KaChat Wallet]", ...parts);
+  const log = (...parts) => console.info("[KaPay]", ...parts);
   if (max) {
     const result = await sendMaxKaspa({
       kaspa: k, rpc: node, withRpc, privateKey: from.privateKeyHex, sourceAddress: from.address,
@@ -676,7 +676,7 @@ export async function compound(source, totalFeeKas = null) {
     privateKey: from.privateKeyHex, sourceAddress: from.address,
     totalFeeSompi: totalFeeKas != null ? kasToSompi(String(totalFeeKas)) : null,
     redeemScript: from.redeemScript,
-    log: (...parts) => console.info("[KaChat Wallet]", ...parts),
+    log: (...parts) => console.info("[KaPay]", ...parts),
   });
   // consolidating spends too: the key is on chain now (the shield comes off)
   if (from.quantum) await markQuantumSpent(from.accountId, from.address);
@@ -1163,7 +1163,7 @@ export async function runPendingDiscovery(accountId) {
     await discoverSpendingAddresses();
     await removeLocal(pendingDiscoveryKey(accountId));
   } catch (error) {
-    console.warn("[KaChat Wallet] restore discovery (tried again next time):", error);
+    console.warn("[KaPay] restore discovery (tried again next time):", error);
   } finally {
     pendingDiscoveryRunning = false;
   }
@@ -1353,7 +1353,7 @@ export async function transferDomain({ domain, assetId, toAddress, priorityFeeSo
     changeAddress: fresh?.address || null,
     revealPriorityFeeSompi: priorityFeeSompi,
     onStatus,
-    log: (...parts) => console.info("[KaChat Wallet]", ...parts),
+    log: (...parts) => console.info("[KaPay]", ...parts),
   });
   if (fresh) {
     // the primary moves to the change slot, which widens its own (quantum) chain only
@@ -1379,7 +1379,7 @@ export async function finishDomainTransfer(record, onStatus = () => {}) {
     engine, assetId: record.assetId,
     signer: { privateKey: engine.privateKey, address: engine.address },
     onStatus,
-    log: (...parts) => console.info("[KaChat Wallet]", ...parts),
+    log: (...parts) => console.info("[KaPay]", ...parts),
   });
 }
 
@@ -1524,7 +1524,7 @@ function plainUtxo(e) {
  */
 export function namesNodeMethods() {
   const methods = {
-    log: (...parts) => console.info("[KaChat Wallet]", ...parts),
+    log: (...parts) => console.info("[KaPay]", ...parts),
     connect: () => connection(),
     withRpc: (fn) => withRpc(fn),
     async currentDagPoint() {
@@ -1597,7 +1597,7 @@ export function namesNodeMethods() {
         submit: (node, { allowOrphan = false } = {}) => node.submitTransaction({ transaction, allowOrphan }),
         txid: localId,
         label: "Transaction submit",
-        log: (...parts) => console.info("[KaChat Wallet]", ...parts),
+        log: (...parts) => console.info("[KaPay]", ...parts),
       });
     },
     /** The fee (BigInt sompi) of a 0.2 KAS self-transfer from the bound address carrying

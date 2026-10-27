@@ -263,7 +263,7 @@ export async function checkReceipts(addresses, { force = false } = {}) {
     write(baselineKey(), next);
     write(handledKey(), [...handled].slice(-MAX_HANDLED));
   } catch (error) {
-    console.warn("[KaChat Wallet] bell receipts:", error);
+    console.warn("[KaPay] bell receipts:", error);
   } finally {
     receiptsRunning = false;
   }

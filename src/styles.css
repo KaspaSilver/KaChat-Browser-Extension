@@ -1,4 +1,4 @@
-/* KaChat Wallet - the iOS app's look: its accent (AccentColor #70C7BA, white text on it),
+/* KaPay - the iOS app's look: its accent (AccentColor #70C7BA, white text on it),
    true-black screens, and the sign-in screen's green-cast near-black (OnboardingView). */
 :root {
   --bg: #000000;
