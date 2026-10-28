@@ -16,13 +16,10 @@ const ENDPOINTS_KEY = IS_TESTNET ? "kachat-endpoints-testnet-v1" : "kachat-endpo
 
 /** KaChat's own indexer on mainnet (iOS AppSettings.defaultIndexerURL). */
 export const DEFAULT_MAINNET_INDEXER = "https://indexer.kachat.app";
-/** Its name until 2026-10-28 (iOS legacyDefaultIndexerURLDuckDNS). */
-const RETIRED_DUCKDNS_INDEXER = "https://kachat.duckdns.org";
 const MAINNET_ENDPOINT_DEFAULTS = Object.freeze({
   kaspaApi: "https://api.kaspa.org",
-  // KaChat's own indexer (indexer.kachat.app since 2026-10-28, iOS; kachat.duckdns.org before -
-  // a stored override still on that old name moves forward, see migrateRetiredDuckDnsDefault) is
-  // the default chat/message + group-chat
+  // KaChat's own indexer (indexer.kachat.app since 2026-10-28, iOS) is the default chat/message +
+  // group-chat
   // indexer, matching iOS/Android. In a browser it is routed through the same-origin proxy when the
   // server hosting the page has one (see vite.config.mjs / installIndexerProxy), because the
   // indexer sends no CORS headers of its own.
@@ -37,13 +34,12 @@ const MAINNET_ENDPOINT_DEFAULTS = Object.freeze({
   // key stays so an older stored value does not surface as an unknown endpoint.
   nodeScan: "",
 });
-// The testnet-10 KaChat indexer (Kaspa-Quick-Start's kachat-testnet target): chat, push, KaPosts,
-// public chats and .kachat names on one name. Port 7443: 443 on that address is answered by another
-// proxy (iOS 5463ab7).
-export const DEFAULT_TESTNET_INDEXER = "https://tnkachat.duckdns.org:7443";
+// Testnet has no KaChat indexer by default (owner, 2026-10-28: the old testnet host is gone from
+// the app until testnet has a kachat.app one): those fields are blank there unless someone points
+// one at their own.
+export const DEFAULT_TESTNET_INDEXER = "";
 // What testnet starts with (iOS ConnectionProfile.defaults(.testnet)): the public testnet-10 REST
-// API, KNS's testnet registry, automatic node discovery, and KaChat's testnet-10 indexer. A blank
-// stored field (from before testnet had an indexer) falls back to it; custom URLs are kept.
+// API, KNS's testnet registry and automatic node discovery. Custom URLs are kept.
 const TESTNET_ENDPOINT_DEFAULTS = Object.freeze({
   kaspaApi: "https://api-tn10.kaspa.org",
   kasiaIndexer: DEFAULT_TESTNET_INDEXER,
@@ -103,31 +99,9 @@ let overrides = loadStored();
   }
 })();
 
-// KaChat's indexer moved from kachat.duckdns.org to indexer.kachat.app (iOS, 2026-10-28): a field
-// still on the old name goes back to the default, which is the new name. Any other URL, a custom
-// server included, is kept as it is.
-(function migrateRetiredDuckDnsDefault() {
-  let changed = false;
-  for (const key of ["kasiaIndexer", "kapostIndexer", "broadcastIndexer", "pushIndexer", "translationService"]) {
-    if (overrides[key] == null) continue;
-    if (isRetiredDuckDnsIndexer(overrides[key])) { delete overrides[key]; changed = true; }
-  }
-  if (changed) { try { localStorage.setItem(ENDPOINTS_KEY, JSON.stringify(overrides)); } catch {} }
-})();
-
-/** "kachat.duckdns.org" in any spelling a field may hold it (iOS replacingRetiredDefaultIndexer):
- *  with or without https://, any case, trailing slashes. */
-export function isRetiredDuckDnsIndexer(value) {
-  let text = String(value || "").trim().toLowerCase().replace(/\/+$/, "");
-  if (!text) return false;
-  if (!text.includes("://")) text = `https://${text}`;
-  return text === RETIRED_DUCKDNS_INDEXER;
-}
-
 // In the Vite dev browser, the chat indexers may send no CORS headers, so direct fetch() calls
 // would be blocked. Group chat and 1:1 sync REQUIRE these hosts, so we transparently reroute every
-// request to the indexer hosts (indexer.kachat.app — the current default — its old name
-// kachat.duckdns.org, and the legacy
+// request to the indexer hosts (indexer.kachat.app — the current default — and the legacy
 // kasia.wtf, still valid as a manual override) through the same-origin /nc-proxy middleware (see
 // vite.config.mjs), which forwards it server-side where CORS does not apply. Wrapping fetch once —
 // rather than rewriting URLs in getEndpoint() — covers ALL call sites (sync.js, group-indexer.js,
@@ -143,7 +117,7 @@ export function isRetiredDuckDnsIndexer(value) {
 // policy", seen from kachat.app against adam.kaspa.green) and Automatic Scan stalls on a server
 // that would have answered a curl. Relayed same-origin, the answer arrives. The wRPC websocket
 // that follows is not a fetch and is unaffected.
-const INDEXER_PROXY_HOST_RE = /(^|\.)kasia\.wtf$|(^|\.)kachat\.duckdns\.org$|^indexer\.kachat\.app$|^tnkachat\.duckdns\.org$|^api(-tn\d+)?\.kaspa\.org$|(^|\.)kaspa\.(green|red|stream|blue|ws)$|^api\.gateio\.ws$|(^|\.)finance\.yahoo\.com$|^api(-tn\d+)?\.dotk\.name$|^kaspaname\.com$/i;
+const INDEXER_PROXY_HOST_RE = /(^|\.)kasia\.wtf$|^indexer\.kachat\.app$|^api(-tn\d+)?\.kaspa\.org$|(^|\.)kaspa\.(green|red|stream|blue|ws)$|^api\.gateio\.ws$|(^|\.)finance\.yahoo\.com$|^api(-tn\d+)?\.dotk\.name$|^kaspaname\.com$/i;
 /// Where the proxy lives, relative to wherever the app is served from.
 ///
 /// The published site sits under /desktop/, so the proxy is at /desktop/nc-proxy/ - a root-absolute
@@ -315,7 +289,7 @@ installIndexerProxy();
 // requests are still reported by their own callers.
 let verboseApiLogging = false;
 let apiLogSink = null;
-const API_HOST_RE = /(^|\.)kasia\.wtf$|(^|\.)kachat\.duckdns\.org$|^indexer\.kachat\.app$|^tnkachat\.duckdns\.org$|^api(-tn\d+)?\.kaspa\.org$|knsdomains\.org$/i;
+const API_HOST_RE = /(^|\.)kasia\.wtf$|^indexer\.kachat\.app$|^api(-tn\d+)?\.kaspa\.org$|knsdomains\.org$/i;
 export function setVerboseApiLogging(enabled, sink = null) {
   verboseApiLogging = Boolean(enabled);
   if (sink) apiLogSink = sink;

@@ -61,9 +61,9 @@ the user's approval.
 - `offscreen`, `clipboardWrite` - 30 seconds after the user copies their recovery phrase or a
   private key, an offscreen page clears the clipboard (the popup has closed by then). Chrome / Edge
   only; Firefox has no offscreen pages, so there the wallet tells the user to clear it themselves.
-- Host permissions `indexer.kachat.app`, `tnkachat.duckdns.org` - KaChat's own indexer: reads the
+- Host permission `indexer.kachat.app` - KaChat's own indexer: reads the
   public KaChat profile (avatar, banner and bio links, Linktree, .kachat name) of the user's own
-  chatting address for the Profile screen, and .kachat names on testnet. The request carries that
+  chatting address for the Profile screen, and .kachat names. The request carries that
   public address.
 - Host permission `api.kaspa.org` - Kaspa REST API: transaction history and address usage.
 - Host permissions `*.kaspa.green`, `*.kaspa.red`, `*.kaspa.stream`, `*.kaspa.blue`, `*.kaspa.ws` -

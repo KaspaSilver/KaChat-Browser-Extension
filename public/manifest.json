@@ -71,8 +71,7 @@
     "https://*.kaspa.stream/*",
     "https://*.kaspa.blue/*",
     "https://*.kaspa.ws/*",
-    "https://indexer.kachat.app/*",
-    "https://tnkachat.duckdns.org/*"
+    "https://indexer.kachat.app/*"
   ],
   "optional_host_permissions": [
     "https://*/*"
