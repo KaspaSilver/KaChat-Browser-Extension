@@ -61,7 +61,7 @@ the user's approval.
 - `offscreen`, `clipboardWrite` - 30 seconds after the user copies their recovery phrase or a
   private key, an offscreen page clears the clipboard (the popup has closed by then). Chrome / Edge
   only; Firefox has no offscreen pages, so there the wallet tells the user to clear it themselves.
-- Host permissions `kachat.duckdns.org`, `tnkachat.duckdns.org` - KaChat's own indexer: reads the
+- Host permissions `indexer.kachat.app`, `tnkachat.duckdns.org` - KaChat's own indexer: reads the
   public KaChat profile (avatar, banner and bio links, Linktree, .kachat name) of the user's own
   chatting address for the Profile screen, and .kachat names on testnet. The request carries that
   public address.
@@ -92,7 +92,7 @@ the user's approval.
 
 **Data usage:** Category: "Financial and payment information" (public blockchain addresses).
 Public Kaspa addresses are sent to the Kaspa network and the APIs above to show balances and send
-transactions, and the user's chatting address is sent to KaChat's indexer (`kachat.duckdns.org`)
+transactions, and the user's chatting address is sent to KaChat's indexer (`indexer.kachat.app`)
 to read its public KaChat profile. Nothing else is sent, nothing is stored about the user, and
 the address is not sold, not used for unrelated purposes and not used for creditworthiness.
 Like any web request, these services see the user's IP address.
