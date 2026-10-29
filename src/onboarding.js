@@ -2,7 +2,7 @@
 //
 //   the accounts screen   KaChat wordmark, Saved Accounts (tap to sign in, pencil to rename or
 //                         remove), Create New Account, Import Existing Account, App Settings.
-//                         Log Out on the Profile screen lands here, as on iOS.
+//                         Log Out in Settings lands here, as on iOS.
 //   create                CreateWalletView -> seed -> PassphraseOptionView
 //   import                ImportSourceWalletView -> ImportWalletView -> PassphraseOptionView
 //   unlock / reset        the browser's stand-in for Face ID: the wallet password
@@ -61,12 +61,14 @@ function shortAddr(address) {
 
 // --- welcome / create / import -----------------------------------------------------------
 
-// The KaChat wordmark with the app mark beside it - iOS OnboardingView.titleSection.
-function wordmarkHtml(tagline) {
+// The KaPay wordmark with the app mark beside it - iOS OnboardingView.titleSection. KaPay's name
+// says what it is, so the welcome has no tagline under it (KaPay iOS 089a03f / 5bab351); unlocking
+// keeps its instruction.
+function wordmarkHtml(tagline = "") {
   return `
     <div class="hero">
       <div class="wordmark"><h1>KaPay</h1><img src="icons/kapay-logo.png" alt="KaPay logo" /></div>
-      <p class="tagline">${esc(tagline)}</p>
+      ${tagline ? `<p class="tagline">${esc(tagline)}</p>` : ""}
     </div>`;
 }
 
@@ -88,7 +90,7 @@ export async function showWelcome() {
   render(`
     <section class="onboard">
       <button class="icon onboard-gear" id="app-settings" aria-label="App Settings" title="App Settings">${ICONS.gearshape}</button>
-      ${wordmarkHtml("Secure Kaspa wallet on the BlockDAG")}
+      ${wordmarkHtml()}
       ${saved.length ? `
         <div class="saved">
           <div class="saved-header">Saved Accounts</div>
