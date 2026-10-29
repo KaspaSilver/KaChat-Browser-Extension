@@ -18,7 +18,9 @@ import { app, esc, render, $, toast, showAlert, ICONS, navHeader } from "./ui.js
 import * as names from "./names.js";
 import { kachatRegistry } from "./kachat-names.js";
 import { showKachatMarket } from "./market.js";
-import { liveDomainsTab, showLiveNameDetail } from "./kachat-live.js";
+import { showLiveNameDetail } from "./kachat-live.js";
+// the .kachat list, started from the names saved last time (iOS f4f5c0f)
+import { ownedDomainsTab, ownedDomainsEntry } from "./kachat-owned-cache.js";
 
 const BASE_FEE_SOMPI = 2_000_000n; // 0.02 KAS - iOS WithdrawFeeTier base for domain transfers
 const FEE_TIERS = [
@@ -46,7 +48,7 @@ function cardHtml(domain, primary) {
 let selectedTab = null;
 
 export function showDomains({ address, onBack, atCards = false, service = null }) {
-  // opened from Profile: the cards; back from a domain: the list it came from; `service`: that list
+  // opened from the Wallet tab: the cards; back from a domain: the list it came from; `service`: that list
   if (atCards) selectedTab = null;
   if (service && names.service(service)) selectedTab = service;
   const state = {
@@ -92,7 +94,7 @@ export function showDomains({ address, onBack, atCards = false, service = null }
   // The live tab on every network (iOS 7227d69) - empty on mainnet, where no registry runs.
   let liveTab = null;
   const kachatTab = () => {
-    liveTab = liveDomainsTab({ address, repaint: () => { if (here() && selectedTab === "kachat") paint(); } });
+    liveTab = ownedDomainsTab(address, () => { if (here() && selectedTab === "kachat") paint(); });
     return liveTab.html;
   };
   const comingTab = () => `
@@ -106,9 +108,10 @@ export function showDomains({ address, onBack, atCards = false, service = null }
   const countOf = (tld) => {
     if (tld === "kas") return state.data ? (state.data.domains || []).length : null;
     if (tld === "kachat") {
-      // the same held-names read the .kachat list shows, reloaded when the registry moves
-      liveDomainsTab({ address, repaint: () => { if (here() && selectedTab == null) paint(); } });
-      const entry = liveDomainsTab.cache?.get(address);
+      // the same held-names read the .kachat list shows, reloaded when the registry moves; the
+      // saved list's count at once (iOS f4f5c0f)
+      ownedDomainsTab(address, () => { if (here() && selectedTab == null) paint(); });
+      const entry = ownedDomainsEntry(address);
       return entry?.loaded ? entry.names.length : null;
     }
     if (state.owned?.failed?.[tld]) return null;

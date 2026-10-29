@@ -63,7 +63,7 @@ the user's approval.
   only; Firefox has no offscreen pages, so there the wallet tells the user to clear it themselves.
 - Host permission `indexer.kachat.app` - KaChat's own indexer: reads the
   public KaChat profile (avatar, banner and bio links, Linktree, .kachat name) of the user's own
-  chatting address for the Profile screen, and .kachat names. The request carries that
+  chatting address for the Wallet screen, and .kachat names. The request carries that
   public address.
 - Host permission `api.kaspa.org` - Kaspa REST API: transaction history and address usage.
 - Host permissions `*.kaspa.green`, `*.kaspa.red`, `*.kaspa.stream`, `*.kaspa.blue`, `*.kaspa.ws` -
@@ -85,7 +85,7 @@ the user's approval.
   Profile: the wallet reads the public profile pages the user linked, to show that profile's
   picture, banner or bio. Nothing is read from those sites until then.
 - Optional host permission `https://*/*` - requested only when the user sets a custom Kaspa REST
-  API in Settings, for that one address.
+  API or .kachat names indexer in Settings, for that one address.
 
 **Remote code:** No. All code, including the Kaspa WebAssembly module, is in the package.
 (`wasm-unsafe-eval` in the CSP lets the bundled WebAssembly compile; nothing is fetched and run.)
@@ -128,5 +128,5 @@ Like any web request, these services see the user's IP address.
 ## Screenshots
 
 Stores want 1280x800 (Chrome) or at least 600px wide (Firefox). Open the wallet as a tab
-(the expand button) at that window size and capture: the Profile home screen, Send Kaspa, Manage
+(the expand button) at that window size and capture: the Wallet home screen, Send Kaspa, Manage
 Addresses, Your Domains, and a website approval window.

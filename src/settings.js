@@ -4,14 +4,17 @@
 //                    English only for now)
 //   Security         Auto-Lock and Change Password - the browser's stand-ins for the three Face ID
 //                    toggles: every secret is behind the wallet password instead
-//   Connection       Connection Settings (KNS API, Kaspa REST API, Kaspa Node, Node Address Book)
-//                    and Kaspa Explorer
+//   Connection       Connection Settings (Kaspa Node and its IP Address Book; Domains: the .kachat
+//                    indexer, KNS and the other name services; the Kaspa REST API) and Kaspa
+//                    Explorer
 //   Connected Sites  the extension's own addition: websites connected through window.kachat
 //   View Seed Phrase the password, then iOS SeedPhraseView
+//   Log Out          the last row, as on KaPay iOS (040f91a)
 //
-// Chat-only pages (Notifications, Chats, Contacts, Storage, Chat History, Danger Zone,
-// Diagnostics) are left out. "App Settings" - the gear on the accounts screen - is the same list
-// without View Seed Phrase, as on iOS.
+// Settings is a dock tab (iOS SettingsView(isDockTab: true)): the tab toolbar and large title, no
+// Back. Pages the extension has nothing for (Notifications - the extension sends none -, Storage
+// and Nextcloud, Danger Zone, Diagnostics) are left out. "App Settings" - the gear on the accounts
+// screen - is the same list without View Seed Phrase or Log Out, as on iOS.
 
 import * as vault from "./vault.js";
 import * as wallet from "./wallet.js";
@@ -19,7 +22,10 @@ import { ext, tellBackground } from "./browser.js";
 import {
   app, esc, render, $, toast, copyText, copySecret, settings, saveSettings, ICONS, navHeader, passwordGate,
 } from "./ui.js";
-import { ENDPOINT_DEFAULTS, getEndpoint, getEndpointOverride, setEndpoint } from "../shared/engine/endpoints.js";
+import { ENDPOINT_DEFAULTS, MAINNET_DEFAULTS, getEndpoint, getEndpointOverride, setEndpoint } from "../shared/engine/endpoints.js";
+import { tabTopHtml, bindTabTop } from "./dock.js";
+import { kachatRegistry } from "./kachat-names.js";
+import { KachatNamesService } from "../shared/engine/kachat-names/service.js";
 import { connections, removeConnection } from "./approve.js";
 import { IS_TESTNET, TESTNET_REST, switchNetwork } from "./net.js";
 
@@ -53,15 +59,17 @@ function rowHtml(id, icon, label, value = "", danger = false) {
 
 /**
  * @param {object} opts
- * @param {Function} opts.onBack
+ * @param {Function} [opts.onBack]     where Back goes (not as a dock tab)
  * @param {boolean} [opts.appSettings]  the accounts screen's gear: no account-specific rows
+ * @param {boolean} [opts.isDockTab]    the Settings tab: its toolbar and large title, no Back
+ * @param {Function} [opts.onLogOut]    the Log Out row (the tab only)
  */
 export async function showSettings(opts) {
-  const { onBack, appSettings = false } = opts;
+  const { onBack, appSettings = false, isDockTab = false, onLogOut = null } = opts;
   const back = () => showSettings(opts);
   render(`
-    ${navHeader({ title: appSettings ? "App Settings" : "Settings" })}
-    <section class="screen settings">
+    ${isDockTab ? tabTopHtml("Settings") : navHeader({ title: appSettings ? "App Settings" : "Settings" })}
+    <section class="screen settings ${isDockTab ? "settings-tab" : ""}">
       <div class="glass list">
         ${rowHtml("customization", ICONS.paintbrush, "Customization")}
         ${rowHtml("security", ICONS.lockShieldSmall, "Security")}
@@ -69,8 +77,16 @@ export async function showSettings(opts) {
         ${appSettings ? "" : rowHtml("sites", ICONS.safari, "Connected Sites")}
       </div>
       ${appSettings ? "" : `<div class="glass list">${rowHtml("seed", ICONS.key, "View Seed Phrase", "", true)}</div>`}
+      ${onLogOut ? `<div class="glass list">
+        <button class="list-row settings-row danger-text" id="logout">
+          <span class="settings-label">${ICONS.logout}<span>Log Out</span></span>
+        </button>
+      </div>` : ""}
     </section>`, "settings");
-  $("#back").onclick = onBack;
+  if (isDockTab) bindTabTop();
+  else $("#back").onclick = onBack;
+  const logout = $("#logout");
+  if (logout) logout.onclick = onLogOut;
   $("#customization").onclick = () => showCustomization({ onBack: back });
   $("#security").onclick = () => showSecurity({ onBack: back, appSettings });
   $("#connection").onclick = () => showConnectionHub({ onBack: back });
@@ -320,6 +336,8 @@ async function showConnectionSettings({ onBack }) {
   const draft = {
     book: Array.isArray(book) ? book : [],
     restApi: getEndpointOverride("kaspaApi"),
+    // the .kachat names indexer (iOS 59593af, Connection > Domains); blank = the network's default
+    kachatIndexer: getEndpointOverride("kasiaIndexer"),
     bookLabel: "",
     bookAddress: "",
     bookError: "",
@@ -377,7 +395,44 @@ async function showConnectionSettings({ onBack }) {
       </div>`;
   };
 
+  // Where .kachat names are read from right now (iOS kachatSourceLabel): the indexer while it
+  // serves this network's registry and keeps up, else the chain.
+  const kachatSourceHtml = () => {
+    const reg = kachatRegistry();
+    if (!reg || !KachatNamesService.isLaunched) return '<span class="muted">Not live on this network</span>';
+    const source = reg.source;
+    if (source?.kind === "indexer") {
+      let host = source.base;
+      try { host = new URL(source.base).host; } catch { /* the base as it is */ }
+      return `<span class="settings-source"><span class="muted">Indexer</span><span class="muted tiny">${esc(host)}</span></span>`;
+    }
+    if (source?.kind === "chain") return '<span class="settings-source"><span class="muted">The chain</span><span class="muted tiny">Indexer not usable right now</span></span>';
+    if (reg.isRefreshing) return '<span class="spinner small-spin"></span>';
+    return `<span class="muted">${reg.lastError == null ? "Checking..." : "Couldn't check"}</span>`;
+  };
+  let sourceChecked = false;
+  const checkSource = () => {
+    const reg = kachatRegistry();
+    if (sourceChecked || !reg) return;
+    sourceChecked = true;
+    reg.refreshIfStale().catch(() => {}).finally(() => {
+      if (connectionTab === "domains" && app.querySelector("#kachat-source")) $("#kachat-source").innerHTML = kachatSourceHtml();
+    });
+  };
+  const indexerDefault = ENDPOINT_DEFAULTS.kasiaIndexer;
+
   const domainsTab = () => `
+    <div class="form-section">
+      <div class="form-header">.kachat Names</div>
+      <div class="form-card">
+        <div class="form-row stack-tight"><span class="muted small">.kachat Indexer URL</span>
+          <input id="kachat-indexer" class="plain-input mono" value="${esc(draft.kachatIndexer)}" placeholder="${esc(indexerDefault || MAINNET_DEFAULTS.kasiaIndexer)}" autocomplete="off" spellcheck="false" />
+          <span class="error-text small" id="kachat-indexer-error">${/^http:\/\//i.test(draft.kachatIndexer.trim()) ? HTTPS_REQUIRED : ""}</span>
+        </div>
+        <div class="form-row between"><span>Reading names from</span><span id="kachat-source">${kachatSourceHtml()}</span></div>
+      </div>
+      <div class="form-footer">Resolved first, everywhere you can type an address. Leave the indexer blank for ${indexerDefault ? "KaChat's own" : "none (Testnet has no default indexer)"}, or enter one you run yourself. If it can't be reached, serves a different registry or falls behind the network, names are read straight from the chain instead, which is slower. Buying, selling and claiming always re-check the chain.</div>
+    </div>
     <div class="form-section">
       <div class="form-header">Kaspa Name Service</div>
       <div class="form-card"><div class="form-row stack-tight"><span class="muted small">KNS API URL</span><span class="mono small muted break">${esc(wallet.knsApiUrl())}</span></div></div>
@@ -388,9 +443,8 @@ async function showConnectionSettings({ onBack }) {
       <div class="form-card">
         ${NAME_SERVICES.filter((n) => n.tld === "k" || n.tld === "kaspa").map((n) => `
           <div class="form-row stack-tight"><span class="muted small">${esc(n.serviceName)} (${esc(n.suffix)})</span>${n.api ? `<span class="mono small muted break">${esc(n.api)}</span>` : '<span class="muted">Not available on this network</span>'}</div>`).join("")}
-        <div class="form-row stack-tight"><span class="muted small">KaChat Names (.kachat)</span><span class="muted">Coming soon</span></div>
       </div>
-      <div class="form-footer">Used to show the .k and .kaspa names an address owns. KaChat's own .kachat names will be set here once they launch.</div>
+      <div class="form-footer">Used to show the .k and .kaspa names an address owns.</div>
     </div>`;
 
   const explorerTab = () => `
@@ -471,6 +525,13 @@ async function showConnectionSettings({ onBack }) {
       };
     }
 
+    if (connectionTab === "domains") checkSource();
+    const indexer = $("#kachat-indexer");
+    if (indexer) indexer.oninput = () => {
+      draft.kachatIndexer = indexer.value;
+      $("#kachat-indexer-error").textContent = /^http:\/\//i.test(indexer.value.trim()) ? HTTPS_REQUIRED : "";
+    };
+
     const rest = $("#rest");
     if (rest) rest.oninput = () => {
       draft.restApi = rest.value;
@@ -481,13 +542,24 @@ async function showConnectionSettings({ onBack }) {
       const defaultRest = IS_TESTNET ? TESTNET_REST : ENDPOINT_DEFAULTS.kaspaApi;
       const parsed = normalizeHttpsUrl(draft.restApi, defaultRest);
       if (parsed.error) { draft.error = parsed.error; connectionTab = "explorer"; toast(parsed.error); paint(); return; }
-      // A REST API other than api.kaspa.org needs the browser's permission to be reached. The
-      // request has to come straight from this click, before anything else is awaited.
-      if (parsed.value !== defaultRest && parsed.value !== ENDPOINT_DEFAULTS.kaspaApi && ext?.permissions?.request) {
+      // blank: the network's default indexer (none on Testnet)
+      const indexerParsed = draft.kachatIndexer.trim() ? normalizeHttpsUrl(draft.kachatIndexer, "") : { value: "" };
+      if (indexerParsed.error) { draft.error = indexerParsed.error; connectionTab = "domains"; toast(indexerParsed.error); paint(); return; }
+      // A REST API other than api.kaspa.org, or an indexer other than KaChat's, needs the browser's
+      // permission to be reached. The request has to come straight from this click, before
+      // anything else is awaited - one request for both.
+      const origins = [];
+      if (parsed.value !== defaultRest && parsed.value !== ENDPOINT_DEFAULTS.kaspaApi) origins.push(`${new URL(parsed.value).origin}/*`);
+      if (indexerParsed.value && indexerParsed.value !== MAINNET_DEFAULTS.kasiaIndexer) origins.push(`${new URL(indexerParsed.value).origin}/*`);
+      if (origins.length && ext?.permissions?.request) {
         let granted = false;
-        try { granted = await ext.permissions.request({ origins: [`${new URL(parsed.value).origin}/*`] }); } catch { granted = false; }
-        if (!granted) { draft.error = "KaPay needs your permission to reach that address."; connectionTab = "explorer"; paint(); return; }
+        try { granted = await ext.permissions.request({ origins }); } catch { granted = false; }
+        if (!granted) { draft.error = "KaPay needs your permission to reach that address."; paint(); return; }
       }
+      const indexerChanged = (indexerParsed.value || ENDPOINT_DEFAULTS.kasiaIndexer) !== getEndpoint("kasiaIndexer");
+      setEndpoint("kasiaIndexer", indexerParsed.value);
+      // the registry picks its source again with the new indexer
+      if (indexerChanged) kachatRegistry()?.refresh().catch(() => {});
       setEndpoint("kaspaApi", parsed.value);
       // The background worker has no localStorage; it reads the REST API from here.
       await saveSettings({ [IS_TESTNET ? "restApiTestnet" : "restApi"]: parsed.value });

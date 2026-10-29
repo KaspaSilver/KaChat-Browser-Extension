@@ -1022,18 +1022,24 @@ function exportBaseName() {
   return cleaned ? cleaned.slice(0, 60) : "KaPay Portfolio";
 }
 
+// An export from here adds one last column, Portfolio, with the portfolio's name on every row, so
+// an import puts the rows back into the portfolio of that name (iOS 59593af). A CoinMarketCap file
+// has no such column and imports into the active portfolio, as before.
+const PORTFOLIO_COLUMN = "Portfolio";
+
 /** { filename, csv } for the active portfolio, oldest first; null when it is empty. */
 export function buildCsv() {
   const rows = [...scopedTransactions()].sort((a, b) => a.timestamp - b.timestamp);
   if (!rows.length) return null;
-  let csv = "Date (UTC+0:00),Token,Type,Price (USD),Amount,Total value (USD),Fee,Fee Currency,Notes\n";
+  const portfolioName = String(activePortfolio()?.name ?? "").replace(/"/g, '""');
+  let csv = `Date (UTC+0:00),Token,Type,Price (USD),Amount,Total value (USD),Fee,Fee Currency,Notes,${PORTFOLIO_COLUMN}\n`;
   for (const tx of rows) {
     const d = new Date(tx.timestamp);
     const date = `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())} ${pad2(d.getUTCHours())}:${pad2(d.getUTCMinutes())}:${pad2(d.getUTCSeconds())}`;
     const amount = amountKasOf(tx);
     const perKas = amount !== 0 ? tx.fiatValue / amount : 0;
     const notes = String(tx.notes || "").replace(/"/g, '""');
-    csv += `"${date}","KAS","${tx.type}","${swiftDouble(perKas)}","${swiftDouble(amount)}","${swiftDouble(tx.fiatValue)}","0.00","USD","${notes}"\n`;
+    csv += `"${date}","KAS","${tx.type}","${swiftDouble(perKas)}","${swiftDouble(amount)}","${swiftDouble(tx.fiatValue)}","0.00","USD","${notes}","${portfolioName}"\n`;
   }
   const stamp = new Date().toISOString().replace(/\.\d{3}Z$/, "Z").replace(/:/g, "-");
   return { filename: `${exportBaseName()} ${stamp}.csv`, csv };
@@ -1088,13 +1094,49 @@ function headerOffsetMinutes(header) {
   return match[1] === "-" ? -minutes : minutes;
 }
 
-/** Imports into the active portfolio; a row with an exactly equal timestamp is replaced in place
- *  (keeping its id). Returns imported + replaced. */
+/** "Portfolio 1" as it was seeded: never renamed, nothing in it (iOS PortfolioSync.isPristineSeed). */
+function isPristineSeed(p) {
+  return p.name === "Portfolio 1" && !p.transactions.length && !store.fees.some((f) => f.portfolioId === p.id);
+}
+
+/** The portfolio a CSV row naming `name` goes into (iOS resolveImportPortfolio): the one of that
+ *  name (any case), else this wallet's untouched "Portfolio 1" renamed to it, else a new one -
+ *  null at the portfolio limit (the caller uses the active portfolio). Saved by the caller. */
+function resolveImportPortfolio(name) {
+  const list = store.data.portfolios;
+  const existing = list.find((p) => String(p.name).trim().toLowerCase() === name.toLowerCase());
+  if (existing) return existing;
+  if (list.length === 1 && isPristineSeed(list[0])) { list[0].name = name; return list[0]; }
+  if (list.length >= MAX_PORTFOLIOS) return null;
+  const portfolio = { id: uuid(), name, sortOrder: list.length, createdAt: Date.now(), transactions: [] };
+  list.push(portfolio);
+  return portfolio;
+}
+
+/**
+ * Imports a CSV; a row with an exactly equal timestamp in its portfolio is replaced in place
+ * (keeping its id), so a corrected or re-exported file updates the ledger instead of piling up
+ * copies. Which portfolio (iOS 59593af): a row's Portfolio column names it (resolveImportPortfolio);
+ * a row without one goes into the active portfolio. The portfolio imported into becomes the active
+ * one. Returns { count: imported + replaced, portfolioNames: where the rows went, in file order }.
+ */
 export async function importCsv(text) {
   const records = parseCsvRecords(text);
-  if (!records.length) return 0;
-  const offset = headerOffsetMinutes(records.shift().join(","));
-  const portfolio = activePortfolio();
+  if (!records.length) return { count: 0, portfolioNames: [] };
+  const headerFields = records.shift();
+  const offset = headerOffsetMinutes(headerFields.join(","));
+  const nameColumn = headerFields.findIndex((h) => String(h).trim().toLowerCase() === PORTFOLIO_COLUMN.toLowerCase());
+  const active = activePortfolio();
+  const targetByName = new Map();
+  const target = (f) => {
+    if (nameColumn < 0 || f.length <= nameColumn) return active;
+    const name = String(f[nameColumn]).trim();
+    if (!name) return active;
+    const key = name.toLowerCase();
+    if (!targetByName.has(key)) targetByName.set(key, resolveImportPortfolio(name) || active);
+    return targetByName.get(key);
+  };
+  const targets = [];
   let count = 0;
   for (const f of records) {
     if (f.length < 6) continue;
@@ -1114,9 +1156,11 @@ export async function importCsv(text) {
       if (type === "buy") total += fee;
       else if (type === "sell") total = Math.max(total - fee, 0);
     }
-    const notes = f.length > 8 && f[8] ? f[8] : null;
+    const notes = f.length > 8 && f[8] && nameColumn !== 8 ? f[8] : null;
     const amountSompi = kasToSompiString(amount);
     if (amountSompi == null) continue;
+    const portfolio = target(f);
+    if (!targets.includes(portfolio)) targets.push(portfolio);
     const existing = portfolio.transactions.findIndex((t) => t.timestamp === timestamp);
     const row = { type, amountSompi, fiatValue: total, timestamp, notes, portfolioId: portfolio.id };
     if (existing >= 0) portfolio.transactions[existing] = { ...row, id: portfolio.transactions[existing].id };
@@ -1124,12 +1168,14 @@ export async function importCsv(text) {
     count += 1;
   }
   if (count) {
+    // show where the rows went
+    if (targets[0]) store.data.activeId = targets[0].id;
     await save();
     emit("data");
     // A re-imported export can carry rows whose price was still loading: price them by date.
     startPriceBackfillIfNeeded();
   }
-  return count;
+  return { count, portfolioNames: count ? targets.map((p) => p.name) : [] };
 }
 
 // =================================================================================================

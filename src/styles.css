@@ -1150,3 +1150,38 @@ button.kl-tile:not(:disabled), .kl-tile-split { cursor: pointer; }
 .swap-coin-name { flex: 1; font-size: 14px; }
 .swap-details { display: flex; flex-direction: column; gap: 8px; }
 .pad-x { padding: 0 14px; }
+
+/* --- KaPay iOS shell (64b5f53 ... 5bab351) ---------------------------------------------------- */
+/* The floating glass button, bottom right over the dock: the Wallet tab's up/down arrow (Send and
+   Receive, iOS 6d4bf75 / 5bab351), the Portfolio's + (59593af), Contacts' + (06b5e8a). 56 pt,
+   regularMaterial with a hairline edge and a soft shadow; the page leaves room under its last
+   row (.fab-room) so nothing stays under it. */
+#shell { position: relative; }
+.fab {
+  position: absolute; right: 18px; bottom: calc(var(--dock-h, 0px) + 14px); z-index: 20;
+  width: 56px; height: 56px; padding: 0; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: var(--kaspa); background: rgba(44, 44, 46, .78); backdrop-filter: blur(20px);
+  border: .8px solid rgba(255, 255, 255, .18); box-shadow: 0 5px 14px rgba(0, 0, 0, .3);
+}
+.fab:hover { background: rgba(58, 58, 60, .86); }
+.fab:disabled { opacity: .45; }
+.fab-room { height: 64px; flex: none; }
+@media (prefers-color-scheme: light) {
+  .fab { background: rgba(255, 255, 255, .86); border-color: rgba(0, 0, 0, .08); box-shadow: 0 5px 14px rgba(0, 0, 0, .14); }
+  .fab:hover { background: rgba(242, 242, 247, .95); }
+}
+/* Contacts and the Settings tab's pages fill the popup and scroll inside, so the dock and the +
+   stay put. */
+#app[data-screen="book:home"], body.dock-on #app[data-screen="settings"] { height: calc(600px - var(--dock-h, 0px)); min-height: 0; flex: none; }
+body.dock-on #app[data-screen="settings"] > .screen, body.dock-on #app[data-screen="settings"] > .form { min-height: 0; }
+body.dock-on #app[data-screen="settings"] .form > * { flex-shrink: 0; }
+.settings-tab { padding-top: 4px; }
+/* Send and Receive: the tiles two by two (Swap is the fourth). */
+.wallet-plus-sheet .wallet-tiles { grid-template-columns: repeat(2, 1fr); }
+.wallet-plus-sheet .wallet-tile { aspect-ratio: auto; height: 92px; }
+/* A section title inside a half sheet (the Portfolio +'s Add / Import & Export). */
+.sheet-section-title { font-size: 13px; font-weight: 600; color: var(--muted); padding: 8px 4px 0; }
+/* Connection > Domains: where .kachat names are read from. */
+.settings-source { display: inline-flex; flex-direction: column; align-items: flex-end; text-align: right; }
+.dock-item span { white-space: nowrap; }

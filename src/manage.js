@@ -409,10 +409,18 @@ const domainOwners = new Map(); // address -> owns a KNS domain
 
 function displayLabel(row) { return row.label; }
 
-// In number order, #0 first, under the chatting address (iOS 245a5d2): no "primary" any more -
-// the send screen's From picks the address.
-function sortRows(rows) {
-  return [...rows].sort((a, b) => a.index - b.index);
+// Under the chatting address (iOS 245a5d2; no "primary" - the send screen's From picks the
+// address): unused ones first, newest first, so a freshly generated address lands right under the
+// Chatting Address, then the used ones in number order (KaPay iOS 59593af). One still being checked
+// counts as unused until its check says otherwise.
+function sortRows(rows, usedMap) {
+  const isUsed = (row) => row.balanceSompi > 0n || usedMap.get(row.address) === true;
+  return [...rows].sort((a, b) => {
+    const aUsed = isUsed(a);
+    const bUsed = isUsed(b);
+    if (aUsed !== bUsed) return aUsed ? 1 : -1;
+    return aUsed ? a.index - b.index : b.index - a.index;
+  });
 }
 
 export function showManageAddresses({ onBack, onChangeIdentity = null }) {
@@ -622,7 +630,7 @@ export function showManageAddresses({ onBack, onChangeIdentity = null }) {
   }
 
   function paint() {
-    const rows = sortRows(visibleRows());
+    const rows = sortRows(visibleRows(), state.used);
     // every address of the account, hidden ones and the chatting address too (iOS 245a5d2)
     const total = (state.list?.rows || []).reduce((sum, r) => sum + r.balanceSompi, 0n) + BigInt(state.chatting?.balance ?? 0n);
     const chattingCard = state.chatting ? `
