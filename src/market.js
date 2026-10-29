@@ -8,8 +8,9 @@
 // .placeholder)), so nothing here can be mistaken for a real listing.
 //
 // On TESTNET (testnet-10, with the bundled registry manifest verified) it is live
-// (kachat-live.js, iOS KachatNamesLiveViews.swift): search shows real availability and the price,
-// Claim registers (its progress is a half sheet that stays up until it's done), and the tabs -
+// (kachat-live.js, iOS KachatNamesLiveViews.swift): search shows real availability (Available or
+// Taken; no price per year, KaPay 05db583), Claim registers in steps - how long, then the costs and
+// swipe up, which follows the claim (KaPay 5bab351) - and the tabs -
 // Marketplace, Available, Activity (iOS 0765ce0, eea52b2) - read the registry. Your own names and the
 // offers you made live in Your Domains.
 
