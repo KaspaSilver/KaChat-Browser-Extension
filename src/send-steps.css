@@ -1,0 +1,210 @@
+/* Step-by-step sends (KaPay iOS 05db583 / 59593af, KaChat-Desktop ui/send-steps.css; send-steps.js):
+   the step screens (To, From, the keypad amount, the fee editor) and the swipe-up Review with its
+   BlockDAG, Sent and Failed. Every step is one full screen of the popup, a fixed height, so the
+   Continue bar and the keypad stay put at the bottom. */
+
+/* The popup's own height (body: 580px); `flex: none`, or #app's flex: 1 lets the content stretch it. */
+#app:has(> .ss-screen) { flex: none; height: calc(580px - var(--dock-h, 0px)); min-height: 0; }
+body.tab #app:has(> .ss-screen) { height: calc(100vh - 48px - var(--dock-h, 0px)); }
+.ss-screen { flex: 1; min-height: 0; display: flex; flex-direction: column; background: var(--bg); color: var(--text); position: relative; overflow: hidden; }
+
+/* A step slides in from the side it comes from (iOS move(edge:) with a spring). */
+.ss-screen[data-enter="forward"] { animation: ss-in-forward .3s cubic-bezier(.2,.9,.25,1); }
+.ss-screen[data-enter="back"] { animation: ss-in-back .3s cubic-bezier(.2,.9,.25,1); }
+@keyframes ss-in-forward { from { transform: translateX(40%); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes ss-in-back { from { transform: translateX(-40%); opacity: 0; } to { transform: none; opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .ss-screen[data-enter] { animation: none; } }
+
+/* iOS SendStepHeader: Back on the left, the title, Cancel on the right; a first step only the title. */
+.ss-head { flex: 0 0 auto; position: relative; display: flex; align-items: center; justify-content: space-between; min-height: 40px; padding: 10px 14px 4px; }
+.ss-title { position: absolute; left: 92px; right: 92px; margin: 0; text-align: center; font-size: 16px; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none; }
+.ss-first .ss-title { left: 14px; right: 14px; }
+.ss-back, .ss-cancel { border: 0; cursor: pointer; color: var(--kaspa-ink); font: inherit; background: var(--panel-2); }
+.ss-back { width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center; padding: 0; }
+.ss-back svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; }
+.ss-cancel { margin-left: auto; padding: 8px 14px; border-radius: 999px; font-size: 14px; font-weight: 500; }
+/* The review without Back: Cancel on the left (iOS SwipeUpToSendScrollView). */
+.ss-head.ss-cancel-left .ss-cancel { margin-left: 0; }
+.ss-head.ss-cancel-left .ss-title { left: 92px; right: 92px; }
+
+.ss-body { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; display: flex; flex-direction: column; gap: 14px; padding: 10px 18px 18px; }
+.ss-body > * { flex-shrink: 0; }
+.ss-question { margin: 0; font-size: 21px; font-weight: 750; line-height: 1.25; text-align: left; }
+.ss-question.ss-center { text-align: center; font-size: 18px; }
+.ss-note { margin: -4px 0 0; font-size: 12px; line-height: 1.4; color: var(--muted); }
+
+/* iOS SendContinueButton: an accent capsule pinned at the bottom, beside Cancel on a first step. */
+.ss-bar { flex: 0 0 auto; display: flex; gap: 10px; padding: 8px 18px 14px; background: var(--bg); }
+.ss-continue, .ss-bar-cancel { flex: 1 1 0; height: 50px; border-radius: 999px; font: inherit; font-size: 16px; font-weight: 650; cursor: pointer; padding: 0 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ss-continue { border: 0; background: var(--kaspa); color: #000; }
+.ss-continue:disabled { background: var(--kaspa) !important; color: #000 !important; opacity: .4; cursor: default; }
+.ss-bar-cancel { border: 1px solid rgba(112,199,186,.35); background: var(--panel-2); color: var(--text); }
+
+/* "To alice.kachat", "From Chatting Address" (iOS SendStepChip). */
+.ss-chips { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.ss-chips.start { align-items: flex-start; }
+.ss-chip { display: inline-flex; align-items: baseline; gap: 6px; max-width: 100%; padding: 7px 12px; border-radius: 16px; background: var(--panel); border: .8px solid rgba(255,255,255,.12); font-size: 13px; }
+.ss-chip-label { color: var(--muted); flex: 0 0 auto; }
+.ss-chip-value { font-weight: 650; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ss-chip-value.mono { font-weight: 400; font-size: 12px; }
+
+/* A keypad step (the amount, the fee): the chips, the big number and its switches, then the keys. */
+.ss-keypad-step .ss-body { gap: 0; padding-bottom: 4px; overflow: hidden; }
+.ss-keypad-stage { flex: 1 1 auto !important; min-height: 110px; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+.ss-amount { display: flex; align-items: baseline; justify-content: center; gap: 6px; max-width: 100%; padding: 0 8px; }
+.ss-amount-number { font-weight: 750; font-variant-numeric: tabular-nums; line-height: 1.1; white-space: nowrap; font-family: ui-rounded, -apple-system, system-ui, sans-serif; }
+.ss-amount.empty .ss-amount-number { color: var(--muted); }
+.ss-amount-unit { font-weight: 650; color: var(--muted); font-family: ui-rounded, -apple-system, system-ui, sans-serif; }
+.ss-amount-actions { margin-top: 10px; }
+.ss-amount-actions:empty { display: none; }
+.ss-footnote { margin: 8px 0 0; min-height: 1.4em; padding: 0 12px; font-size: 12px; line-height: 1.4; text-align: center; color: var(--muted); }
+.ss-footnote.error { color: #ff453a; }
+.ss-footnote.warn { color: var(--orange, #ff9f0a); }
+
+/* iOS KaspaKeypad: 1-9, the point, 0 and delete; a soft round highlight while pressed. */
+.ss-keypad { flex: 0 0 auto; display: grid; grid-template-columns: repeat(3, 1fr); gap: 2px; padding: 0 4px; margin-top: 4px; }
+.ss-key {
+  height: 48px; border: 0; border-radius: 14px; background: transparent; color: var(--text); cursor: pointer; padding: 0;
+  font: inherit; font-size: 26px; font-weight: 500; font-family: ui-rounded, -apple-system, system-ui, sans-serif;
+  display: grid; place-items: center; touch-action: manipulation; user-select: none; -webkit-user-select: none;
+  transition: transform .12s ease, background-color .12s ease;
+}
+.ss-key:hover { background: color-mix(in srgb, var(--text) 5%, transparent); }
+.ss-key:active { background: color-mix(in srgb, var(--text) 9%, transparent); transform: scale(.94); }
+.ss-key:focus-visible { outline: 2px solid var(--kaspa); outline-offset: -2px; }
+.ss-key svg { width: 26px; height: 26px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linejoin: round; stroke-linecap: round; }
+.ss-key-refused { animation: ss-refuse .25s ease; }
+@keyframes ss-refuse { 25% { transform: translateX(-3px); } 75% { transform: translateX(3px); } }
+body.tab .ss-key { height: 54px; }
+
+/* Your addresses right on the step (iOS OwnAddressList). */
+.ss-address-list { display: flex; flex-direction: column; gap: 8px; }
+.ss-list-loading { display: flex; justify-content: center; padding: 14px 0; }
+.ss-list-section { margin: 4px 0 0; color: var(--muted); font-size: 11px; font-weight: 650; text-transform: uppercase; letter-spacing: .3px; }
+.ss-source-row {
+  display: flex; align-items: center; gap: 10px; width: 100%; padding: 12px; border-radius: 16px; text-align: left;
+  background: var(--panel); border: 1.5px solid rgba(255,255,255,.08); color: var(--text); font-weight: 400;
+}
+.ss-source-row.current { border-color: var(--kaspa); }
+.ss-source-copy { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.ss-source-name { display: flex; align-items: center; gap: 6px; font-size: 14px; font-weight: 650; min-width: 0; }
+.ss-source-balance { flex: 0 0 auto; font-size: 13px; font-variant-numeric: tabular-nums; }
+.ss-source-check { flex: 0 0 20px; width: 20px; height: 20px; border-radius: 50%; border: 1.5px solid var(--muted); display: grid; place-items: center; color: #000; }
+.ss-source-row.current .ss-source-check { background: var(--kaspa); border-color: var(--kaspa); }
+.ss-source-check svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 3.2; stroke-linecap: round; stroke-linejoin: round; }
+.ss-used { flex: 0 0 auto; font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 999px; }
+.ss-used.used { color: var(--muted); background: rgba(152,152,159,.15); }
+.ss-used.unused { color: #30d158; background: rgba(48,209,88,.15); }
+.ss-used.checking { color: var(--muted); font-weight: 600; padding: 1px 0; }
+
+/* The review: the amount, To / From / Total, then the fee. */
+.ss-review-amount { display: flex; flex-direction: column; align-items: center; gap: 4px; padding-top: 4px; text-align: center; }
+.ss-review-eyebrow { font-size: 14px; color: var(--muted); }
+.ss-review-big { font-size: 34px; font-weight: 750; line-height: 1.1; font-variant-numeric: tabular-nums; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-rounded, -apple-system, system-ui, sans-serif; }
+.ss-review-fiat { font-size: 14px; color: var(--muted); }
+.ss-review-card { gap: 12px; font-size: 14px; }
+.ss-review-row { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.ss-review-row + .ss-review-row { padding-top: 12px; border-top: .5px solid rgba(255,255,255,.12); }
+.ss-review-label { color: var(--muted); flex: 0 0 auto; }
+.ss-review-value { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; min-width: 0; text-align: right; font-variant-numeric: tabular-nums; }
+.ss-review-value strong { font-weight: 650; }
+.ss-review-address { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.ss-review-stack { display: flex; flex-direction: column; gap: 16px; }
+
+/* The fee row's Edit (iOS SendFeeControls onEditFee): the fee, then an Edit capsule. */
+.sk-fee-value { display: inline-flex; align-items: center; gap: 8px; font-variant-numeric: tabular-nums; }
+.sk-fee-edit-pill { display: inline-flex; align-items: center; gap: 4px; padding: 5px 11px; border-radius: 999px; background: rgba(112,199,186,.15); color: var(--kaspa-ink); font-size: 13px; font-weight: 650; }
+.sk-fee-edit-pill:disabled { background: rgba(112,199,186,.15) !important; color: var(--kaspa-ink) !important; opacity: .5; }
+
+/* --- Swipe up to send (iOS SwipeUpToSendScrollView) ------------------------------------------
+   The form (its header, the scrolling review, the bar) moves up with the drag and the sending
+   screen rises from below in its place, then takes the whole screen. */
+.sk-swipe-form { flex: 1; min-height: 0; display: flex; flex-direction: column; background: var(--bg); }
+.sk-swipe-host.sk-swipe-animating .sk-swipe-form,
+.sk-swipe-host.sk-swipe-animating .sk-swipe-progress { transition: transform .45s cubic-bezier(.2,.9,.25,1); }
+.sk-swipe-scroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 8px 18px 18px; display: flex; flex-direction: column; gap: 16px; }
+.sk-swipe-scroll > * { flex-shrink: 0; }
+.sk-swipe-barwrap { flex: 0 0 auto; padding: 8px 18px 14px; background: var(--bg); }
+.sk-swipe-bar {
+  width: 100%; height: 60px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; padding: 0;
+  border: 0; border-radius: 999px; background: var(--kaspa); color: #000; font: inherit; font-size: 16px; font-weight: 650;
+  cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none;
+}
+.sk-swipe-bar.disabled { opacity: .4; cursor: default; }
+.sk-swipe-bar:active:not(.disabled) { cursor: grabbing; }
+.sk-swipe-bar-icon { display: inline-flex; }
+.sk-swipe-bar-icon svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+.sk-swipe-progress {
+  position: absolute; inset: 0; z-index: 2; display: flex; flex-direction: column; align-items: stretch;
+  padding: 44px 0 0; background: var(--bg); color: var(--text); overflow: hidden;
+}
+.sk-swipe-progress[hidden] { display: none; }
+.sk-swipe-dag { position: relative; flex: 0 0 170px; height: 170px; display: grid; place-items: center; }
+.sk-swipe-dag canvas { position: absolute; inset: 0; width: 100%; height: 100%; color: var(--text); transition: opacity .35s ease; }
+.sk-swipe-dag canvas.dimmed { opacity: .35; }
+.sk-swipe-mark { position: relative; z-index: 1; width: 64px; height: 64px; display: none; }
+.sk-swipe-mark.done, .sk-swipe-mark.failed { display: block; animation: sk-swipe-pop .35s ease; }
+.sk-swipe-mark svg { width: 64px; height: 64px; }
+.sk-swipe-mark-ink { fill: none; stroke-width: 6; stroke-linecap: round; stroke-linejoin: round; }
+.sk-swipe-mark.done .sk-swipe-mark-fill { fill: var(--kaspa); }
+.sk-swipe-mark.done .sk-swipe-mark-ink { stroke: #000; }
+.sk-swipe-mark.failed .sk-swipe-mark-fill { fill: #ff453a; }
+.sk-swipe-mark.failed .sk-swipe-mark-ink { stroke: #fff; }
+@keyframes sk-swipe-pop { from { transform: scale(.4); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+.sk-swipe-lines { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 18px 0 0; text-align: center; }
+.sk-swipe-big { margin: 0; font-size: 30px; font-weight: 750; line-height: 1.15; }
+.sk-swipe-amount { margin: 0; font-size: 18px; font-weight: 650; color: var(--kaspa-ink); font-variant-numeric: tabular-nums; }
+.sk-swipe-to { margin: 0; padding: 0 28px; max-width: 100%; display: flex; justify-content: center; font-size: 14px; color: var(--muted); white-space: nowrap; }
+.sk-swipe-to[hidden], .sk-swipe-amount[hidden], .sk-swipe-detail[hidden], .sk-swipe-failure[hidden], .sk-swipe-tx[hidden], .sk-swipe-outcome[hidden], .sk-swipe-final[hidden] { display: none; }
+.sk-sent-to-word { flex: 0 0 auto; }
+.sk-mid-head { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sk-mid-tail { flex: 0 0 auto; white-space: nowrap; }
+.sk-swipe-detail { margin: 6px 0 0; padding: 0 22px; font-size: 12px; color: var(--muted); }
+.sk-swipe-failure {
+  margin: 20px 18px 0; display: flex; align-items: flex-start; gap: 8px; padding: 12px; border-radius: 14px;
+  background: var(--panel); border: .8px solid rgba(255,255,255,.12); color: #ff453a; font-size: 14px; line-height: 1.35;
+  animation: sk-swipe-fade .35s ease; max-height: 140px; overflow-y: auto;
+}
+.sk-swipe-failure svg { flex: 0 0 18px; width: 18px; height: 18px; margin-top: 1px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.sk-swipe-tx { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 20px 18px 0; animation: sk-swipe-fade .35s ease; }
+.sk-sent-txid {
+  width: 100%; display: flex; align-items: center; justify-content: center; gap: 6px; padding: 11px 12px; border-radius: 14px;
+  background: var(--panel); border: .8px solid rgba(255,255,255,.12); color: var(--kaspa-ink); text-decoration: none;
+}
+.sk-sent-txid.plain { color: var(--muted); background: transparent; border: 0; margin: 0; }
+.sk-sent-txid-text { min-width: 0; display: flex; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+.sk-sent-open { flex: 0 0 14px; width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+.sk-swipe-tx-hint { margin: 0; font-size: 11px; color: var(--muted); }
+.sk-swipe-outcome { flex: 0 1 auto; min-height: 0; overflow-y: auto; padding: 16px 18px 0; animation: sk-swipe-fade .35s ease; }
+.sk-swipe-spacer { flex: 1 1 0; min-height: 10px; }
+.sk-swipe-final {
+  flex: 0 0 auto; height: 50px; margin: 0 18px 14px; border: 0; border-radius: 999px;
+  background: var(--kaspa); color: #000; font: inherit; font-size: 16px; font-weight: 650; cursor: pointer; animation: sk-swipe-rise .35s ease;
+}
+@keyframes sk-swipe-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes sk-swipe-rise { from { transform: translateY(24px); opacity: 0; } to { transform: none; opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .sk-swipe-host.sk-swipe-animating .sk-swipe-form,
+  .sk-swipe-host.sk-swipe-animating .sk-swipe-progress { transition-duration: .2s; }
+}
+
+/* The recipient card's Paste / Scan QR / Contacts (iOS 8118f09): labelled pills, one row. */
+.sk-input-pills { display: flex; flex-wrap: nowrap; gap: 6px; min-width: 0; }
+.sk-input-pill {
+  display: inline-flex; align-items: center; gap: 5px; flex: 0 1 auto; min-width: 0; padding: 7px 10px; border-radius: 999px;
+  background: rgba(112,199,186,.15); color: var(--kaspa-ink); font-size: 13px; font-weight: 650; white-space: nowrap;
+}
+.sk-input-pill > span { overflow: hidden; text-overflow: ellipsis; }
+.sk-input-pill svg { width: 15px; height: 15px; flex: none; }
+.sk-input-pill:hover { background: rgba(112,199,186,.24); }
+.sk-recipient-field { width: 100%; }
+/* The lookup redraws this part alone; its pieces sit in the card as before. */
+.sk-recipient-status { display: contents; }
+
+/* Request Payment's review: "Paid to", the memo and Share. */
+.ss-label { color: var(--muted); font-size: 11px; font-weight: 650; text-transform: uppercase; letter-spacing: .3px; }
+.req-share { align-self: center; display: inline-flex; align-items: center; gap: 6px; padding: 9px 16px; border-radius: 999px; background: rgba(112,199,186,.15); color: var(--kaspa-ink); font-size: 14px; font-weight: 650; }
+.req-share:disabled { background: rgba(112,199,186,.15) !important; color: var(--kaspa-ink) !important; opacity: .5; }
+.req-share svg { width: 15px; height: 15px; }
+.req-memo-card { background: var(--panel); border-radius: 14px; padding: 12px 14px; }
+.req-memo-card .req-memo { min-height: 0; padding: 0; }

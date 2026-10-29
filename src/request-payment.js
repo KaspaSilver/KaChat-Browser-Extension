@@ -1,25 +1,40 @@
-// Request Payment (iOS c6851d6 / 86dfd2d / 6dee531 / 338d9f5 / 3f5f79c, CreatePaymentRequestView):
-// a payment request link - to a brand-new address or one of yours, an exact amount and what it's
-// for. Copy (or share) it and send it anywhere; in KaChat it opens Send Kaspa filled in, and shows
-// it was made by your chatting address (signed with its key, shared engine payment-request.js).
+// Request Payment (iOS c6851d6 / 86dfd2d / 6dee531 / 338d9f5 / 3f5f79c, CreatePaymentRequestView;
+// in steps since KaPay 05db583): a payment request link - to a brand-new address or one of yours,
+// an exact amount and what it's for. The step screens of a send the other way round
+// (send-steps.js):
+//   "Where do you want to be paid?"  Fresh Address, or Choose an Address with your addresses
+//                                    listed right on the step
+//   "How much?"                      the app's own keypad (KAS or your currency)
+//   Review                           the amount, Paid to, the memo; Copy Payment Request is the
+//                                    bottom button, Share under the memo
+// Copy (or share) it and send it anywhere; in KaChat it opens Send Kaspa filled in, and shows it
+// was made by your chatting address (signed with its key, shared engine payment-request.js).
 //
 // A fresh address is shown before it's needed and reserved only when the request is copied or
 // shared, so opening the screen and cancelling uses none up; copying and sharing again reuse it.
 
-import { esc, toast, ICONS } from "./ui.js";
-import { openPanel } from "./kachat-ui.js";
+import { esc, toast, ICONS, settings, unitText } from "./ui.js";
 import * as wallet from "./wallet.js";
 import * as vault from "./vault.js";
-import { showSheet } from "./ui.js";
-import { sompiFromUserText, sanitizeAmountInput } from "./amounts.js";
+import { returnToTab } from "./dock.js";
+import { sompiFromUserText } from "./amounts.js";
 import { KAS_UNIT } from "./net.js";
+import { amountState, addressResolutionHtml, trimmedKas } from "./send-pieces.js";
+import {
+  createStepFlow, showStep, stepNoteHtml, choicePillsHtml, mountOwnAddressList, bindKeypad, applyKeypadKey,
+  keypadAmountEntryHtml, paintKeypadAmountEntry, reviewAmountHtml,
+} from "./send-steps.js";
 import {
   PAYMENT_REQUEST_MEMO_LIMIT, makePaymentRequest, signPaymentRequest, paymentRequestUniversalLink, clampMemoText, memoCharacters,
 } from "../shared/engine/payment-request.js";
 
 const short = (a) => `${a.slice(0, 14)}...${a.slice(-6)}`;
+const ORDER = ["destination", "amount", "review"];
 
-export function showRequestPayment() {
+/** @param {{ onClose?: Function }} [opts] onClose: Cancel / after copying, back where it was opened
+ *  (the tab under the "+" by default). */
+export function showRequestPayment(opts = {}) {
+  const onClose = opts.onClose || (() => returnToTab());
   const state = {
     destination: "fresh", // "fresh" | "chosen"
     nextFresh: null,      // shown before it's reserved
@@ -31,103 +46,189 @@ export function showRequestPayment() {
     copied: false,
     working: false,
     error: "",
+    price: null,
+    currency: "usd",
   };
+  // KAS or your currency, as a send's amount (iOS KaspaFiatAmountState)
+  const amountField = amountState();
   let handle = null;
 
   const address = () => (state.destination === "fresh" ? (state.fresh || state.nextFresh)?.address : state.chosen?.address) || null;
   const amountSompi = () => { const v = sompiFromUserText(state.amountText); return v != null && v > 0n ? v : null; };
-  const canMake = () => amountSompi() != null && (state.destination === "fresh" || state.chosen);
+  const canMake = () => amountSompi() != null && Boolean(address());
+  const price = () => state.price?.price || 0;
+  const here = () => Boolean(handle?.el?.isConnected);
 
-  const destinationHtml = () => {
-    if (state.destination === "fresh") {
-      const a = (state.fresh || state.nextFresh)?.address;
-      return a ? `<div class="sk-from-row"><span class="tx-meta"><span class="strong small">Fresh Address</span><span class="mono tiny muted">${esc(short(a))}</span></span></div>`
-        : '<div class="center-text"><span class="spinner small-spin"></span></div>';
-    }
-    if (!state.chosen) return '<p class="muted small">Pick which of your addresses gets paid.</p>';
-    return `
-      <div class="sk-from-row"><span class="tx-meta"><span class="strong small">${esc(state.chosen.label)}</span><span class="mono tiny muted">${esc(short(state.chosen.address))}</span></span></div>
-      <p class="muted tiny">${state.chosen.address === state.chatting
-        ? "The payment lands in your chat with whoever pays, with the memo."
-        : "The memo shows to whoever pays, but doesn't travel with the payment."}</p>`;
+  const flow = createStepFlow(ORDER, (id, direction) => {
+    handle = null;
+    if (id === "destination") drawDestination(direction);
+    else if (id === "amount") drawAmount(direction);
+    else drawReview(direction);
+  });
+
+  // --- Where do you want to be paid? ----------------------------------------------------------
+  const drawDestination = (direction) => {
+    handle = showStep({
+      screen: "request-where",
+      title: "Request Payment",
+      question: "Where do you want to be paid?",
+      bodyHtml: '<div class="ss-review-stack" id="req-where"></div><div id="req-list"></div>',
+      onCancel: onClose,
+      canContinue: () => Boolean(address()),
+      onContinue: () => flow.go("amount"),
+      direction,
+    });
+    paintDestination();
+    if (state.destination === "chosen") showList();
+  };
+  const paintDestination = () => {
+    if (!here() || flow.current !== "destination") return;
+    const host = handle.el.querySelector("#req-where");
+    const fresh = (state.fresh || state.nextFresh)?.address;
+    host.innerHTML = unitText(`
+      ${choicePillsHtml([
+        { id: "req-fresh", title: "Fresh Address", on: state.destination === "fresh" },
+        { id: "req-choose", title: "Choose an Address", on: state.destination === "chosen" },
+      ])}
+      ${state.destination === "fresh"
+        ? (fresh ? `${addressResolutionHtml({ address: fresh })}${stepNoteHtml("A brand-new address of yours that has never been used or handed out.")}`
+          : '<div class="ss-list-loading"><span class="spinner"></span></div>')
+        : stepNoteHtml("Pick which of your addresses gets paid.")}`);
+    host.querySelector("#req-fresh").onclick = () => {
+      if (state.destination === "fresh") return;
+      state.destination = "fresh";
+      state.copied = false;
+      hideList();
+      paintDestination();
+    };
+    host.querySelector("#req-choose").onclick = () => {
+      if (state.destination === "chosen") return;
+      state.destination = "chosen";
+      state.copied = false;
+      paintDestination();
+      showList();
+    };
+    handle.refresh();
+  };
+  // the list right here, no sheet: tap the address that gets paid
+  let list = null;
+  const showList = () => {
+    const el = handle.el.querySelector("#req-list");
+    el.hidden = false;
+    list = mountOwnAddressList(el, {
+      selectedAddress: state.chosen?.address || null,
+      onPick: (picked) => {
+        state.chosen = { address: picked.address, label: picked.kind === "chatting" ? "Chatting Address" : picked.label };
+        state.copied = false;
+        list?.setSelected(picked.address);
+        handle.refresh();
+      },
+    });
+  };
+  const hideList = () => {
+    const el = handle?.el?.querySelector("#req-list");
+    if (el) { el.hidden = true; el.innerHTML = ""; }
+    list = null;
   };
 
-  const paint = () => {
-    if (!handle?.isOpen()) return;
-    const host = handle.panel.querySelector("[data-req]");
-    const focused = document.activeElement?.id;
-    host.innerHTML = `
-      <div class="sk-card sk-from">
-        <div class="sel-pills">
-          <button type="button" class="sel-pill ${state.destination === "fresh" ? "on" : ""}" id="req-fresh">Fresh Address</button>
-          <button type="button" class="sel-pill ${state.destination === "chosen" ? "on" : ""}" id="req-choose">Choose an Address</button>
-        </div>
-        ${destinationHtml()}
-      </div>
-      <div class="sk-card">
-        <div class="sk-label">Amount</div>
-        <div class="sk-amount-row req-amount-row"><input id="req-amount" class="sk-amount-input" inputmode="decimal" placeholder="0" value="${esc(state.amountText)}" autocomplete="off" aria-label="Amount" /><span class="sk-unit">${esc(KAS_UNIT)}</span></div>
-      </div>
-      <div class="sk-card">
-        <textarea id="req-memo" class="req-memo" rows="2" placeholder="What it's for (optional)">${esc(state.memo)}</textarea>
-        <div class="muted tiny req-count">${memoCharacters(state.memo).length}/${PAYMENT_REQUEST_MEMO_LIMIT}</div>
-      </div>
-      ${state.error ? `<p class="error-text small center-text">${esc(state.error)}</p>` : ""}
-      <button id="req-copy" class="big" ${canMake() && !state.working ? "" : "disabled"}>${state.working ? '<span class="spinner small-spin"></span>' : state.copied ? "Copied" : "Copy Payment Request"}</button>
-      ${navigator.share ? `<button id="req-share" class="ghost with-icon" ${canMake() && !state.working ? "" : "disabled"}>${ICONS.share}<span>Share</span></button>` : ""}
-      <p class="muted tiny center-text">Anyone who opens or pastes it in KaChat gets Send Kaspa with this filled in, and sees it was made by your chatting address (signed with its key).</p>`;
-    const $h = (sel) => host.querySelector(sel);
-    $h("#req-fresh").onclick = () => { state.destination = "fresh"; state.copied = false; paint(); };
-    $h("#req-choose").onclick = chooseAddress;
-    const amount = $h("#req-amount");
-    amount.oninput = () => {
-      const clean = sanitizeAmountInput(amount.value);
-      if (clean !== amount.value) amount.value = clean;
-      state.amountText = clean;
+  // --- How much? ----------------------------------------------------------------------------
+  const fiatText = (kas) => (price() ? wallet.formatFiat(sompiFromUserText(kas.toFixed(8)) ?? 0n, state.price) : "");
+  const entryOptions = () => ({
+    typed: amountField.display,
+    unit: amountField.fiat ? state.currency.toUpperCase() : KAS_UNIT,
+    conversion: amountField.conversion(price(), fiatText),
+    switchText: amountField.fiat ? KAS_UNIT : state.currency.toUpperCase(),
+    canSwitch: price() > 0,
+    showsMax: false,
+  });
+  const drawAmount = (direction) => {
+    const to = address();
+    handle = showStep({
+      screen: "request-amount",
+      title: "Request Payment",
+      question: "How much?",
+      className: "ss-keypad-step",
+      bodyHtml: `
+        ${to ? `<div class="ss-chips start"><span class="ss-chip"><span class="ss-chip-label">Paid to</span><span class="ss-chip-value mono">${esc(short(to))}</span></span></div>` : ""}
+        ${keypadAmountEntryHtml(entryOptions())}`,
+      onBack: () => flow.go("destination"),
+      onCancel: onClose,
+      continueTitle: "Review",
+      canContinue: () => amountSompi() != null,
+      onContinue: () => flow.go("review"),
+      direction,
+    });
+    bindKeypad(handle.el, (key) => {
+      const next = applyKeypadKey(key, amountField.display, amountField.fiat ? 2 : 8);
+      if (next === amountField.display) return false;
+      state.amountText = amountField.onInput(next, price());
       state.copied = false;
-      refreshButtons();
-    };
-    const memo = $h("#req-memo");
+      paintAmount();
+      return true;
+    });
+    bindSwitch();
+  };
+  const bindSwitch = () => {
+    const unitSwitch = handle.el.querySelector("#unit-switch");
+    if (unitSwitch) unitSwitch.onclick = () => { amountField.toggle(price()); paintAmount(); };
+  };
+  const paintAmount = () => {
+    if (!here() || flow.current !== "amount") return;
+    paintKeypadAmountEntry(handle.el, entryOptions());
+    bindSwitch();
+    handle.refresh();
+  };
+
+  // --- Review -------------------------------------------------------------------------------
+  const memoNote = () => (address() === state.chatting
+    ? "The payment lands in your chat with whoever pays, with the memo."
+    : "The memo shows to whoever pays, but doesn't travel with the payment.");
+  const drawReview = (direction) => {
+    const sompi = amountSompi();
+    handle = showStep({
+      screen: "request-review",
+      title: "Review",
+      bodyHtml: `
+        ${reviewAmountHtml({ eyebrow: "You're requesting", amountText: `${trimmedKas(sompi ?? 0n)} ${KAS_UNIT}`, fiatText: sompi != null && price() ? wallet.formatFiat(sompi, state.price) : "" })}
+        <div class="ss-review-stack">
+          <div class="ss-label">Paid to</div>
+          ${addressResolutionHtml({ address: address() || "" })}
+        </div>
+        <div class="req-memo-card">
+          <textarea id="req-memo" class="req-memo" rows="2" placeholder="What it's for (optional)">${esc(state.memo)}</textarea>
+          <div class="muted tiny req-count">${memoCharacters(state.memo).length}/${PAYMENT_REQUEST_MEMO_LIMIT}</div>
+        </div>
+        ${stepNoteHtml(memoNote())}
+        <p class="error-text small center-text" id="req-error" ${state.error ? "" : "hidden"}>${esc(state.error)}</p>
+        ${navigator.share ? `<button type="button" class="req-share" id="req-share">${ICONS.share}<span>Share</span></button>` : ""}
+        <p class="muted tiny center-text">Anyone who opens it in KaPay or KaChat gets Send Kaspa with this filled in, and sees it was made by your chatting address (signed with its key).</p>`,
+      onBack: () => flow.go("amount"),
+      onCancel: onClose,
+      continueTitle: () => (state.copied && !state.working ? "Copied" : "Copy Payment Request"),
+      canContinue: () => canMake() && !state.working,
+      onContinue: copy,
+      direction,
+    });
+    const memo = handle.el.querySelector("#req-memo");
     memo.oninput = () => {
       const clamped = clampMemoText(memo.value);
       if (clamped !== memo.value) memo.value = clamped;
       state.memo = clamped;
       state.copied = false;
-      $h(".req-count").textContent = `${memoCharacters(clamped).length}/${PAYMENT_REQUEST_MEMO_LIMIT}`;
-      refreshButtons();
+      handle.el.querySelector(".req-count").textContent = `${memoCharacters(clamped).length}/${PAYMENT_REQUEST_MEMO_LIMIT}`;
+      refreshReview();
     };
-    $h("#req-copy").onclick = copy;
-    const share = $h("#req-share");
+    const share = handle.el.querySelector("#req-share");
     if (share) share.onclick = shareLink;
-    if (focused) host.querySelector(`#${focused}`)?.focus();
+    refreshReview();
   };
-  const refreshButtons = () => {
-    const host = handle.panel.querySelector("[data-req]");
-    const ready = canMake() && !state.working;
-    const copyBtn = host.querySelector("#req-copy");
-    if (copyBtn) { copyBtn.disabled = !ready; if (!state.working) copyBtn.textContent = state.copied ? "Copied" : "Copy Payment Request"; }
-    const share = host.querySelector("#req-share");
-    if (share) share.disabled = !ready;
-  };
-
-  /** Choose an Address: the chatting address, then the spending ones, each Used or Unused. */
-  const chooseAddress = async () => {
-    const sheet = showSheet({ title: "Choose an Address", headerHtml: '<div class="center-text"><span class="spinner small-spin"></span></div>', rows: [] });
-    let list;
-    try { list = await wallet.spendingList(); } catch { sheet.close(); return; }
-    const entries = [{ label: "Chatting Address", address: state.chatting }, ...list.rows.filter((r) => !r.hidden || r.balanceSompi > 0n).sort((a, b) => a.index - b.index).map((r) => ({ label: r.label, address: r.address }))].filter((e) => e.address);
-    const balances = await wallet.balancesFor(entries.map((e) => e.address)).catch(() => ({}));
-    const rows = [];
-    for (const e of entries) {
-      const balance = BigInt(balances[e.address] ?? 0n);
-      const known = balance > 0n ? true : await wallet.knownUsedState(e.address).catch(() => null);
-      rows.push({
-        label: e.label,
-        subtitle: `${short(e.address)} · ${known == null ? "" : known ? "Used" : "Unused"}`.replace(/ · $/, ""),
-        onClick: () => { state.destination = "chosen"; state.chosen = e; state.copied = false; paint(); },
-      });
-    }
-    sheet.update({ headerHtml: "", rows });
+  const refreshReview = () => {
+    if (!here() || flow.current !== "review") return;
+    handle.refresh();
+    const share = handle.el.querySelector("#req-share");
+    if (share) share.disabled = !canMake() || state.working;
+    const error = handle.el.querySelector("#req-error");
+    if (error) { error.textContent = state.error; error.hidden = !state.error; }
   };
 
   /** The request to hand out, signed by your chatting address. A fresh address is reserved here,
@@ -157,32 +258,36 @@ export function showRequestPayment() {
   const copy = async () => {
     state.working = true;
     state.error = "";
-    refreshButtons();
+    refreshReview();
     const request = await makeRequest();
     state.working = false;
     if (request) {
       try { await navigator.clipboard.writeText(paymentRequestUniversalLink(request)); state.copied = true; } catch { toast("Clipboard unavailable."); }
     }
-    paint();
+    refreshReview();
   };
   const shareLink = async () => {
     state.working = true;
     state.error = "";
-    refreshButtons();
+    refreshReview();
     const request = await makeRequest();
     state.working = false;
-    paint();
+    refreshReview();
     if (!request) return;
     try { await navigator.share({ url: paymentRequestUniversalLink(request) }); } catch { /* closed */ }
   };
 
-  handle = openPanel({ title: "Request Payment", leading: "Cancel", full: true, body: '<div data-req class="req-form"></div>' });
-  paint();
+  flow.go("destination");
   (async () => {
     try {
       state.chatting = (await wallet.cachedAddresses((await vault.readAccounts()).activeAccountId))?.main || null;
       state.nextFresh = await wallet.nextFreshSpendingAddress();
     } catch { /* shown as loading */ }
-    paint();
+    paintDestination();
+  })();
+  (async () => {
+    state.currency = (await settings()).currency || "usd";
+    state.price = await wallet.price(state.currency).catch(() => null);
+    paintAmount();
   })();
 }

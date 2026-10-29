@@ -2,19 +2,24 @@
 // iOS Views/Shared/SendKaspaComponents.swift (4d0324f, afaad34): the recipient on top (paste, scan
 // a QR, names resolve), then the big amount (KAS or your currency, Max), the balance pills, the
 // fee card (network fee, speed, coin control) and a slide-to-send button. Used by Send Kaspa
-// (send.js) and KasSigner's send (cold-send.js). Change these rather than one screen.
+// (send.js) and KasSigner's send (cold-send.js). Change these rather than one screen. The step
+// screens themselves (the keypad, the swipe-up review, the fee editor) are send-steps.js.
 
-import { addressBookButtonHtml, savedNameHtml, openAddressBookPicker } from "./address-book.js";
+import { openAddressBookPicker, entryFor, entryName } from "./address-book.js";
 import { groupedAmountText } from "./grouped-amount.js";
 import { ownAddressLabel } from "./own-addresses.js";
 import { esc, ICONS } from "./ui.js";
 import { KAS_UNIT } from "./net.js";
+// the recipient pills and the Edit capsule are styled with the step screens
+import "./send-steps.css";
 
 const SCAN = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M3 8V5a2 2 0 0 1 2-2h3M16 3h3a2 2 0 0 1 2 2v3M21 16v3a2 2 0 0 1-2 2h-3M8 21H5a2 2 0 0 1-2-2v-3M7 12h10"/></svg>';
 const SWAP = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 4v16M3 8l4-4 4 4M17 20V4M21 16l-4 4-4-4"/></svg>';
 const MERGE = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3v6a6 6 0 0 0 6 6M18 3v6a6 6 0 0 1-6 6v6M9 18l3 3 3-3"/></svg>';
 const CHEVRONS = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 6l6 6-6 6M13 6l6 6-6 6"/></svg>';
 const PERSON = '<svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="12" cy="8" r="4.2"/><path d="M3.5 21a8.5 8.5 0 0 1 17 0z"/></svg>';
+// person.text.rectangle - KaChat's contact card, wherever contacts appear (iOS 8118f09).
+export const CONTACT_CARD = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2.5" y="4.5" width="19" height="15" rx="2.6"/><circle cx="8.6" cy="10.4" r="2.2"/><path d="M5.2 16.1c.7-1.5 1.9-2.3 3.4-2.3s2.7.8 3.4 2.3M14.6 10h4M14.6 13.6h3"/></svg>';
 export const CHEVRON_DOWN = '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 9l7 7 7-7"/></svg>';
 
 /** "1.5", "0.0001": exact, trailing zeros dropped. */
@@ -28,11 +33,15 @@ export function trimmedKas(sompi) {
 // --- Recipient (SendRecipientCard + AddressResolutionCard) ---------------------------------
 
 /**
- * Who the Kaspa goes to: an address or a name, Paste and Scan QR beside the field, the address it
- * stands for, and a line saying what the input resolved to. The screen runs the lookup.
+ * Who the Kaspa goes to: an address or a name, with Paste, Scan QR and Contacts as labelled pills
+ * under the field - always all three, sized to fit one row (iOS 8118f09) -, the address it stands
+ * for, and a line saying what the input resolved to. The screen runs the lookup
+ * (recipientLookup below).
  *   lockedAddress: Compound UTXOs - the recipient is fixed
  *   status: { resolving, error, resolvedAddress, resolvedName, valid }
  *   extraHtml: below the status (the "Other domains" picker)
+ * Everything under the field is in #recipient-status, so a lookup can redraw it
+ * (recipientStatusHtml) without taking the cursor out of the field.
  */
 export function recipientCardHtml({ input = "", lockedAddress = null, status = {}, extraHtml = "" }) {
   if (lockedAddress) {
@@ -43,6 +52,21 @@ export function recipientCardHtml({ input = "", lockedAddress = null, status = {
         <div class="muted tiny">Consolidating This Address</div>
       </div>`;
   }
+  return `
+    <div class="sk-card">
+      <div class="sk-label">To</div>
+      <input id="recipient" class="sk-recipient sk-recipient-field mono" value="${esc(input)}" placeholder="kaspa:qr... or domain" autocomplete="off" autocapitalize="off" spellcheck="false" />
+      <div class="sk-input-pills">
+        <button type="button" class="sk-input-pill" id="paste">${ICONS.clipboard}<span>Paste</span></button>
+        <button type="button" class="sk-input-pill" id="scan">${SCAN}<span>Scan QR</span></button>
+        <button type="button" class="sk-input-pill" id="address-book">${CONTACT_CARD}<span>Contacts</span></button>
+      </div>
+      <div class="sk-recipient-status" id="recipient-status">${recipientStatusHtml({ input, status, extraHtml })}</div>
+    </div>`;
+}
+
+/** Under the recipient field: the address it stands for, its saved name, and the lookup's line. */
+export function recipientStatusHtml({ input = "", status = {}, extraHtml = "" }) {
   const trimmed = input.trim();
   const shownAddress = status.resolvedAddress || (status.valid ? trimmed : null);
   let line = "";
@@ -58,28 +82,84 @@ export function recipientCardHtml({ input = "", lockedAddress = null, status = {
         : `<div class="sk-status bad">${ICONS.xCircle}<span>${esc(status.invalidReason || "Invalid address format")}</span></div>`;
     }
   }
+  const saved = shownAddress ? entryFor(shownAddress) : null;
   return `
-    <div class="sk-card">
-      <div class="sk-label">To</div>
-      <div class="sk-field-row">
-        <input id="recipient" class="sk-recipient mono" value="${esc(input)}" placeholder="kaspa:qr... or domain" autocomplete="off" autocapitalize="off" spellcheck="false" />
-        <button class="icon plain accent" id="paste" aria-label="Paste" title="Paste">${ICONS.clipboard}</button>
-        <button class="icon plain accent" id="scan" aria-label="Scan QR" title="Scan QR">${SCAN}</button>
-        ${addressBookButtonHtml()}
-      </div>
-      ${shownAddress ? `
-        <div class="sk-resolution">
-          <span class="sk-avatar">${PERSON}</span>
-          <span class="tx-meta">
-            <span class="small strong ${status.resolvedName ? "" : "muted"}">${esc(status.resolvedName || "No domain")}</span>
-            <span class="mono tiny muted ellipsis">${esc(shownAddress)}</span>
-          </span>
-        </div>` : ""}
-      ${shownAddress ? savedNameHtml(shownAddress) : ""}
-      ${shownAddress && ownAddressLabel(shownAddress) ? `<div class="sk-status accent">${esc(`Your own address: ${ownAddressLabel(shownAddress)}`)}</div>` : ""}
-      ${line}
-      ${extraHtml}
+    ${shownAddress ? addressResolutionHtml({ address: shownAddress, name: status.resolvedName || null }) : ""}
+    ${saved ? `<div class="sk-status accent ab-saved">${CONTACT_CARD}<span>${esc(entryName(saved))}</span></div>` : ""}
+    ${shownAddress && ownAddressLabel(shownAddress) ? `<div class="sk-status accent">${esc(`Your own address: ${ownAddressLabel(shownAddress)}`)}</div>` : ""}
+    ${line}
+    ${extraHtml}`;
+}
+
+/** iOS AddressResolutionCard: the person avatar, the name (or "No domain") over the address. */
+export function addressResolutionHtml({ address, name = null }) {
+  return `
+    <div class="sk-resolution">
+      <span class="sk-avatar">${PERSON}</span>
+      <span class="tx-meta">
+        <span class="small strong ${name ? "" : "muted"}">${esc(name || "No domain")}</span>
+        <span class="mono tiny muted ellipsis">${esc(address)}</span>
+      </span>
     </div>`;
+}
+
+/**
+ * The lookup behind a To field (iOS resolveKNSDomain, f0f394d): every change shows the spinner
+ * at once and waits `delay` ms; then what the field holds is resolved. An answer is used only
+ * while the field still holds the text it was asked about, and the newest lookup always takes
+ * the spinner down - so a name typed quickly can never leave "Looking up domain..." up for good.
+ *   read()          the field's text now
+ *   resolve(text)   the answer ({ address, domain, tld, resolutions }), or throws the message
+ *                   to show (with `resolutions` when another service has the name)
+ *   onChange(state) { resolving, recipient, error, resolutions } changed: redraw
+ * Returns { state, schedule() (after typing), now() (paste, scan, a pick), cancel() }.
+ */
+export function recipientLookup({ read, resolve, onChange, delay = 350 }) {
+  const state = { resolving: false, recipient: null, error: "", resolutions: [] };
+  let seq = 0;
+  let timer = null;
+  const text = () => String(read() ?? "").trim();
+  const now = async () => {
+    clearTimeout(timer);
+    timer = null;
+    const mine = ++seq;
+    const asked = text();
+    state.recipient = null;
+    state.error = "";
+    state.resolutions = [];
+    state.resolving = Boolean(asked);
+    onChange(state);
+    if (!asked) return;
+    let answer = null;
+    let failure = null;
+    try { answer = await resolve(asked); } catch (error) { failure = error; }
+    if (mine !== seq) return; // a newer lookup owns the card (and its spinner)
+    if (text() === asked) {
+      if (answer) {
+        state.recipient = answer;
+        state.resolutions = answer.resolutions || [];
+      } else {
+        state.error = String(failure?.message || failure || "Invalid address format");
+        state.resolutions = failure?.resolutions || [];
+      }
+    }
+    // The field moved on and its own lookup is still waiting: that one clears the spinner.
+    state.resolving = Boolean(timer);
+    onChange(state);
+  };
+  return {
+    state,
+    now,
+    schedule() {
+      clearTimeout(timer);
+      if (!text()) { now(); return; }
+      state.recipient = null;
+      state.resolving = true;
+      timer = setTimeout(now, delay);
+      onChange(state);
+    },
+    cancel() { clearTimeout(timer); timer = null; seq += 1; state.resolving = false; },
+  };
 }
 
 // --- Amount (KaspaAmountEntry + KaspaFiatAmountState) --------------------------------------
@@ -180,11 +260,15 @@ export const FEE_TIERS = [
 
 /**
  * Network fee (tap to set a custom one), the fee speed, and coin control - one card.
- *   { tier, custom, editing, customText, estimating, feeText, showsCoinControl, coinSummary }
+ *   { tier, custom, editing, customText, estimating, feeText, showsCoinControl, coinSummary, editPill }
+ * `editPill` (a send's review, iOS onEditFee): the fee shows with an Edit capsule (#fee-edit)
+ * that opens the fee editor (send-steps.js showFeeEditor) instead of being typed here.
  */
-export function feeControlsHtml({ tier = "normal", custom = false, editing = false, customText = "", estimating = false, feeText = null, showsCoinControl = true, coinSummary = "Automatic" }) {
+export function feeControlsHtml({ tier = "normal", custom = false, editing = false, customText = "", estimating = false, feeText = null, showsCoinControl = true, coinSummary = "Automatic", editPill = false }) {
   let fee;
-  if (editing) {
+  if (editPill) {
+    fee = `<span class="sk-fee-value">${estimating ? '<span class="spinner small-spin"></span>' : `<span class="${feeText ? "" : "muted"}">${esc(feeText || "—")}</span>`}<button type="button" class="sk-fee-edit-pill" id="fee-edit" ${feeText ? "" : "disabled"}>${ICONS.pencilSmall}<span>Edit</span></button></span>`;
+  } else if (editing) {
     fee = `<span class="fee-edit"><input id="custom-fee" inputmode="decimal" value="${esc(customText)}" placeholder="0.00" /><button class="icon plain accent" id="fee-ok" aria-label="Use this fee">${ICONS.checkCircle}</button></span>`;
   } else if (estimating) {
     fee = '<span class="spinner small-spin"></span>';
@@ -199,7 +283,9 @@ export function feeControlsHtml({ tier = "normal", custom = false, editing = fal
       <div class="segmented wide" role="radiogroup" aria-label="Fee">
         ${FEE_TIERS.map((t) => `<button type="button" role="radio" data-tier="${t.id}" aria-checked="${!custom && tier === t.id}">${t.label}</button>`).join("")}
       </div>
-      <div class="muted tiny">If the network is busy, Fast or Priority pays a higher fee to help this confirm sooner. Tap the fee amount to set a custom fee.</div>
+      <div class="muted tiny">${editPill
+        ? "If the network is busy, Fast or Priority pays a higher fee to help this confirm sooner. Edit sets a fee of your own."
+        : "If the network is busy, Fast or Priority pays a higher fee to help this confirm sooner. Tap the fee amount to set a custom fee."}</div>
       ${showsCoinControl ? `
         <div class="sk-divider"></div>
         <button class="sk-coin-row" id="coins"><span>Coin Control</span><span class="muted">${esc(coinSummary)} ${ICONS.chevron}</span></button>` : ""}
@@ -278,7 +364,8 @@ export function bindSlideButton(root, onAction) {
   });
 }
 
-/** The recipient card's Address Book button: pick a saved address (iOS 00767a4). */
+/** The recipient card's Contacts pill: pick a saved address (iOS 00767a4, 8118f09). It is always
+ *  there; with no contacts yet the picker says so. */
 export function bindAddressBookButton(root, onPick) {
   const button = root.querySelector("#address-book");
   if (button) button.onclick = () => openAddressBookPicker((entry) => onPick(entry.address));

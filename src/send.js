@@ -1,41 +1,55 @@
-// Send Kaspa - iOS WithdrawKaspaView / SpendingAddressWithdrawView, built from the shared Send
-// Kaspa pieces (send-pieces.js, iOS 4d0324f / afaad34 / e994235):
-//   the recipient card (a kaspa: address, or a name on any service - .kachat, .kas, .k, .kaspa -
-//     resolved as you type, with "Other domains"; Paste and Scan QR)
-//   the big amount (KAS or your currency, Max), the Available pill - on a spending address it
-//     opens Send From to pay from another one
-//   the fee card (network fee - tap to set your own -, Normal / Fast / Priority, Coin Control)
-//   Slide to Send. A sent transaction ends on the Sent sheet.
-// The same screen is Compound UTXOs: the recipient locked to the address itself, amount Max.
+// Send Kaspa - iOS WithdrawKaspaView, in steps (KaPay 05db583) ending on the swipe-up send screen
+// (59593af), built from the step screens (send-steps.js) and the Send Kaspa pieces (send-pieces.js):
+//   To      "Who are you sending to?": the recipient card - a kaspa: address, or a name on any
+//           service (.kachat, .kas, .k, .kaspa) resolved as you type, with "Other domains"; Paste,
+//           Scan QR and Contacts pills (8118f09). A kachat.app/pay link fills in the request.
+//   From    "Where are you sending from?": the Chatting Address, or Choose an Address with your
+//           addresses listed on the step. Skipped when the From is fixed (an address's own Send).
+//   Amount  the app's own keypad: "To" / "From" chips, KAS or your currency, Max, and the From
+//           address's Available under it. A request's amount is fixed: the request, no keypad.
+//   Review  swipe up to send: the amount, To, From and Total; only the fee (its Edit opens the fee
+//           editor) and coin control can change, and a Max amount is worked out again when they
+//           do. The password ("Confirm Send", wallet.js) is asked as the send starts, under the
+//           BlockDAG; then Sent with the transaction, or Failed with the error and Try Again.
+// A pre-filled recipient (Donate, a contact) or a payment request link opens on From (on the
+// amount when From is fixed). Compound UTXOs - the recipient locked to the address itself, the
+// amount Max - opens on the review.
 
 import * as wallet from "./wallet.js";
 import * as vault from "./vault.js";
-import { app, esc, render, $, toast, copyText, settings, showSheet, ICONS, formatKas8 } from "./ui.js";
+import { app, esc, render, $, toast, settings, ICONS, formatKas8, unitText } from "./ui.js";
 import { otherDomainsHtml, bindOtherDomains, splitTypedName } from "./names.js";
 import { scanQr } from "./camera.js";
 import { loadOwnAddresses } from "./own-addresses.js";
-import { sompiFromUserText, sanitizeAmountInput, sompiToKasNumber } from "./amounts.js";
 import { KAS_UNIT } from "./net.js";
 import { parsePaymentRequestLink, paymentRequestAmountText } from "../shared/engine/payment-request.js";
 import { entryFor, entryName } from "./address-book.js";
 import {
-  FEE_TIERS, recipientCardHtml, bindAddressBookButton, amountState, amountEntryHtml, fitAmountInput, pillHtml, feeControlsHtml,
-  coinSummary, slideButtonHtml, bindSlideButton, trimmedKas, CHEVRON_DOWN,
+  FEE_TIERS, recipientCardHtml, recipientStatusHtml, recipientLookup, bindAddressBookButton, amountState, feeControlsHtml,
+  coinSummary, trimmedKas,
 } from "./send-pieces.js";
+import {
+  createStepFlow, showStep, showSwipeUp, showFeeEditor, SWIPE_UP_LABELS, stepNoteHtml, stepChipsHtml, choicePillsHtml,
+  bindKeypad, applyKeypadKey, keypadAmountEntryHtml, paintKeypadAmountEntry, reviewAmountHtml, reviewRowHtml,
+  reviewAddressHtml, reviewCardHtml, mountOwnAddressList,
+} from "./send-steps.js";
+
+const ORDER = ["to", "from", "amount", "review", "fee"];
+const short = (a) => `${a.slice(0, 14)}...${a.slice(-6)}`;
 
 /**
  * @param {object} opts
  * @param {{kind:"main"}|{kind:"spending",index:number}} opts.source
  * @param {string} opts.fromAddress
- * @param {string} [opts.title]      a line under the bar (Donate says who it is for)
- * @param {string} [opts.navTitle]   the bar title: iOS "Send Kaspa" / "Send Kaspa from Address #n"
- * @param {string} [opts.feeFooter]  the Fee footer (iOS words it per screen)
+ * @param {string} [opts.title]      a line under the question (Donate says who it is for)
+ * @param {string} [opts.navTitle]   the steps' title: iOS "Send Kaspa"
+ * @param {string} [opts.feeFooter]  (no longer shown: the review's fee card words it as iOS does)
  * @param {boolean} [opts.compound]
- * @param {string} [opts.recipient]  prefill (Donate)
+ * @param {string} [opts.recipient]  prefill (Donate, a contact), or a payment request link
  * @param {boolean} [opts.lockedSource] opened from one address's own page: that address only, no
- *                                    From choice (iOS 7a8102b)
- * @param {Function} opts.onClose    back / cancel / done
- * @param {Function} [opts.onSent]   after a successful send, before the Sent sheet closes
+ *                                    From step (iOS 7a8102b)
+ * @param {Function} opts.onClose    cancel / done
+ * @param {Function} [opts.onSent]   after a successful send, before Done
  */
 export function showSend(opts) {
   const state = {
@@ -47,24 +61,26 @@ export function showSend(opts) {
     othersOpen: false,
     amountText: "",
     maxMode: false,
+    fillingMax: false,
     coins: null,            // all spendable coins at the source
     selected: null,         // Set of coin keys, or null for Automatic
     tier: "normal",
     base: null,             // { policyKas, sdkBaseKas } for the current amount/coins
-    customFeeKas: null,     // number when the user typed their own
-    editingFee: false,
+    customFeeKas: null,     // number when the user set their own
     estimating: false,
     price: null,
     sending: false,
     error: "",
     currency: "usd",
     sourceLabel: null,
+    chatting: opts.source?.kind === "spending" ? null : opts.fromAddress,
+    choosingFrom: opts.source?.kind === "spending",
     request: null,          // a kachat.app/pay link pasted, scanned or typed (EXT-023)
   };
-  const view = { screen: "form" };
+  // Opened with a payment request link: its address is fixed, so there is no To step.
+  let requestFromLink = false;
   // The amount field (KAS or your currency) - iOS KaspaFiatAmountState.
   const amountField = amountState();
-  amountField.display = state.amountText;
 
   // --- derived --------------------------------------------------------------------------
   const spendableSompi = () => {
@@ -78,25 +94,92 @@ export function showSend(opts) {
     if (state.customFeeKas != null) return state.customFeeKas;
     return state.base ? state.base.policyKas * tierMultiplier() : null;
   };
+  const kasNumberToSompi = (kas) => wallet.kasToSompi(kas.toFixed(8));
+  const totalFeeSompi = () => { const fee = totalFeeKas(); return fee == null ? null : kasNumberToSompi(fee); };
+  /** The Normal fee for these coins: the network minimum the fee editor holds to. */
+  const normalFeeSompi = () => (state.base ? kasNumberToSompi(state.base.policyKas) : null);
   const amountSompi = () => wallet.kasToSompi(state.amountText);
   const selectedOutpoints = () => (state.selected ? [...state.selected] : null);
+  const price = () => state.price?.price || 0;
+  /** The amount is more than the From address holds. */
+  const exceedsBalance = () => {
+    const amount = amountSompi();
+    const available = spendableSompi();
+    return amount != null && available != null && amount > available;
+  };
+  const canReview = () => {
+    const amount = amountSompi();
+    return Boolean(state.recipient) && !state.resolving && amount != null && amount > 0n && !exceedsBalance() && !state.fillingMax;
+  };
   const canSend = () => {
-    if (state.sending || !state.recipient || state.resolving) return false;
+    if (state.sending || !state.recipient || state.resolving || state.fillingMax) return false;
     const amount = amountSompi();
     const fee = totalFeeKas();
     const available = spendableSompi();
     if (amount == null || amount <= 0n || fee == null || available == null) return false;
     if (state.maxMode || opts.compound) return true;
-    return amount + wallet.kasToSompi(fee.toFixed(8)) <= available;
+    return amount + kasNumberToSompi(fee) <= available;
   };
+  const isChattingSource = () => opts.source?.kind !== "spending";
+  const sourceTitle = () => (isChattingSource() ? "Chatting Address" : (state.sourceLabel || `Address #${opts.source.index}`));
+  /** The recipient's name: the domain it resolved from, else its Contacts name. */
+  const recipientName = () => {
+    if (!state.recipient) return null;
+    if (state.recipient.domain) return state.recipient.domain;
+    const saved = entryFor(state.recipient.address);
+    return saved && String(saved.name || "").trim() ? entryName(saved) : null;
+  };
+  const screenTitle = () => (opts.compound ? "Compound UTXOs" : state.request ? "Payment Request" : (opts.navTitle || "Send Kaspa"));
+
+  // --- the steps (iOS Step, initialStep, backStep(from:)) --------------------------------
+  const afterRecipient = () => (opts.lockedSource ? "amount" : "from");
+  /** Where Back goes from a step; null for the first one. */
+  const backFrom = (id) => {
+    if (id === "from") return requestFromLink ? null : "to";
+    if (id === "amount") {
+      if (!opts.lockedSource) return "from";
+      return opts.compound || requestFromLink ? null : "to";
+    }
+    if (id === "review") return opts.compound ? null : "amount";
+    return null;
+  };
+  let handle = null;  // the step on screen: { el, refresh } (a swipe-up review adds `swipe`)
+  const flow = createStepFlow(ORDER, (id, direction) => {
+    handle = null;
+    if (id === "to") drawTo(direction);
+    else if (id === "from") drawFrom(direction);
+    else if (id === "amount") drawAmount(direction);
+    else if (id === "review") drawReview(direction);
+    else if (id === "fee") drawFee(direction);
+  });
+  const go = (id) => {
+    // Back to To from a pasted request: the recipient starts over (iOS go(to: .recipient)).
+    if (id === "to" && state.request && !requestFromLink) clearRequest();
+    flow.go(id);
+  };
+  const here = () => Boolean(handle?.el?.isConnected);
+  /** Redraws what changed on the step showing (a lookup, a fee, a balance arriving). */
+  const paint = () => {
+    if (!here()) return;
+    const id = flow.current;
+    if (id === "to") paintRecipient();
+    else if (id === "from") paintFromChoice();
+    else if (id === "amount") paintAmount();
+    else if (id === "review") paintReview();
+  };
+  const titleLine = () => (opts.title ? stepNoteHtml(opts.title) : "");
 
   // --- loading ----------------------------------------------------------------------------
   const load = async () => {
-    wallet.utxoLabels(opts.fromAddress).then((labels) => { state.labels = labels; }).catch(() => {});
+    const address = opts.fromAddress;
+    wallet.utxoLabels(address).then((labels) => { state.labels = labels; }).catch(() => {});
     try {
-      state.coins = await wallet.utxos(opts.fromAddress);
+      const coins = await wallet.utxos(address);
+      if (address !== opts.fromAddress) return; // another address was picked meanwhile
+      state.coins = coins;
     } catch (error) {
-      state.error = `Couldn't load this address's coins: ${error.message}`;
+      if (address !== opts.fromAddress) return;
+      state.error = `Couldn't load this address's coins: ${error?.message || error}`;
     }
     const currency = (await settings()).currency || "usd";
     state.currency = currency;
@@ -107,8 +190,13 @@ export function showSend(opts) {
         .then((st) => { state.sourceLabel = wallet.labelFor(st, opts.source.index); paint(); })
         .catch(() => {});
     }
-    if (opts.compound) await fillMax(); else await estimate();
+    if (opts.compound || state.maxMode) await fillMax(); else await estimate();
     paint();
+  };
+  const loadChatting = async () => {
+    if (state.chatting) return state.chatting;
+    try { state.chatting = (await wallet.cachedAddresses((await vault.readAccounts()).activeAccountId))?.main || null; } catch { /* stays unknown */ }
+    return state.chatting;
   };
 
   let estimateTimer = null;
@@ -140,11 +228,13 @@ export function showSend(opts) {
   };
 
   // Max: the fee for spending EVERY coin Max uses, at the live rate, then amount = spendable -
-  // fee exactly, so the send is one output and nothing is left for a dust change output.
+  // fee exactly, so the send is one output and nothing is left for a dust change output. Worked
+  // out again whenever the fee, its speed or the coins change (iOS setMaxAmount).
   const fillMax = async () => {
     const available = spendableSompi();
     if (available == null) return;
     state.estimating = true;
+    state.fillingMax = true;
     paint();
     try {
       state.base = await wallet.maxFee(inputCount(), { sourceIndex: opts.source?.kind === "spending" ? opts.source.index : null });
@@ -152,7 +242,8 @@ export function showSend(opts) {
       state.base = state.base || { policyKas: 0.002, sdkBaseKas: 0.00002 };
     }
     state.estimating = false;
-    const fee = wallet.kasToSompi(totalFeeKas().toFixed(8));
+    state.fillingMax = false;
+    const fee = kasNumberToSompi(totalFeeKas());
     if (available <= fee) {
       state.error = "Balance too low after network fees.";
       setAmountKas("");
@@ -163,32 +254,79 @@ export function showSend(opts) {
     state.maxMode = true;
     state.error = "";
   };
+  const setAmountKas = (kasText) => {
+    state.amountText = kasText;
+    amountField.setKas(kasText, price());
+  };
+
+  // --- the recipient (iOS handleInputChange / resolveKNSDomain, f0f394d) -----------------
+  const lookup = recipientLookup({
+    read: () => state.recipientInput,
+    resolve: (text) => wallet.resolveRecipient(text),
+    onChange: (found) => {
+      state.recipient = found.recipient;
+      state.recipientError = found.error;
+      state.resolutions = found.resolutions;
+      state.resolving = found.resolving;
+      // Nothing for the ending typed, but another service has the name: show it straight away.
+      state.othersOpen = Boolean(found.error) && found.resolutions.some((r) => r.address);
+      paint();
+    },
+  });
+  const recipientStatus = () => ({
+    resolving: state.resolving,
+    error: state.recipientError,
+    resolvedAddress: state.recipient?.domain ? state.recipient.address : null,
+    resolvedName: state.recipient?.domain || null,
+    valid: Boolean(state.recipient && !state.recipient.domain),
+  });
+  const otherDomains = () => (state.resolutions.length
+    ? otherDomainsHtml({ resolutions: state.resolutions, selectedTld: state.recipient?.tld || splitTypedName(state.recipientInput).tld, open: state.othersOpen })
+    : "");
+  /** A new recipient from Paste, Scan QR or Contacts: into the field, looked up at once. */
+  const setRecipientText = (text) => {
+    state.request = null;
+    state.recipientInput = text;
+    const input = handle?.el?.querySelector("#recipient");
+    if (input) input.value = text;
+    lookup.now();
+  };
 
   // --- payment requests (EXT-023, iOS PaymentRequest.found(in:) -> apply, Desktop
   // applyPaymentRequestToSendKaspa): a kachat.app/pay link fills in the address and the exact
-  // amount, with the request above the amount. A chat-payment request is sent as a plain transfer
-  // here (the extension has no chats): its memo is shown to you only.
+  // amount. A chat-payment request is sent as a plain transfer here (the extension has no chats):
+  // its memo is shown to you only.
   /** `text` as a payment request link: applied, and true; else false. */
   const applyRequestLink = (text) => {
     const request = parsePaymentRequestLink(text);
     if (!request || opts.compound) return false;
     state.request = request;
     state.recipientInput = request.address;
+    const input = handle?.el?.querySelector("#recipient");
+    if (input) input.value = request.address;
     // the exact amount is what's sent: the field goes back to KAS for it
     amountField.fiat = false;
     setAmountKas(paymentRequestAmountText(request));
     state.maxMode = false;
     state.error = "";
-    resolveRecipient();
+    lookup.now();
     scheduleEstimate();
     return true;
+  };
+  const clearRequest = () => {
+    state.request = null;
+    state.recipientInput = "";
+    amountField.reset();
+    state.amountText = "";
+    state.maxMode = false;
+    lookup.now();
   };
   const requestHtml = () => {
     const r = state.request;
     if (!r) return "";
     const saved = r.creator ? entryFor(r.creator) : null;
     const maker = r.creator
-      ? `<div class="sk-status good">${ICONS.checkFill}<span>Requested by ${esc(saved ? entryName(saved) : `${r.creator.slice(0, 14)}...${r.creator.slice(-6)}`)}</span></div>
+      ? `<div class="sk-status good">${ICONS.checkFill}<span>Requested by ${esc(saved ? entryName(saved) : short(r.creator))}</span></div>
          ${r.creator.toLowerCase() !== r.address.toLowerCase() ? '<div class="muted tiny">Signed by their chatting address. The payment goes to the address above.</div>' : ""}`
       : `<div class="sk-status bad">${ICONS.warning || ICONS.xCircle}<span>Not signed: who made this request can't be confirmed.</span></div>`;
     return `
@@ -201,329 +339,155 @@ export function showSend(opts) {
       </div>`;
   };
 
-  let resolveSeq = 0;
-  const resolveRecipient = async () => {
-    const seq = ++resolveSeq;
-    const input = state.recipientInput.trim();
-    state.recipient = null;
-    state.recipientError = "";
-    state.resolutions = [];
-    state.othersOpen = false;
-    if (!input) { paint(); return; }
-    state.resolving = true;
-    paint();
-    try {
-      const resolved = await wallet.resolveRecipient(input);
-      if (seq !== resolveSeq) return;
-      state.recipient = resolved;
-      state.resolutions = resolved.resolutions || [];
-    } catch (error) {
-      if (seq !== resolveSeq) return;
-      state.recipientError = error.message;
-      state.resolutions = error.resolutions || [];
-      // Nothing for the ending typed, but another service has the name: show it straight away.
-      state.othersOpen = state.resolutions.some((r) => r.address);
-    } finally {
-      if (seq === resolveSeq) { state.resolving = false; paint(); }
-    }
-  };
-
-  // --- sending ---------------------------------------------------------------------------
-  const doSend = async () => {
-    if (!canSend()) return;
-    state.sending = true;
-    state.error = "";
-    paint();
-    const fee = totalFeeKas();
-    try {
-      let result;
-      if (opts.compound) {
-        result = await wallet.compound(opts.source, fee.toFixed(8));
-      } else if (state.maxMode) {
-        result = await wallet.send({
-          source: opts.source, destination: state.recipient.address, max: true,
-          totalFeeKas: fee.toFixed(8), selectedOutpoints: selectedOutpoints(), maxAmountSompi: amountSompi(),
-        });
-      } else {
-        const tip = Math.max(0, fee - (state.base?.sdkBaseKas || 0));
-        result = await wallet.send({
-          source: opts.source, destination: state.recipient.address,
-          amountKas: state.amountText, tipKas: tip.toFixed(8), selectedOutpoints: selectedOutpoints(),
-        });
+  // --- Step 1, To --------------------------------------------------------------------------
+  const drawTo = (direction) => {
+    const step = showStep({
+      screen: "send-to",
+      title: screenTitle(),
+      question: "Who are you sending to?",
+      bodyHtml: `
+        ${titleLine()}
+        ${recipientCardHtml({ input: state.recipientInput, status: recipientStatus(), extraHtml: otherDomains() })}
+        <div id="send-request">${requestHtml()}</div>`,
+      onCancel: () => opts.onClose?.(),
+      canContinue: () => Boolean(state.recipient) && !state.resolving,
+      onContinue: () => go(afterRecipient()),
+      direction,
+    });
+    handle = step;
+    const input = step.body.querySelector("#recipient");
+    input.oninput = () => {
+      if (applyRequestLink(input.value)) return;
+      state.recipientInput = input.value;
+      // another recipient typed over a request's address: the request no longer applies
+      if (state.request && input.value.trim().toLowerCase() !== state.request.address) state.request = null;
+      lookup.schedule();
+    };
+    input.onkeydown = (event) => {
+      if (event.key !== "Enter" || event.isComposing || !state.recipient || state.resolving) return;
+      event.preventDefault();
+      go(afterRecipient());
+    };
+    step.body.querySelector("#paste").onclick = async () => {
+      try {
+        const text = (await navigator.clipboard.readText()).trim();
+        if (applyRequestLink(text)) return;
+        setRecipientText(text);
+      } catch {
+        toast("Clipboard unavailable - paste with ⌘V instead.");
       }
-      const txid = (result?.txids || [])[result?.txids?.length - 1] || "";
-      opts.onSent?.();
-      showSent({
-        amountSompi: result?.amountSompi ?? result?.result?.summary?.amountSompi ?? amountSompi(),
-        feeKas: fee,
-        to: state.recipient,
-        txid,
-        compound: Boolean(opts.compound),
-        onDone: opts.onClose,
-      });
-    } catch (error) {
-      state.sending = false;
-      // the password prompt was cancelled: nothing was sent, the screen stays as it was
-      if (error?.code === wallet.SEND_CANCELLED) { paint(); return; }
-      console.warn("[KaPay] send failed:", error);
-      state.error = friendlySendError(error);
-      paint();
-    }
+    };
+    step.body.querySelector("#scan").onclick = async () => {
+      const code = await scanQr({ title: "Scan QR Code", hint: "Point camera at a Kaspa address QR code" });
+      if (!code || !here()) return;
+      // a KaChat payment request first; else a payment URI's address, without its ?amount=... query
+      if (applyRequestLink(String(code))) return;
+      setRecipientText(String(code).trim().split("?")[0]);
+    };
+    bindAddressBookButton(step.body, (address) => setRecipientText(address));
+    bindRecipientExtras();
+    // The cursor in the field on arrival (iOS focusOnAppear), after what's already there.
+    input.focus();
+    try { input.setSelectionRange(input.value.length, input.value.length); } catch { /* fine */ }
   };
-
-  // --- rendering (iOS SendKaspaComponents) ----------------------------------------------
-  const fiatText = (kas) => (state.price?.price ? wallet.formatFiat(wallet.kasToSompi(kas.toFixed(8)), state.price) : "");
-  const feeText = () => {
-    const fee = totalFeeKas();
-    return fee == null ? null : `${fee.toFixed(8).replace(/0+$/, "").replace(/\.$/, "")} ${KAS_UNIT}`;
-  };
-  const recipientStatus = () => ({
-    resolving: state.resolving,
-    error: state.recipientError,
-    resolvedAddress: state.recipient?.domain ? state.recipient.address : null,
-    resolvedName: state.recipient?.domain || null,
-    valid: Boolean(state.recipient && !state.recipient.domain),
-  });
-
-  const paint = () => {
-    if (view.screen !== "form") return;
-    const focusedId = document.activeElement?.id;
-    const caret = document.activeElement?.selectionStart;
-    const available = spendableSompi();
-    const price = state.price?.price || 0;
-    // From (iOS 6333dd3 SendFromSection): which of your addresses pays - the chatting address by
-    // default, or any one picked; the chosen address and what it holds.
-    const isChatting = opts.source?.kind !== "spending";
-    const fromTitle = isChatting ? "Chatting Address" : (state.sourceLabel || `Address #${opts.source.index}`);
-    const fromHtml = opts.compound ? "" : `
-      <div class="sk-card sk-from">
-        <div class="sk-label">From</div>
-        ${opts.lockedSource ? "" : `<div class="sel-pills">
-          <button type="button" class="sel-pill ${isChatting ? "on" : ""}" id="from-chatting">Chatting Address</button>
-          <button type="button" class="sel-pill ${isChatting ? "" : "on"}" id="from-choose">Choose an Address</button>
-        </div>`}
-        <div class="sk-from-row">
-          <span class="tx-meta"><span class="strong small">${esc(fromTitle)}</span><span class="mono tiny muted">${esc(`${opts.fromAddress.slice(0, 14)}...${opts.fromAddress.slice(-6)}`)}</span></span>
-          ${available != null ? `<span class="small">${esc(wallet.formatKas(available, 8))} ${KAS_UNIT}</span>` : '<span class="spinner small-spin"></span>'}
-        </div>
-      </div>`;
-    const pill = "";
-    render(`
-      <header class="navbar form-bar">
-        <button class="bar-text" id="cancel">Cancel</button>
-        <div class="nav-title ellipsis">${esc(opts.compound ? "Compound UTXOs" : opts.navTitle || "Send Kaspa")}</div>
-        <span class="bar-text bar-spacer" aria-hidden="true">Cancel</span>
-      </header>
-      <section class="form sk-form">
-        ${opts.title ? `<p class="muted small center-text">${esc(opts.title)}</p>` : ""}
-        ${fromHtml}
-        ${recipientCardHtml({
-          input: state.recipientInput,
-          lockedAddress: opts.compound ? opts.fromAddress : null,
-          status: recipientStatus(),
-          extraHtml: state.resolutions.length
-            ? otherDomainsHtml({ resolutions: state.resolutions, selectedTld: state.recipient?.tld || splitTypedName(state.recipientInput).tld, open: state.othersOpen })
-            : "",
-        })}
-        ${requestHtml()}
-        ${amountEntryHtml({
-          display: amountField.display,
-          unit: amountField.fiat ? state.currency.toUpperCase() : KAS_UNIT,
-          fiat: amountField.fiat,
-          conversion: amountField.conversion(price, fiatText),
-          currencyCode: state.currency.toUpperCase(),
-          canSwitch: price > 0 && !opts.compound,
-          maxEnabled: Boolean(state.recipient),
-          estimatingMax: state.estimating && state.maxMode,
-          readOnly: Boolean(opts.compound),
-        })}
-        <div class="sk-pills">${pill}</div>
-        ${feeControlsHtml({
-          tier: state.tier,
-          custom: state.customFeeKas != null,
-          editing: state.editingFee,
-          customText: totalFeeKas() != null ? totalFeeKas().toFixed(8).replace(/0+$/, "").replace(/\.$/, "") : "",
-          estimating: state.estimating,
-          feeText: feeText(),
-          showsCoinControl: !opts.compound,
-          coinSummary: coinSummary(state.selected),
-        })}
-        ${state.error ? `<p class="error-text small center-text">${esc(state.error)}</p>` : ""}
-        ${slideButtonHtml({ title: opts.compound ? "Slide to Consolidate" : "Slide to Send", busy: state.sending, enabled: canSend() })}
-      </section>`, "send");
-
-    $("#cancel").onclick = opts.onClose;
-    bindSlideButton(app, doSend);
-    const recipient = $("#recipient");
-    if (recipient) {
-      recipient.oninput = () => {
-        if (applyRequestLink(recipient.value)) return;
-        state.recipientInput = recipient.value;
-        // another recipient typed over a request's address: the request no longer applies
-        if (state.request && recipient.value.trim().toLowerCase() !== state.request.address) { state.request = null; paint(); }
-        clearTimeout(recipientTimer);
-        recipientTimer = setTimeout(resolveRecipient, 350);
-      };
-    }
-    bindOtherDomains(app, {
-      onToggle: () => { state.othersOpen = !state.othersOpen; paint(); },
+  const bindRecipientExtras = () => {
+    bindOtherDomains(handle.el, {
+      onToggle: () => { state.othersOpen = !state.othersOpen; paintRecipient(); },
       onPick: (tld) => {
         const pick = state.resolutions.find((r) => r.tld === tld && r.address);
         if (!pick) return;
         state.recipient = { address: pick.address, domain: pick.display, tld: pick.tld, resolutions: state.resolutions };
         state.recipientError = "";
         state.othersOpen = false;
-        paint();
+        paintRecipient();
       },
     });
-    bindAddressBookButton(app, (address) => { state.recipientInput = address; resolveRecipient(); });
-    const paste = $("#paste");
-    if (paste) paste.onclick = async () => {
-      try {
-        const text = (await navigator.clipboard.readText()).trim();
-        if (applyRequestLink(text)) return;
-        state.request = null;
-        state.recipientInput = text;
-        resolveRecipient();
-      } catch {
-        toast("Clipboard unavailable - paste with ⌘V instead.");
-      }
-    };
-    const scan = $("#scan");
-    if (scan) scan.onclick = async () => {
-      const code = await scanQr({ title: "Scan QR Code", hint: "Point camera at a Kaspa address QR code" });
-      if (!code) return;
-      // a KaChat payment request first; else a payment URI's address, without its ?amount=... query
-      if (applyRequestLink(String(code))) return;
-      state.request = null;
-      state.recipientInput = String(code).trim().split("?")[0];
-      resolveRecipient();
-    };
-    const amountInput = $("#amount");
-    amountInput.oninput = () => {
-      const cleaned = sanitizeAmountInput(amountInput.value);
-      if (cleaned !== amountInput.value) amountInput.value = cleaned;
-      fitAmountInput(amountInput);
-      state.amountText = amountField.onInput(cleaned, price);
-      state.maxMode = false;
-      state.error = "";
-      const chip = $("#unit-switch span");
-      if (chip) chip.textContent = amountField.conversion(price, fiatText) || (amountField.fiat ? KAS_UNIT : state.currency.toUpperCase());
-      scheduleEstimate();
-      refreshSendEnabled();
-    };
-    const unitSwitch = $("#unit-switch");
-    if (unitSwitch) unitSwitch.onclick = () => { amountField.toggle(price); paint(); };
-    const max = $("#max");
-    if (max) max.onclick = async () => { await fillMax(); paint(); };
-    const fromChatting = $("#from-chatting");
-    if (fromChatting) fromChatting.onclick = () => switchToChatting();
-    const fromChoose = $("#from-choose");
-    if (fromChoose) fromChoose.onclick = showSendFrom;
-    const coins = $("#coins");
-    if (coins) coins.onclick = () => {
-      view.screen = "coins";
-      showCoinControl({
-        coins: state.coins || [],
-        selected: state.selected,
-        labels: state.labels,
-        onCancel: () => { view.screen = "form"; paint(); },
-        onDone: (selection) => {
-          state.selected = selection;
-          state.maxMode = false;
-          view.screen = "form";
-          estimate().then(paint);
-          paint();
-        },
-      });
-    };
-    for (const button of app.querySelectorAll("[data-tier]")) {
-      button.onclick = async () => {
-        state.tier = button.dataset.tier;
-        state.customFeeKas = null;
-        state.editingFee = false;
-        if (state.maxMode) await fillMax();
-        paint();
-      };
-    }
-    const feeButton = $("#fee");
-    if (feeButton) feeButton.onclick = () => { state.editingFee = true; paint(); $("#custom-fee")?.select(); };
-    const feeOk = $("#fee-ok");
-    if (feeOk) {
-      const commit = async () => {
-        const sompi = sompiFromUserText($("#custom-fee").value);
-        const value = sompi == null ? NaN : sompiToKasNumber(sompi);
-        state.editingFee = false;
-        if (Number.isFinite(value) && value > 0) {
-          state.customFeeKas = value;
-          if (state.maxMode) {
-            const avail = spendableSompi();
-            const feeSompi = wallet.kasToSompi(value.toFixed(8));
-            if (avail > feeSompi) setAmountKas(wallet.sompiToKasText(avail - feeSompi));
-          }
-        }
-        paint();
-      };
-      feeOk.onclick = commit;
-      $("#custom-fee").onkeydown = (event) => { if (event.key === "Enter") commit(); };
-    }
-    // Typing must not lose the caret when a repaint lands mid-word.
-    if (focusedId) {
-      const again = document.getElementById(focusedId);
-      if (again && again !== document.activeElement) {
-        again.focus();
-        if (caret != null && typeof again.setSelectionRange === "function") {
-          try { again.setSelectionRange(caret, caret); } catch { /* not a text field */ }
-        }
-      }
-    }
   };
-  let recipientTimer = null;
-
-  // Enables/disables the slide button without a full repaint while typing the amount.
-  const refreshSendEnabled = () => {
-    const track = $("#slide");
-    if (!track || state.sending) return;
-    const enabled = canSend();
-    if (enabled === !track.classList.contains("off")) return;
-    const holder = document.createElement("div");
-    holder.innerHTML = slideButtonHtml({ title: opts.compound ? "Slide to Consolidate" : "Slide to Send", enabled });
-    track.replaceWith(holder.firstElementChild);
-    bindSlideButton(app, doSend);
+  const paintRecipient = () => {
+    const status = handle.el.querySelector("#recipient-status");
+    if (!status) return;
+    status.innerHTML = unitText(recipientStatusHtml({ input: state.recipientInput, status: recipientStatus(), extraHtml: otherDomains() }));
+    const request = handle.el.querySelector("#send-request");
+    if (request) request.innerHTML = unitText(requestHtml());
+    bindRecipientExtras();
+    handle.refresh();
   };
 
-  // Choose an Address (iOS 6333dd3 OwnAddressPicker): the chatting address, then the spending
-  // addresses (the visible ones plus hidden ones holding Kaspa) in number order, each with its
-  // balance and whether it was ever used.
-  const showSendFrom = async () => {
-    const sheet = showSheet({ title: "Send From", headerHtml: '<div class="center-text"><span class="spinner small-spin"></span></div>', rows: [] });
-    let list;
-    let chatting = null;
-    try {
-      list = await wallet.spendingList();
-      const view = await vault.readAccounts();
-      chatting = (await wallet.cachedAddresses(view.activeAccountId))?.main || null;
-    } catch { sheet.close(); return; }
-    const balances = await wallet.balancesFor([chatting, ...list.rows.map((r) => r.address)].filter(Boolean)).catch(() => ({}));
-    const usedText = async (address, balance) => {
-      if (balance > 0n) return "Used";
-      const known = await wallet.knownUsedState(address).catch(() => null);
-      return known == null ? "" : known ? "Used" : "Unused";
+  // --- Step 2, From: the Chatting Address, or your addresses listed right on the step --------
+  let fromList = null;
+  const drawFrom = (direction) => {
+    const back = backFrom("from");
+    const step = showStep({
+      screen: "send-from",
+      title: screenTitle(),
+      question: "Where are you sending from?",
+      className: "ss-from-step",
+      bodyHtml: `${titleLine()}<div class="ss-review-stack" id="from-choice"></div><div id="from-list"></div>`,
+      onBack: back ? () => go(back) : null,
+      onCancel: () => opts.onClose?.(),
+      canContinue: () => !(state.choosingFrom && isChattingSource()),
+      onContinue: () => go("amount"),
+      direction,
+    });
+    handle = step;
+    fromList = null;
+    paintFromChoice();
+    if (state.choosingFrom) showAddressList();
+  };
+  const paintFromChoice = () => {
+    const host = handle.el.querySelector("#from-choice");
+    if (!host) return;
+    const available = spendableSompi();
+    host.innerHTML = unitText(`
+      ${choicePillsHtml([
+        { id: "from-chatting", title: "Chatting Address", on: !state.choosingFrom },
+        { id: "from-choose", title: "Choose an Address", on: state.choosingFrom },
+      ])}
+      ${state.choosingFrom ? stepNoteHtml("Pick which of your addresses the Kaspa leaves from.") : `
+        <div class="sk-card sk-from">
+          <div class="sk-from-row">
+            <span class="tx-meta"><span class="strong small">Chatting Address</span><span class="mono tiny muted">${esc(state.chatting ? short(state.chatting) : "")}</span></span>
+            ${available != null && isChattingSource() ? `<span class="small strong">${esc(`${trimmedKas(available)} ${KAS_UNIT}`)}</span>` : '<span class="spinner small-spin"></span>'}
+          </div>
+        </div>`}`);
+    host.querySelector("#from-chatting").onclick = () => {
+      state.choosingFrom = false;
+      hideAddressList();
+      switchToChatting();
+      paintFromChoice();
     };
-    const spending = list.rows.filter((r) => !r.hidden || r.balanceSompi > 0n).sort((a, b) => a.index - b.index);
-    const current = opts.source?.kind === "spending" ? opts.source.index : null;
-    const row = async (label, address, balance, onClick, picked) => {
-      const used = await usedText(address, balance);
-      return {
-        label: `${label}${picked ? " ✓" : ""}`,
-        subtitle: `${address.slice(0, 14)}...${address.slice(-6)} · ${wallet.formatKas(balance, 8)} ${KAS_UNIT}${used ? ` · ${used}` : ""}`,
-        onClick,
-      };
+    host.querySelector("#from-choose").onclick = () => {
+      if (state.choosingFrom) return;
+      state.choosingFrom = true;
+      paintFromChoice();
+      showAddressList();
     };
-    const rows = [];
-    if (chatting) rows.push(await row("Chatting Address", chatting, BigInt(balances[chatting] ?? 0n), () => switchToChatting(chatting), current == null));
-    for (const r of spending) rows.push(await row(r.label, r.address, r.balanceSompi, () => switchSource(r), current === r.index));
-    sheet.update({ headerHtml: "", rows });
+    handle.refresh();
+  };
+  const showAddressList = () => {
+    const list = handle.el.querySelector("#from-list");
+    if (!list) return;
+    list.hidden = false;
+    fromList = mountOwnAddressList(list, {
+      selectedAddress: isChattingSource() ? null : opts.fromAddress,
+      onPick: (picked) => {
+        if (picked.kind === "spending") {
+          switchSource(picked);
+          fromList?.setSelected(picked.address);
+        } else {
+          // the chatting address picked from the list: back on its own pill
+          state.choosingFrom = false;
+          hideAddressList();
+          switchToChatting(picked.address);
+        }
+        paintFromChoice();
+      },
+    });
+  };
+  const hideAddressList = () => {
+    const list = handle?.el?.querySelector("#from-list");
+    if (list) { list.hidden = true; list.innerHTML = ""; }
+    fromList = null;
   };
   /** Fee estimate, Max and coin control follow the new address (coin control resets). */
   const resetForSource = () => {
@@ -544,28 +508,265 @@ export function showSend(opts) {
     resetForSource();
   };
   const switchToChatting = async (known = null) => {
-    if (opts.source?.kind !== "spending") return;
-    let address = known;
-    if (!address) {
-      try { address = (await wallet.cachedAddresses((await vault.readAccounts()).activeAccountId))?.main || null; } catch { address = null; }
-    }
+    if (isChattingSource()) return;
+    const address = known || (await loadChatting());
     if (!address) return;
+    state.chatting = address;
     opts.source = { kind: "main" };
     opts.fromAddress = address;
     state.sourceLabel = null;
     resetForSource();
   };
 
-  const setAmountKas = (kasText) => {
-    state.amountText = kasText;
-    amountField.setKas(kasText, state.price?.price || 0);
+  // --- Step 3, the amount on the keypad (iOS KaspaKeypadAmountEntry) ----------------------
+  const chipsHtml = () => {
+    const name = recipientName();
+    return stepChipsHtml([
+      { label: "To", value: name || state.recipient?.address || state.recipientInput, isAddress: !name },
+      { label: "From", value: sourceTitle() },
+    ]);
+  };
+  /** Under the typed amount: what's wrong with it, else what's available. */
+  const amountFootnote = () => {
+    if (state.error) return state.error;
+    if (exceedsBalance()) return "This is more than the address you're sending from holds.";
+    const available = spendableSompi();
+    return available != null ? `Available: ${trimmedKas(available)} ${KAS_UNIT}` : "";
+  };
+  const fiatText = (kas) => (price() ? wallet.formatFiat(kasNumberToSompi(kas), state.price) : "");
+  const amountEntryOptions = () => ({
+    typed: amountField.display,
+    unit: amountField.fiat ? state.currency.toUpperCase() : KAS_UNIT,
+    conversion: amountField.conversion(price(), fiatText),
+    switchText: amountField.fiat ? KAS_UNIT : state.currency.toUpperCase(),
+    canSwitch: price() > 0,
+    showsMax: true,
+    maxEnabled: Boolean(state.recipient) && state.coins != null,
+    estimatingMax: state.fillingMax,
+    footnote: amountFootnote(),
+    footnoteError: Boolean(state.error) || exceedsBalance(),
+  });
+  const requestAmountHtml = () => `
+    ${reviewAmountHtml({ eyebrow: "You're sending", amountText: `${trimmedKas(amountSompi() ?? 0n)} ${KAS_UNIT}`, fiatText: reviewFiat() })}
+    ${requestHtml()}
+    ${exceedsBalance() ? '<p class="ss-footnote error">This is more than the address you\'re sending from holds.</p>' : ""}`;
+  const drawAmount = (direction) => {
+    const back = backFrom("amount");
+    const step = showStep({
+      screen: "send-amount",
+      title: screenTitle(),
+      // A request's amount is fixed: no keypad, the request itself instead.
+      className: state.request ? "ss-amount-step" : "ss-keypad-step ss-amount-step",
+      bodyHtml: `<div id="amount-chips">${chipsHtml()}</div>
+        ${state.request ? `<div class="ss-review-stack" id="amount-request">${requestAmountHtml()}</div>` : keypadAmountEntryHtml(amountEntryOptions())}`,
+      onBack: back ? () => go(back) : null,
+      onCancel: () => opts.onClose?.(),
+      continueTitle: "Review",
+      canContinue: canReview,
+      onContinue: () => go("review"),
+      direction,
+    });
+    handle = step;
+    if (!state.request) {
+      bindKeypad(step.body, (key) => {
+        if (state.request || state.sending) return false;
+        const next = applyKeypadKey(key, amountField.display, amountField.fiat ? 2 : 8);
+        if (next === amountField.display) return false;
+        // A key press stops treating the amount as Max (iOS onKeyTyped).
+        state.maxMode = false;
+        state.error = "";
+        state.amountText = amountField.onInput(next, price());
+        scheduleEstimate();
+        paintAmount();
+        return true;
+      });
+    }
+    bindAmountActions();
+  };
+  const bindAmountActions = () => {
+    const unitSwitch = handle.el.querySelector("#unit-switch");
+    if (unitSwitch) unitSwitch.onclick = () => { amountField.toggle(price()); paintAmount(); };
+    const max = handle.el.querySelector("#max");
+    if (max) max.onclick = async () => { await fillMax(); paint(); };
+  };
+  const paintAmount = () => {
+    const el = handle.el;
+    el.querySelector("#amount-chips").innerHTML = unitText(chipsHtml());
+    const request = el.querySelector("#amount-request");
+    if (request) request.innerHTML = unitText(requestAmountHtml());
+    else paintKeypadAmountEntry(el, amountEntryOptions());
+    bindAmountActions();
+    handle.refresh();
   };
 
-  paint();
+  // --- Step 4, the review: the swipe-up screen ----------------------------------------------
+  const feeText = () => {
+    const fee = totalFeeSompi();
+    return fee == null ? null : `${trimmedKas(fee)} ${KAS_UNIT}`;
+  };
+  const reviewFiat = () => {
+    const sompi = amountSompi();
+    return sompi != null && state.price?.price ? wallet.formatFiat(sompi, state.price) : "";
+  };
+  const reviewHtml = () => {
+    const sompi = amountSompi();
+    const fee = totalFeeSompi();
+    let total = '<span class="muted">—</span>';
+    if (sompi != null && sompi > 0n && fee != null && !state.estimating) total = `<strong>${esc(`${trimmedKas(sompi + fee)} ${KAS_UNIT}`)}</strong>`;
+    else if (state.estimating) total = '<span class="spinner small-spin"></span>';
+    const amountText = sompi != null && sompi > 0n ? `${trimmedKas(sompi)} ${KAS_UNIT}` : (state.estimating || state.coins == null ? null : "—");
+    return `
+      ${reviewAmountHtml({ eyebrow: opts.compound ? "Consolidating" : "You're sending", amountText, fiatText: reviewFiat() })}
+      ${reviewCardHtml([
+        reviewRowHtml("To", opts.compound ? "This address (consolidating)" : reviewAddressHtml({ name: recipientName(), address: state.recipient?.address || "" })),
+        reviewRowHtml("From", reviewAddressHtml({ name: sourceTitle(), address: opts.fromAddress })),
+        reviewRowHtml("Total", total),
+      ])}
+      ${requestHtml()}
+      ${feeControlsHtml({
+        tier: state.tier,
+        custom: state.customFeeKas != null,
+        estimating: state.estimating,
+        feeText: feeText(),
+        showsCoinControl: !opts.compound,
+        coinSummary: coinSummary(state.selected),
+        editPill: true,
+      })}
+      ${state.error ? `<p class="error-text small center-text">${esc(state.error)}</p>` : ""}`;
+  };
+  const drawReview = (direction) => {
+    const back = backFrom("review");
+    const swipe = showSwipeUp({
+      screen: "send-review",
+      title: opts.compound ? "Compound UTXOs" : "Review",
+      onBack: back ? () => go(back) : null,
+      onCancel: () => opts.onClose?.(),
+      barTitle: opts.compound ? "Swipe up to Consolidate" : "Swipe up to Send",
+      labels: opts.compound ? SWIPE_UP_LABELS.consolidate : SWIPE_UP_LABELS.send,
+      bodyHtml: reviewHtml(),
+      enabled: canSend(),
+      direction,
+      getPreview: () => ({ amountSompi: amountSompi(), recipient: opts.compound ? null : (state.recipient?.domain || state.recipient?.address || null) }),
+      getFailureMessage: () => state.error,
+      onAction: doSend,
+      onDone: () => opts.onClose?.(),
+    });
+    handle = { el: swipe.body, swipe, refresh() {} };
+    bindReview();
+  };
+  const paintReview = ({ force = false } = {}) => {
+    const swipe = handle?.swipe;
+    if (!swipe || (swipe.sending && !force)) return;
+    swipe.setBody(reviewHtml());
+    bindReview();
+    swipe.setEnabled(canSend());
+  };
+  const bindReview = () => {
+    const body = handle.el;
+    for (const button of body.querySelectorAll("[data-tier]")) {
+      button.onclick = async () => {
+        state.tier = button.dataset.tier;
+        state.customFeeKas = null;
+        if (state.maxMode || opts.compound) await fillMax();
+        paint();
+      };
+    }
+    const edit = body.querySelector("#fee-edit");
+    if (edit) edit.onclick = () => { if (totalFeeSompi() != null) go("fee"); };
+    const coins = body.querySelector("#coins");
+    if (coins) coins.onclick = () => {
+      showCoinControl({
+        coins: state.coins || [],
+        selected: state.selected,
+        labels: state.labels,
+        onCancel: () => flow.go("review"),
+        onDone: (selection) => {
+          state.selected = selection;
+          flow.go("review");
+          // coins picked anew: a Max amount is worked out again, else the fee
+          (state.maxMode ? fillMax() : estimate()).then(paint);
+          paint();
+        },
+      });
+    };
+  };
+
+  // --- the fee editor (iOS feeStep): the typed total, never under the Normal fee -------------
+  const drawFee = (direction) => {
+    handle = showFeeEditor({
+      screen: "send-fee",
+      feeSompi: totalFeeSompi(),
+      minimumSompi: normalFeeSompi(),
+      direction,
+      onCancel: () => go("review"),
+      onConfirm: async (sompi) => {
+        state.customFeeKas = Number(sompi) / 1e8;
+        go("review");
+        if (state.maxMode || opts.compound) { await fillMax(); paint(); }
+      },
+    });
+  };
+
+  // --- sending ---------------------------------------------------------------------------
+  const doSend = async () => {
+    const swipe = handle?.swipe;
+    if (!canSend()) {
+      // the swipe-up screen shows this as Failed, with Try Again
+      state.error = state.error || (totalFeeKas() == null ? "Still working out the network fee. Try again in a moment." : "Not enough Kaspa for this amount plus the network fee.");
+      return;
+    }
+    state.sending = true;
+    state.error = "";
+    swipe?.setBusy(true);
+    const fee = totalFeeKas();
+    try {
+      let result;
+      if (opts.compound) {
+        result = await wallet.compound(opts.source, fee.toFixed(8));
+      } else if (state.maxMode) {
+        result = await wallet.send({
+          source: opts.source, destination: state.recipient.address, max: true,
+          totalFeeKas: fee.toFixed(8), selectedOutpoints: selectedOutpoints(), maxAmountSompi: amountSompi(),
+        });
+      } else {
+        const tip = Math.max(0, fee - (state.base?.sdkBaseKas || 0));
+        result = await wallet.send({
+          source: opts.source, destination: state.recipient.address,
+          amountKas: state.amountText, tipKas: tip.toFixed(8), selectedOutpoints: selectedOutpoints(),
+        });
+      }
+      const txid = (result?.txids || [])[result?.txids?.length - 1] || "";
+      opts.onSent?.();
+      swipe?.setSent({
+        txid,
+        amountSompi: result?.amountSompi ?? result?.result?.summary?.amountSompi ?? amountSompi(),
+        recipient: opts.compound ? null : (state.recipient.domain || state.recipient.address),
+        explorerUrl: txid ? wallet.explorerTxUrl(txid) : null,
+      });
+      swipe?.setBusy(false);
+    } catch (error) {
+      state.sending = false;
+      // the password prompt was cancelled: nothing was sent, the review comes back as it was
+      if (error?.code === wallet.SEND_CANCELLED) { swipe?.returnToForm(); return; }
+      console.warn("[KaPay] send failed:", error);
+      state.error = friendlySendError(error);
+      swipe?.setBusy(false);
+      // Try Again shows the review with the error under the fee.
+      if (handle?.swipe === swipe) paintReview({ force: true });
+    }
+  };
+
+  // --- start -----------------------------------------------------------------------------
+  if (!opts.compound && state.recipientInput) {
+    if (applyRequestLink(state.recipientInput)) requestFromLink = true;
+    else lookup.now();
+  }
+  // iOS initialStep: Compound on the review; a request or a pre-filled recipient after To.
+  flow.go(opts.compound ? "review" : (state.request || state.recipientInput ? afterRecipient() : "to"));
   load();
+  loadChatting().then(() => paint());
   // the recipient card marks one of your own addresses (iOS 56f004f)
   loadOwnAddresses().then((changed) => { if (changed) paint(); });
-  if (state.recipientInput && !opts.compound && !applyRequestLink(state.recipientInput)) resolveRecipient();
 }
 
 function friendlySendError(error) {
@@ -627,23 +828,4 @@ export function showCoinControl({ coins, selected, labels = {}, onCancel, onDone
     }
   };
   paint();
-}
-
-// --- Sent: iOS SentConfirmationSheet -----------------------------------------------------------
-
-// Sent, the amount, "to <recipient>" (not for a compound), the transaction as an explorer link,
-// "Tap the transaction to open it in the explorer.", Done.
-function showSent({ amountSompi, to, txid, compound, onDone }) {
-  render(`
-    <section class="screen sent">
-      <div class="sent-check" style="color:#30d158">${ICONS.checkBig}</div>
-      <h2>Sent</h2>
-      <div class="sent-amount">${esc(wallet.sompiToKasText(amountSompi ?? 0n))} KAS</div>
-      ${compound ? "" : `<div class="muted small center-text break">to ${esc(to?.domain || to?.address || "")}</div>`}
-      ${txid ? `<a class="link-button center mono tiny break sent-tx" href="${esc(wallet.explorerTxUrl(txid))}" target="_blank" rel="noopener noreferrer">${esc(txid)} ${ICONS.upRightSquare}</a>
-      <p class="muted tiny center-text">Tap the transaction to open it in the explorer.</p>` : ""}
-      <div class="spacer"></div>
-      <button id="done" class="big">Done</button>
-    </section>`, "sent");
-  $("#done").onclick = onDone;
 }
