@@ -1,12 +1,12 @@
 /* Cold Storage tab - iOS ColdStorageView, in the extension's dark iOS look. */
 
 /* Pinned bars, scrolling content: the tab's screens (with the dock) and its sheets / flows. */
-#app[data-screen^="cold:"], #app[data-screen="cold-visibility"], #app[data-screen="cold-send"], #app[data-screen="cold-sign"] {
+#app[data-screen^="cold:"], #app[data-screen="cold-visibility"] {
   height: calc(600px - var(--dock-h, 0px)); min-height: 0;
   /* flex: 1 would size the page column by its content (an indefinite 0% basis), not this height. */
   flex: none;
 }
-body.tab #app[data-screen^="cold:"], body.tab #app[data-screen="cold-visibility"], body.tab #app[data-screen="cold-send"], body.tab #app[data-screen="cold-sign"] {
+body.tab #app[data-screen^="cold:"], body.tab #app[data-screen="cold-visibility"] {
   height: calc(100vh - 48px - var(--dock-h, 0px));
 }
 
@@ -84,53 +84,42 @@ textarea.cold-field { min-height: 0; resize: none; font-size: 13px; line-height:
 .cold-kachat { display: flex; flex-direction: column; align-items: center; gap: 10px; text-align: center; padding: 28px 20px; }
 .cold-kachat-title { font-size: 16px; }
 
-/* --- send: form ---------------------------------------------------------------------------- */
-.cold-bar-spacer { width: 60px; }
-.cold-send-form { gap: 20px; }
-textarea.cold-recipient { font-size: 13px; }
-.cold-resolved { max-width: 100%; }
-.cold-merge { display: inline-flex; flex: none; }
-.cold-fee { color: var(--kaspa); gap: 4px; }
-.cold-build { width: 100%; border-radius: 10px; padding: 14px; font-weight: 700; font-size: 14px; background: rgba(120, 120, 128, .2); color: var(--muted); display: flex; align-items: center; justify-content: center; }
-.cold-build.ready { background: var(--kaspa); color: #000; }
-.cold-build:disabled { background: rgba(120, 120, 128, .2) !important; color: var(--muted) !important; opacity: 1; }
-.cold-send-form .link-button:disabled { background: transparent !important; color: var(--muted) !important; }
+/* --- send, in steps (KaPay iOS 05db583 ColdSendFlowView; cold-send.js). The screens are
+   send-steps.css's (.ss-step, the swipe-up); these are the pieces only Cold Storage has. ------- */
+.cold-step-note { margin: 0; padding: 0 8px; font-size: 12.5px; line-height: 1.4; color: var(--muted); text-align: center; }
 
-/* --- send: the QR for the device (white page) -------------------------------------------------- */
-#app[data-screen="cold-sign"] { background: #fff; color: #000; }
-html:has(#app[data-screen="cold-sign"]), body:has(#app[data-screen="cold-sign"]) { background: #fff; }
-.cold-white-bar { background: #fff; }
-.cold-white-bar .nav-title { color: #000; }
-.cold-white-bar .bar-text { color: #3f9d90; }
-.cold-sign { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 4px 16px 16px; background: #fff; color: #000; }
-.cold-sign > * { flex-shrink: 0; }
-.cold-sign-rows { width: 100%; display: flex; flex-direction: column; gap: 6px; font-size: 12px; color: rgba(0, 0, 0, .6); padding: 0 4px; }
-.cold-sign-rows > div { display: flex; justify-content: space-between; gap: 8px; }
-.cold-sign-hint { font-size: 14px; color: rgba(0, 0, 0, .6); margin: 0; }
-.cold-sign-frame { padding: 6px; background: #fff; border: 3px solid var(--kaspa); border-radius: 20px; line-height: 0; }
-.cold-sign-frame canvas { width: 240px; height: 240px; image-rendering: pixelated; }
+/* The review ends in Build Unsigned Transaction; Compound's review is a first step, with Cancel
+   beside it at the bottom, so the long title gets the wider share. */
+.cold-review-step.ss-first .ss-continue { flex: 2.6 1 0; font-size: 14px; padding: 0 8px; }
+
+/* Sign with KasSigner: the QR on its own white card whatever the theme (a camera needs the
+   contrast), its frame dots and controls. iOS AnimatedQRDisplayView. */
+.cold-qr-step .ss-body { align-items: stretch; }
+.cold-qr-panel { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+.cold-sign-frame { padding: 10px; background: #fff; border: 3px solid var(--kaspa); border-radius: 20px; line-height: 0; }
+.cold-sign-frame canvas { width: 220px; height: 220px; image-rendering: pixelated; }
+body.tab .cold-sign-frame canvas { width: 280px; height: 280px; }
 .cold-frame-dots { display: flex; flex-wrap: wrap; justify-content: center; gap: 5px; max-width: 300px; }
-.cold-frame-dots span { width: 7px; height: 7px; border-radius: 50%; background: #d1d1d1; }
+.cold-frame-dots span { width: 7px; height: 7px; border-radius: 50%; background: rgba(152, 152, 159, .45); }
 .cold-frame-dots span.on { background: var(--kaspa); }
 .cold-frame-controls { display: flex; align-items: center; gap: 28px; }
 .cold-frame-controls button { color: var(--kaspa); width: 36px; height: 36px; }
 .cold-frame-controls button:hover { background: rgba(112, 199, 186, .12); }
-.cold-frame-counter { font-size: 12px; color: rgba(0, 0, 0, .5); margin-top: -8px; }
-.cold-scan-signed { padding: 15px; margin-top: 2px; }
+.cold-frame-counter { font-size: 12px; color: var(--muted); margin-top: -6px; }
+.cold-qr-step .cold-fee-warning { color: #ff9f0a; }
+@media (prefers-color-scheme: light) { .cold-qr-step .cold-fee-warning { color: #7a4b00; } }
 
-/* --- send: broadcasting, Sent, Something Went Wrong --------------------------------------------- */
-.cold-wait { align-items: center; gap: 14px; }
-.cold-result { gap: 16px; overflow-y: auto; }
-.cold-result > * { flex-shrink: 0; }
-.cold-result-card { display: flex; flex-direction: column; gap: 4px; padding: 16px; border-radius: 12px; color: var(--text); text-decoration: none; min-width: 0; }
-.cold-result-card .break { word-break: break-all; }
-.cold-txid .cold-caption { display: inline-flex; align-items: center; gap: 4px; }
-.cold-txid .cold-caption svg { width: 12px; height: 12px; }
-.cold-sent { display: flex; flex-direction: column; align-items: center; gap: 10px; font-size: 20px; font-weight: 700; padding-top: 4px; }
-.cold-result .big { width: 100%; }
-.cold-failed { align-items: center; gap: 18px; text-align: center; }
+/* "Signed by KasSigner" (iOS checkmark.seal.fill in a green capsule). */
+.cold-signed-badge {
+  align-self: center; display: inline-flex; align-items: center; gap: 7px; margin-top: 4px; padding: 8px 14px;
+  border-radius: 999px; background: rgba(48, 209, 88, .12); color: #30d158; font-size: 14px; font-weight: 650;
+}
+.cold-signed-badge svg { flex: none; }
+
+/* Something Went Wrong: centred in the step, Try Again in the bar. */
+.cold-failed { flex: 1 1 auto !important; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 24px 8px; text-align: center; }
 .cold-failed-title { font-size: 20px; font-weight: 650; }
-.cold-failed p { padding: 0 8px; }
+.cold-failed p { margin: 0; padding: 0 8px; word-break: break-word; }
 
 /* styles.css's button:disabled:not(.ghost):not(.icon) outranks .ios-capsule:disabled and resets
    its opacity to 1, so a disabled capsule (Send at 0 KAS) looked enabled. */

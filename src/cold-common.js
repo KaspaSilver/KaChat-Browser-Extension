@@ -44,9 +44,10 @@ export const SF = {
   warning: '<svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l10 18H2z" fill="currentColor"/><path d="M12 10v5" stroke="#000" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="18" r="1.1" fill="#000"/></svg>',
   chevronLeft: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>',
   chevronRight: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg>',
-  // checkmark.circle.fill / xmark.circle.fill, large (Sent / Something Went Wrong)
-  checkCircleBig: '<svg width="48" height="48" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="11" fill="#30d158"/><path d="M7 12.5l3.3 3.3L17 9" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  // xmark.circle.fill, large (Something Went Wrong)
   xCircleBig: '<svg width="56" height="56" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="11" fill="#ff453a"/><path d="M8.5 8.5l7 7M15.5 8.5l-7 7" stroke="#fff" stroke-width="2.2" stroke-linecap="round"/></svg>',
+  // checkmark.seal.fill ("Signed by KasSigner")
+  checkSealFill: '<svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 2.4l2.3 1.7 2.8-.2 1 2.7 2.4 1.6-.8 2.7.8 2.7-2.4 1.6-1 2.7-2.8-.2L12 21.6l-2.3-1.7-2.8.2-1-2.7-2.4-1.6.8-2.7-.8-2.7 2.4-1.6 1-2.7 2.8.2z"/><path d="m8.4 12.2 2.5 2.5 4.7-4.9" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   // AnimatedQRDisplayView's controls
   backwardFrame: '<svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><path d="M11.5 6v12L3 12z" fill="currentColor"/><path d="M20.5 6v12L12 12z" fill="currentColor"/><rect x="1.4" y="5.5" width="1.6" height="13" rx=".8" fill="currentColor"/></svg>',
   forwardFrame: '<svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><path d="M12.5 6v12L21 12z" fill="currentColor"/><path d="M3.5 6v12L12 12z" fill="currentColor"/><rect x="21" y="5.5" width="1.6" height="13" rx=".8" fill="currentColor"/></svg>',
