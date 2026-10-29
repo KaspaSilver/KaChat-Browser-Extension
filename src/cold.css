@@ -63,7 +63,7 @@ textarea.cold-field { min-height: 0; resize: none; font-size: 13px; line-height:
 .cold-sheet-buttons button { padding: 14px; border-radius: 16px; font-size: 14px; }
 .cold-sheet-cancel { background: rgba(44, 44, 46, .72); border: .8px solid rgba(255, 255, 255, .18); color: var(--text); font-weight: 600; }
 .cold-sheet-confirm { background: var(--kaspa); color: #000; font-weight: 800; }
-.cold-sheet-confirm:disabled { background: var(--kaspa) !important; color: #000 !important; opacity: .4; }
+.cold-sheet-confirm:disabled { background: var(--kaspa) !important; color: #000 !important; opacity: .4 !important; }
 @media (prefers-color-scheme: light) {
   .cold-field, .cold-sheet-cancel { background: rgba(255, 255, 255, .8); border-color: rgba(0, 0, 0, .08); }
 }

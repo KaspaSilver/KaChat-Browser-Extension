@@ -17,7 +17,7 @@ body.tab #app:has(> .ss-screen) { height: calc(100vh - 48px - var(--dock-h, 0px)
 
 /* iOS SendStepHeader: Back on the left, the title, Cancel on the right; a first step only the title. */
 .ss-head { flex: 0 0 auto; position: relative; display: flex; align-items: center; justify-content: space-between; min-height: 40px; padding: 10px 14px 4px; }
-.ss-title { position: absolute; left: 92px; right: 92px; margin: 0; text-align: center; font-size: 16px; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none; }
+.ss-title { position: absolute; left: 92px; right: 92px; margin: 0; text-align: center; font-size: 15px; font-weight: 650; letter-spacing: -0.1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none; }
 .ss-first .ss-title { left: 14px; right: 14px; }
 .ss-back, .ss-cancel { border: 0; cursor: pointer; color: var(--kaspa-ink); font: inherit; background: var(--panel-2); }
 .ss-back { width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center; padding: 0; }
@@ -37,7 +37,7 @@ body.tab #app:has(> .ss-screen) { height: calc(100vh - 48px - var(--dock-h, 0px)
 .ss-bar { flex: 0 0 auto; display: flex; gap: 10px; padding: 8px 18px 14px; background: var(--bg); }
 .ss-continue, .ss-bar-cancel { flex: 1 1 0; height: 50px; border-radius: 999px; font: inherit; font-size: 16px; font-weight: 650; cursor: pointer; padding: 0 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ss-continue { border: 0; background: var(--kaspa); color: #000; }
-.ss-continue:disabled { background: var(--kaspa) !important; color: #000 !important; opacity: .4; cursor: default; }
+.ss-continue:disabled { background: var(--kaspa) !important; color: #000 !important; opacity: .4 !important; cursor: default; }
 .ss-bar-cancel { border: 1px solid rgba(112,199,186,.35); background: var(--panel-2); color: var(--text); }
 
 /* "To alice.kachat", "From Chatting Address" (iOS SendStepChip). */
@@ -114,7 +114,7 @@ body.tab .ss-key { height: 54px; }
 /* The fee row's Edit (iOS SendFeeControls onEditFee): the fee, then an Edit capsule. */
 .sk-fee-value { display: inline-flex; align-items: center; gap: 8px; font-variant-numeric: tabular-nums; }
 .sk-fee-edit-pill { display: inline-flex; align-items: center; gap: 4px; padding: 5px 11px; border-radius: 999px; background: rgba(112,199,186,.15); color: var(--kaspa-ink); font-size: 13px; font-weight: 650; }
-.sk-fee-edit-pill:disabled { background: rgba(112,199,186,.15) !important; color: var(--kaspa-ink) !important; opacity: .5; }
+.sk-fee-edit-pill:disabled { background: rgba(112,199,186,.15) !important; color: var(--kaspa-ink) !important; opacity: .5 !important; }
 
 /* --- Swipe up to send (iOS SwipeUpToSendScrollView) ------------------------------------------
    The form (its header, the scrolling review, the bar) moves up with the drag and the sending
@@ -204,7 +204,7 @@ body.tab .ss-key { height: 54px; }
 /* Request Payment's review: "Paid to", the memo and Share. */
 .ss-label { color: var(--muted); font-size: 11px; font-weight: 650; text-transform: uppercase; letter-spacing: .3px; }
 .req-share { align-self: center; display: inline-flex; align-items: center; gap: 6px; padding: 9px 16px; border-radius: 999px; background: rgba(112,199,186,.15); color: var(--kaspa-ink); font-size: 14px; font-weight: 650; }
-.req-share:disabled { background: rgba(112,199,186,.15) !important; color: var(--kaspa-ink) !important; opacity: .5; }
+.req-share:disabled { background: rgba(112,199,186,.15) !important; color: var(--kaspa-ink) !important; opacity: .5 !important; }
 .req-share svg { width: 15px; height: 15px; }
 .req-memo-card { background: var(--panel); border-radius: 14px; padding: 12px 14px; }
 .req-memo-card .req-memo { min-height: 0; padding: 0; }

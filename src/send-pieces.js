@@ -1,8 +1,8 @@
 // The pieces every Send Kaspa screen is built from, so they look and behave the same - a port of
 // iOS Views/Shared/SendKaspaComponents.swift (4d0324f, afaad34): the recipient on top (paste, scan
 // a QR, names resolve), then the big amount (KAS or your currency, Max), the balance pills, the
-// fee card (network fee, speed, coin control) and a slide-to-send button. Used by Send Kaspa
-// (send.js) and KasSigner's send (cold-send.js). Change these rather than one screen. The step
+// fee card (network fee, speed, coin control). Used by Send Kaspa (send.js), KasSigner's send
+// (cold-send.js) and the .kachat sheets (kachat-live.js). Change these rather than one screen. The step
 // screens themselves (the keypad, the swipe-up review, the fee editor) are send-steps.js.
 
 import { openAddressBookPicker, entryFor, entryName } from "./address-book.js";
@@ -16,7 +16,6 @@ import "./send-steps.css";
 const SCAN = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M3 8V5a2 2 0 0 1 2-2h3M16 3h3a2 2 0 0 1 2 2v3M21 16v3a2 2 0 0 1-2 2h-3M8 21H5a2 2 0 0 1-2-2v-3M7 12h10"/></svg>';
 const SWAP = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 4v16M3 8l4-4 4 4M17 20V4M21 16l-4 4-4-4"/></svg>';
 const MERGE = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3v6a6 6 0 0 0 6 6M18 3v6a6 6 0 0 1-6 6v6M9 18l3 3 3-3"/></svg>';
-const CHEVRONS = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 6l6 6-6 6M13 6l6 6-6 6"/></svg>';
 const PERSON = '<svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="12" cy="8" r="4.2"/><path d="M3.5 21a8.5 8.5 0 0 1 17 0z"/></svg>';
 // person.text.rectangle - KaChat's contact card, wherever contacts appear (iOS 8118f09).
 export const CONTACT_CARD = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2.5" y="4.5" width="19" height="15" rx="2.6"/><circle cx="8.6" cy="10.4" r="2.2"/><path d="M5.2 16.1c.7-1.5 1.9-2.3 3.4-2.3s2.7.8 3.4 2.3M14.6 10h4M14.6 13.6h3"/></svg>';
@@ -296,72 +295,6 @@ export function feeControlsHtml({ tier = "normal", custom = false, editing = fal
 export function coinSummary(selected) {
   if (!selected) return "Automatic";
   return `${selected.size} UTXO${selected.size === 1 ? "" : "s"} selected`;
-}
-
-// --- Send button (SendActionButton) --------------------------------------------------------
-
-/**
- * Slide the knob to the right end to send, so a payment can't go out on a stray click. Let go
- * early and it springs back. With `requiresSlide: false` it is an ordinary button in the same
- * look (KasSigner's Build Unsigned Transaction, which moves nothing by itself).
- */
-export function slideButtonHtml({ title, busy = false, enabled = true, requiresSlide = true }) {
-  const active = enabled && !busy;
-  if (!requiresSlide) {
-    return `<button class="sk-slide sk-tap ${enabled || busy ? "" : "off"}" id="slide" ${active ? "" : "disabled"}>${busy ? '<span class="spinner small-spin dark"></span>' : `<span class="sk-slide-label">${esc(title)}</span>`}</button>`;
-  }
-  return `
-    <div class="sk-slide ${enabled || busy ? "" : "off"}" id="slide" role="button" tabindex="${active ? 0 : -1}" aria-label="${esc(title)}" aria-disabled="${!active}">
-      <div class="sk-slide-fill"></div>
-      <span class="sk-slide-label">${busy ? '<span class="spinner small-spin dark"></span>' : esc(title)}</span>
-      ${busy ? "" : `<span class="sk-knob">${CHEVRONS}</span>`}
-    </div>`;
-}
-
-/** Wires the slide (or tap) button: `onAction` runs once the knob reaches the end. Keyboard users
- *  press Enter or Space (the VoiceOver action on iOS). */
-export function bindSlideButton(root, onAction) {
-  const track = root.querySelector("#slide");
-  if (!track || track.getAttribute("aria-disabled") === "true" || track.disabled) return;
-  if (track.tagName === "BUTTON") { track.onclick = onAction; return; }
-  const knob = track.querySelector(".sk-knob");
-  const fill = track.querySelector(".sk-slide-fill");
-  const label = track.querySelector(".sk-slide-label");
-  if (!knob) return;
-  let startX = null;
-  let offset = 0;
-  const maxOffset = () => Math.max(1, track.clientWidth - knob.offsetWidth - 8);
-  const place = (x, animate = false) => {
-    offset = Math.min(Math.max(0, x), maxOffset());
-    const transition = animate ? "transform .3s cubic-bezier(.2,.9,.3,1.2), width .3s ease" : "none";
-    knob.style.transition = transition;
-    fill.style.transition = transition;
-    knob.style.transform = `translateX(${offset}px)`;
-    fill.style.width = `${knob.offsetWidth + 8 + offset}px`;
-    label.style.opacity = String(1 - offset / maxOffset());
-  };
-  const reset = () => place(0, true);
-  knob.addEventListener("pointerdown", (event) => {
-    startX = event.clientX - offset;
-    knob.setPointerCapture(event.pointerId);
-    event.preventDefault();
-  });
-  knob.addEventListener("pointermove", (event) => { if (startX != null) place(event.clientX - startX); });
-  const end = () => {
-    if (startX == null) return;
-    startX = null;
-    if (offset >= maxOffset() * 0.95) {
-      place(maxOffset());
-      onAction();
-      // A send that didn't start (a validation error) leaves the screen as it was: back it goes.
-      setTimeout(() => { if (track.isConnected) reset(); }, 600);
-    } else reset();
-  };
-  knob.addEventListener("pointerup", end);
-  knob.addEventListener("pointercancel", end);
-  track.addEventListener("keydown", (event) => {
-    if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onAction(); }
-  });
 }
 
 /** The recipient card's Contacts pill: pick a saved address (iOS 00767a4, 8118f09). It is always

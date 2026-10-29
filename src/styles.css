@@ -664,8 +664,8 @@ button.domain-send { background: var(--kaspa); color: #000; border-radius: 999px
 .panel-bar > :last-child { justify-self: end; }
 .panel-body { overflow-y: auto; padding-top: 4px; }
 /* Pinned navigation bar, scrolling content - as iOS (the Profile screen's fixed height). */
-#app[data-screen^="kachat-"] { height: calc(600px - var(--dock-h, 0px)); min-height: 0; }
-body.tab #app[data-screen^="kachat-"] { height: calc(100vh - 48px - var(--dock-h, 0px)); }
+#app[data-screen^="kachat-"], #app[data-screen^="kachat:"] { height: calc(600px - var(--dock-h, 0px)); min-height: 0; }
+body.tab #app[data-screen^="kachat-"], body.tab #app[data-screen^="kachat:"] { height: calc(100vh - 48px - var(--dock-h, 0px)); }
 .km { min-height: 0; }
 .km-actions button { white-space: nowrap; font-size: 13px; gap: 6px; padding: 12px 8px; }
 .km-actions button svg { width: 17px; height: 17px; flex: none; }
@@ -800,7 +800,7 @@ html:has(#app[data-screen="qr"]), body:has(#app[data-screen="qr"]) { background:
 
 /* Fixed-height screens: #app grows to fill the shell (flex: 1), which would let tall content
    override the height and push the dock away - these keep their height and scroll inside. */
-#app[data-screen^="kachat-"], #app[data-screen="manage-chat"], #app[data-screen="manage-spending"], #app[data-screen="manage-list"],
+#app[data-screen^="kachat-"], #app[data-screen^="kachat:"], #app[data-screen="manage-chat"], #app[data-screen="manage-spending"], #app[data-screen="manage-list"],
 #app[data-screen="visibility"], #app[data-screen="coins"], #app[data-screen="consolidate"] { flex: none; }
 /* The generic disabled-button grey must not repaint these. */
 .link-button:disabled { background: transparent !important; color: var(--muted) !important; }
@@ -924,14 +924,6 @@ button.sk-pill:disabled { opacity: 1; background: var(--panel) !important; color
 .sk-divider { height: .5px; background: rgba(255,255,255,.12); }
 .sk-coin-row { display: flex; justify-content: space-between; align-items: center; background: transparent; color: var(--text); font-weight: 400; font-size: 15px; padding: 0; }
 .sk-coin-row .muted { display: inline-flex; align-items: center; gap: 4px; }
-.sk-slide { position: relative; height: 56px; border-radius: 999px; background: var(--kaspa); overflow: hidden; user-select: none; touch-action: none; display: flex; align-items: center; justify-content: center; }
-.sk-slide.off { background: color-mix(in srgb, var(--kaspa) 40%, transparent); }
-.sk-slide-fill { position: absolute; left: 0; top: 0; bottom: 0; width: 56px; border-radius: 999px; background: rgba(255,255,255,.25); }
-.sk-slide-label { position: relative; color: #000; font-weight: 700; font-size: 16px; pointer-events: none; display: inline-flex; align-items: center; }
-.sk-knob { position: absolute; left: 4px; top: 4px; width: 48px; height: 48px; border-radius: 50%; background: #fff; color: var(--kaspa); display: flex; align-items: center; justify-content: center; box-shadow: 0 2px 4px rgba(0,0,0,.15); cursor: grab; touch-action: none; }
-.sk-slide.off .sk-knob { cursor: default; }
-.sk-tap { width: 100%; border: 0; padding: 0; color: #000; }
-.sk-tap:disabled { background: color-mix(in srgb, var(--kaspa) 40%, transparent) !important; opacity: 1; }
 .spinner.dark { border-color: rgba(0,0,0,.25); border-top-color: #000; }
 .bar-spacer { visibility: hidden; }
 .faucet-card { display: flex; align-items: center; gap: 12px; width: 100%; padding: 14px 16px; border-radius: 18px; background: rgba(112,199,186,.15); color: var(--text); font-weight: 400; text-align: left; }
