@@ -3,30 +3,39 @@
 // Names / Activity, the name detail with its actions, every transaction sheet and Your Domains >
 // .kachat. On mainnet none of this is reached: market.js keeps its "Coming soon" mockups.
 //
-// Every spending or destructive action shows its cost first (built against live UTXOs, nothing
-// sent), asks to confirm - twice for the destructive ones - then asks for the wallet password
-// (the browser's stand-in for iOS's device lock, DeviceAuth) before anything is signed.
+// Every spending or destructive action is the Send Kaspa flow's steps (KaPay 05db583,
+// send-steps.js): an entry step when it takes one (an amount or a price on the keypad, a new owner
+// on the recipient card, how long), then a review that shows its cost first (built against live
+// UTXOs, nothing sent) with the fee - Normal / Fast / Priority, or Edit for a fee of your own - and
+// swipe up to confirm (the swipe is the confirmation, iOS e67074c); then the wallet password (the
+// browser's stand-in for iOS's device lock, DeviceAuth) before anything is signed. The swipe-up
+// screen follows the transaction: the BlockDAG while it goes out, then its progress, or Failed with
+// Try Again (KaPay 5bab351).
 //
 // Left out on purpose: iOS's Message button on a name's owner (the wallet has no chats).
 
 import { app, esc, render, $, toast, ICONS, navHeader, unitText, showSheet } from "./ui.js";
-import { KAS_UNIT, IS_TESTNET } from "./net.js";
+import { KAS_UNIT } from "./net.js";
 import { looksLikeName, resolveEverywhere, primaryResolution, notFoundMessage, otherDomainsHtml, bindOtherDomains, splitTypedName } from "./names.js";
-import { sompiFromUserText, sanitizeAmountInput } from "./amounts.js";
+import { sompiFromUserText } from "./amounts.js";
 import * as vault from "./vault.js";
 import * as wallet from "./wallet.js";
 import { kachatNames, kachatProfiles, kachatRegistry, kachatLaunched, prepareSigner, prepareOfferSigners } from "./kachat-names.js";
 import { SYMBOLS, openPanel, kachatWordmark, showTileSheet } from "./kachat-ui.js";
 import { Operation, Stage, isOpen, needsDriving, KachatNamesActions, FeeTier, FeeChoice, TxStage } from "../shared/engine/kachat-names/actions.js";
-import { feeControlsHtml, slideButtonHtml, bindSlideButton } from "./send-pieces.js";
-import { paramsExpiresSoonMs } from "../shared/engine/kachat-names/manifest.js";
+import { FEE_TIERS, feeControlsHtml, recipientCardHtml, recipientStatusHtml, recipientLookup, bindAddressBookButton } from "./send-pieces.js";
+import {
+  createStepFlow, showStep, showSwipeUp, showFeeEditor, SWIPE_UP_LABELS, keypadAmountEntryHtml, paintKeypadAmountEntry,
+  bindKeypad, applyKeypadKey, reviewCardHtml, reviewRowHtml,
+} from "./send-steps.js";
+import { paramsExpiresSoonMs, paramsRegisterCost } from "../shared/engine/kachat-names/manifest.js";
 import { KachatNamesRegistry } from "../shared/engine/kachat-names/registry.js";
 import { Status, Profile, SocialKind, SocialPlatform, SocialSource } from "../shared/engine/kachat-names/registry-state.js";
 import { normalize, unhex32, p2pkScript, bytesEqual, yearMs, tier } from "../shared/engine/kachat-names/codec.js";
 import { isRegistryUpgrading, registryUpgradingMessage } from "../shared/engine/kachat-names/service.js";
 import { scanQr } from "./camera.js";
 import * as dock from "./dock.js";
-import { addressBookButtonHtml, savedNameHtml, openAddressBookPicker } from "./address-book.js";
+import "./kachat-steps.css";
 
 // --- Amounts (iOS KaspaUnit.amount / signed / parseSompi) ----------------------------------
 
@@ -576,7 +585,6 @@ export const hub = {
     }, 350);
   },
 
-  pricePerYear(name) { return namePrice(name); },
 };
 
 // --- Hub: search result (iOS KachatLiveSearchResult) ---------------------------------------
@@ -606,9 +614,10 @@ export function searchResultHtml(typed) {
       </button>`;
   }
   if (s.kind === "free" && s.name === name) {
-    const price = hub.pricePerYear(name);
+    // no price here: a name's first year and later years cost differently (the claim's "For how
+    // long?" shows each, KaPay 05db583)
     body = `
-      <span class="tx-meta">${title(`${name}.kachat`)}${price != null ? `<span class="tiny kl-green">Available · ${esc(amount(price))} ${yearlyPeriods() ? "a year" : `per ${esc(periods(1))}`}</span>` : ""}</span>
+      <span class="tx-meta">${title(`${name}.kachat`)}<span class="tiny kl-green">Available</span></span>
       <button class="km-prominent small-button" id="claim" ${s.gap ? "" : "disabled"}>Claim</button>`;
   } else if (s.kind === "invalid" && s.name === name) {
     body = `<span class="tx-meta">${title(`${name}.kachat`)}<span class="muted tiny">${esc(invalidReason(name) || "Not a valid name.")}</span></span>`;
@@ -1097,15 +1106,15 @@ function openOfferDetail(st) {
 function openOfferAction(kind, offer, name = null) {
   const offerRow = { title: "Offer", value: amount(offer.amount) };
   if (kind === "withdraw") {
-    return openTxSheet({ title: "Withdraw Offer", confirmTitle: "Withdraw", doneTitle: "Offer withdrawn", rows: [offerRow], operation: () => Operation.withdraw(offer) });
+    return openTxSheet({ title: "Withdraw Offer", doneTitle: "Offer withdrawn", rows: [offerRow], operation: () => Operation.withdraw(offer) });
   }
   if (kind === "refund") {
-    return openTxSheet({ title: "Refund Offer", confirmTitle: "Refund", doneTitle: "Offer refunded", rows: [offerRow], operation: () => Operation.refund(offer) });
+    return openTxSheet({ title: "Refund Offer", doneTitle: "Offer refunded", rows: [offerRow], operation: () => Operation.refund(offer) });
   }
   if (kind === "decline") {
     const buyerAddress = addressOf(offer.buyer);
     return openTxSheet({
-      title: "Decline Offer", confirmTitle: "Decline", doneTitle: "Offer declined",
+      title: "Decline Offer", doneTitle: "Offer declined",
       footer: "The offer goes back to the buyer. Its network fee comes out of the offer, so declining costs you nothing.",
       rows: [offerRow, { title: "Buyer", value: buyerAddress ? shortAddress(buyerAddress) : "" }],
       operation: () => Operation.decline(offer),
@@ -1113,12 +1122,81 @@ function openOfferAction(kind, offer, name = null) {
   }
   const buyer = addressOf(offer.buyer);
   return openTxSheet({
-    title: "Accept Offer", confirmTitle: "Accept and Transfer", doneTitle: "Offer accepted",
+    title: "Accept Offer", doneTitle: "Offer accepted",
     warning: "The name goes to the buyer and the offer's amount comes to you, in one transaction. This can't be undone.",
     rows: [{ title: "Name", value: name.display }, offerRow, { title: "Buyer", value: buyer ? shortAddress(buyer) : "" }],
     operation: () => Operation.accept(offer, name),
   });
 }
+
+// --- The steps' screen (KaPay 05db583) -------------------------------------------------------
+//
+// A name transaction is the Send Kaspa flow's steps (send-steps.js), and like Send Kaspa they take
+// the whole popup: the screen it started from is set aside as it is - its nodes, its scroll, its
+// dataset - and put back on Cancel or Done, so a name, the market or Your Domains come back where
+// they were. Screens repaint only while they are on screen (their `here()`), so nothing draws
+// over the steps meanwhile; once back, the screen catches up (`restoreHooks`, hub.changed()).
+
+/** Every step screen's name starts with this (not "kachat-": those screens have a fixed height). */
+const FLOW_SCREEN = "names-tx";
+/** Run once a screen is back from the steps: a name detail reloads what changed meanwhile. */
+const restoreHooks = new Set();
+
+/** Sets the popup's screen aside; the function returned puts it back - only while the steps still
+ *  hold the popup (anything drawn over them meanwhile, the lock screen, stays). */
+function takeOverScreen() {
+  const nodes = [...app.childNodes];
+  const dataset = { ...app.dataset };
+  const scrolls = [app, ...app.querySelectorAll("*")].filter((el) => el.scrollTop > 0).map((el) => [el, el.scrollTop]);
+  let restored = false;
+  return () => {
+    if (restored) return false;
+    if (!String(app.dataset.screen || "").startsWith(FLOW_SCREEN)) return false;
+    restored = true;
+    // the render hooks see the screen come back (the dock follows it)
+    render("", dataset.screen || "");
+    app.replaceChildren(...nodes);
+    for (const key of Object.keys(app.dataset)) if (!(key in dataset)) delete app.dataset[key];
+    Object.assign(app.dataset, dataset);
+    for (const [el, top] of scrolls) el.scrollTop = top;
+    for (const hook of [...restoreHooks]) { try { hook(); } catch { /* a screen catches up on its own */ } }
+    hub.changed();
+    return true;
+  };
+}
+
+/** The words the swipe-up screen uses for any other name transaction (iOS SwipeUpLabels.transaction):
+ *  `done` is its finished title. */
+function transactionSwipeLabels(done) {
+  return {
+    release: "Release to Confirm", working: "Sending", workingDetail: "Broadcasting to the Kaspa BlockDAG...",
+    done, hint: "Let go past halfway to confirm.", recipientWord: "for", failedFallback: "The transaction didn't go out.",
+  };
+}
+
+/** What the swipe-up screen shows under the transaction (iOS KachatTxStageSteps): where it is -
+ *  sent, in a block, shown in KaPay - and, when the network didn't take it, what to do. */
+function txStageStepsHtml(stage) {
+  const inBlock = stage === TxStage.accepted || stage === TxStage.shown;
+  return `
+    <div class="kl-receipt-steps">
+      ${txStepHtml("Sent to the network", { done: true })}
+      ${txStepHtml("In a block", { done: inBlock, active: !inBlock && stage !== TxStage.dropped })}
+      ${txStepHtml("Updated in KaPay", { done: stage === TxStage.shown, active: stage === TxStage.accepted })}
+    </div>
+    ${stage === TxStage.dropped ? `<p class="muted small center-text kl-stage-text">${esc(txStageText(stage))}</p>` : ""}`;
+}
+
+/** A busy network (iOS KachatBusyNetworkNotice): Normal may wait. */
+const busyNoticeHtml = () => `
+  <div class="kl-busy-notice" role="status">
+    <span class="kl-orange">${SYMBOLS.warning}</span>
+    <span class="kl-busy-copy"><strong>The network is busy</strong><span class="muted tiny">At Normal this may wait a while. Fast or Priority pays a little more to get into a block sooner.</span></span>
+  </div>`;
+
+/** A review line whose value is plain text; a long one (an address) wraps anywhere. */
+const textRow = (title, value, bold = false) =>
+  reviewRowHtml(title, `<span class="kl-review-text ${bold ? "strong" : ""} ${String(value).length > 24 ? "kl-long" : ""}">${esc(value)}</span>`);
 
 // --- The transaction sheet (iOS KachatTxSheet) ---------------------------------------------
 
@@ -1134,138 +1212,158 @@ function balanceChange(plan, me) {
 const labeledRow = (title, value, bold = false) =>
   `<div class="form-row between"><span class="${bold ? "strong" : ""}">${esc(title)}</span><span class="kl-value ${String(value).length > 24 ? "kl-long" : ""} ${bold ? "strong" : ""}">${esc(value)}</span></div>`;
 
-/**
- * Every action's sheet: its inputs, what it costs (built against live UTXOs, nothing sent), one
- * Confirm - an extra warning for the destructive ones - then the password, then the transaction.
- * Shows the txid when it is sent.
- *   rows: [{ title, value }] or a function returning them (recomputed with the inputs)
- *   operation(): the Operation for the current inputs, or null
- *   inputsHtml / bindInputs(panel, changed): the sheet's own fields; `changed()` rebuilds
- */
-/** When the wallet's KAS is in more small coins than a name transaction can take, the slide first
- *  sends a self-send combining them (the engine's `combinesCoins`): said above the slide, as on
- *  iOS and Desktop (EXT-022). */
-function combineNoteHtml() {
+/** When the wallet's KAS is in more small coins than a name transaction can take, the swipe first
+ *  sends a self-send combining them (the engine's `combinesCoins`): said on the review, as on iOS
+ *  and Desktop (EXT-022). */
+function combineNoteHtml(text = "Your KAS is in many small coins. When you swipe, KaPay first combines them into one (a separate transaction with its own small fee), then sends this.") {
   return `<div class="kl-busy-notice kl-combine-note" role="note">
     <span class="accent">${SYMBOLS.arrows}</span>
-    <span class="kl-busy-copy"><span class="muted tiny">Your KAS is in many small coins. When you slide, KaPay first combines them into one (a separate transaction with its own small fee), then sends this.</span></span>
+    <span class="kl-busy-copy"><span class="muted tiny">${esc(text)}</span></span>
   </div>`;
 }
 
 /**
- * Every action's sheet, in the Send screens' style (iOS KachatTxSheet, e426432): its inputs, what it
- * costs (built against live UTXOs at the fee shown, nothing sent), the network fee with Normal /
- * Fast / Priority or a custom amount - a notice when the network is busy, which then starts it on
- * Fast unless you chose - the balance after, the warning of a destructive action in red, and slide
- * to confirm: the slide is the confirmation (iOS e67074c), then the password, then the transaction,
- * sent at the fee shown. Ends on the receipt, which follows it into a block.
+ * Every action's sheet, in the Send Kaspa flow's steps (iOS KachatTxSheet, KaPay 05db583): an entry
+ * step when the action takes one (`entry`: an offer's amount or a price on the keypad, a new owner
+ * on the recipient card, Renew's "How long?"), then the review - what it does (a card), the network
+ * fee with Normal / Fast / Priority or Edit for a fee of your own (the fee editor; a notice when the
+ * network is busy, which then starts it on Fast unless you chose), the balance after, the warning of
+ * a destructive action in red - and swipe up to confirm: the swipe is the confirmation (iOS
+ * e67074c), then the password, then the transaction, sent at the fee shown (built against live
+ * UTXOs, nothing sent before) and followed into a block on the swipe-up's own screen, or Failed
+ * with Try Again.
+ *   title: a string, or a function (Extend's title follows its years)
+ *   rows: [{ title, value }] or a function returning them (recomputed with the inputs)
+ *   operation(): the Operation for the current inputs, or null
+ *   entry: { question, html(), className, canContinue(), bind(step, { changed, next }) } - a step
+ *          of its own before the review; `changed()` rebuilds the plan, `next()` goes on
+ *   inputsHtml() / bindInputs(body, changed): inputs on the review itself (Extend's years)
+ *   swipeUp: { bar, labels, recipient, showsAmount = true }; none: "Swipe up to Confirm"
  */
-function openTxSheet({ title, confirmTitle, doneTitle = "Transaction sent", warning = null, footer = null, rows = [], operation, inputsHtml = "", bindInputs = null, onDone = () => {}, onFinished = null, back = null }) {
+function openTxSheet({
+  title, doneTitle = "Transaction sent", warning = null, footer = null, rows = [], operation, entry = null,
+  inputsHtml = "", bindInputs = null, swipeUp = null, onDone = () => {}, onFinished = null,
+}) {
   const state = {
     plan: null, planError: null, building: false, sending: false, txId: null, sendError: null, token: 0, balance: null,
-    // the slide first combines many small coins (EXT-022)
+    // the swipe first combines many small coins (EXT-022)
     combinesCoins: false,
     // the fee rate the plan was built at: the send uses exactly this (iOS 7e2b6cd, IOS-061)
     planFeerate: null,
-    // the fee: a speed, or a typed total (sompi); `touched` once you chose - a busy network no
-    // longer moves it for you
-    fee: { tier: FeeTier.normal, custom: null, touched: false, editing: false },
+    // the fee: a speed, or a typed total (sompi, the fee editor's); `touched` once you chose - a
+    // busy network no longer moves it for you
+    fee: { tier: FeeTier.normal, custom: null, touched: false },
     busy: false,
+    /** a spending address paying (an owner action on its name): its balance */
+    payerBalance: null,
   };
-  let handle = null;
+  const swipe = swipeUp
+    ? { showsAmount: true, ...swipeUp, labels: swipeUp.labels || transactionSwipeLabels(doneTitle) }
+    : { bar: "Swipe up to Confirm", labels: transactionSwipeLabels(doneTitle), recipient: null, showsAmount: false };
+  const restore = takeOverScreen();
+  let closed = false;
+  let unsubscribe = null;
+  let handle = null; // the step on screen: { el, step?, swipe? }
+  const titleNow = () => (typeof title === "function" ? title() : title);
   const rowsNow = () => (typeof rows === "function" ? rows() : rows);
   const footerNow = () => (typeof footer === "function" ? footer() : footer);
+  const inputsNow = () => (typeof inputsHtml === "function" ? inputsHtml() : inputsHtml);
   const feeChoice = () => (state.fee.custom != null ? FeeChoice.customTotal(state.fee.custom) : FeeChoice.tier(state.fee.tier));
+  const here = () => Boolean(!closed && handle?.el?.isConnected);
 
-  const planHtml = () => {
-    const p = state.plan;
-    const price = p && p.priceFee > 0n ? labeledRow("Price (to miners)", amount(p.priceFee)) : "";
-    const list = rowsNow().map((r) => labeledRow(r.title, r.value)).join("") + price;
-    const foot = state.planError ? `<span class="error-text">${esc(state.planError)}</span>` : footerNow() ? esc(footerNow()) : "";
-    // paid by a spending address (an owner action on its name, or the marketplace's Buy From,
-    // iOS eb9b027): which one, and what it changes there; else the chatting address's balance after
+  /** Who pays: a spending address holding the name (or the marketplace's), else the chatting address. */
+  const payerNow = () => {
     let payer = null;
     try { const op = operation(); payer = op ? runtimeActions()?.payerFor(op) : null; } catch { payer = null; }
-    const payerKey = payer?.kind === "spending" ? KachatNamesRegistry.keyOf(payer.address) : null;
-    const pill = !p ? ""
-      : payerKey ? `<div class="sk-pills"><span class="sk-pill">${esc(`From: ${payer.label || `Address #${payer.index}`}`)}</span><span class="sk-pill">${esc(`Balance change: ${signed(balanceChange(p, payerKey))}`)}</span></div>`
-        : myKey ? `<div class="sk-pills"><span class="sk-pill">${esc(balancePill(balanceChange(p, myKey)))}</span></div>` : "";
-    return `
-      ${list || foot ? `<div class="form-section">
-        ${list ? `<div class="form-card">${list}</div>` : ""}
-        ${foot ? `<div class="form-footer">${unitText(foot)}</div>` : ""}
-      </div>` : ""}
-      ${state.busy && !state.txId ? `
-        <div class="kl-busy-notice" role="status">
-          <span class="kl-orange">${SYMBOLS.warning}</span>
-          <span class="kl-busy-copy"><strong>The network is busy</strong><span class="muted tiny">At Normal this may wait a while. Fast or Priority pays a little more to get into a block sooner.</span></span>
-        </div>` : ""}
-      ${state.txId ? "" : feeControlsHtml({
-        tier: state.fee.tier, custom: state.fee.custom != null, editing: state.fee.editing,
-        customText: p ? plain(p.networkFee) : "", estimating: state.building, feeText: p ? amount(p.networkFee) : null, showsCoinControl: false,
-      })}
-      ${pill}
-      ${warning ? `<div class="kl-warning-card" role="note">${SYMBOLS.warning}<span>${esc(warning)}</span></div>` : ""}
-      ${state.combinesCoins && p && !state.txId ? combineNoteHtml() : ""}
-      ${state.txId
-        ? `<div class="form-section"><div class="form-card"><div class="form-row kl-sent">
-            <span class="kl-green kl-sent-title">${SYMBOLS.sent}<span>Sent</span></span>
-            <span class="mono tiny muted break">${esc(state.txId)}</span>
-          </div></div></div>`
-        : slideButtonHtml({ title: confirmTitle, busy: state.sending, enabled: Boolean(state.plan) && !state.building && !state.fee.editing })}
-      ${state.sendError ? `<p class="error-text small center-text">${esc(state.sendError)}</p>` : ""}`;
+    const key = payer?.kind === "spending" ? KachatNamesRegistry.keyOf(payer.address) : null;
+    return key ? { ...payer, key } : null;
+  };
+  /** What leaves the wallet: everything the transaction spends from the paying address less what
+   *  comes back to it. */
+  const spentSompi = () => {
+    if (!state.plan) return null;
+    const key = payerNow()?.key ?? myKey;
+    if (!key) return null;
+    const change = balanceChange(state.plan, key);
+    return change < 0n ? -change : 0n;
   };
 
-  // Names always spend from, and pay back to, the chatting address: what it holds once this is
-  // sent (iOS 8ecc38c).
-  const balancePill = (change) => (state.balance != null
-    ? `Balance after: ${amount(state.balance + change > 0n ? state.balance + change : 0n)}`
+  const reviewHtml = () => {
+    const p = state.plan;
+    const list = rowsNow().map((r) => textRow(r.title, r.value));
+    if (p && p.priceFee > 0n) list.push(textRow("Price (to miners)", amount(p.priceFee)));
+    const foot = state.planError ? `<p class="error-text small kl-review-note">${esc(state.planError)}</p>`
+      : footerNow() ? `<p class="muted small kl-review-note">${esc(footerNow())}</p>` : "";
+    // paid by a spending address (an owner action on its name, iOS eb9b027): which one, and its
+    // balance after; else the chatting address's balance after (iOS 8ecc38c)
+    const payer = payerNow();
+    let pills = "";
+    if (p && payer) {
+      const change = balanceChange(p, payer.key);
+      pills = `<div class="sk-pills"><span class="sk-pill">${esc(`From: ${payer.label || `Address #${payer.index}`}`)}</span><span class="sk-pill">${esc(balancePill(change, state.payerBalance))}</span></div>`;
+    } else if (p && myKey) {
+      pills = `<div class="sk-pills"><span class="sk-pill">${esc(balancePill(balanceChange(p, myKey), state.balance))}</span></div>`;
+    }
+    const inputs = entry ? "" : inputsNow();
+    return `
+      ${list.length ? reviewCardHtml(list) : ""}
+      ${inputs ? `<div class="kl-review-inputs">${inputs}</div>` : ""}
+      ${state.busy && !state.txId ? busyNoticeHtml() : ""}
+      ${feeControlsHtml({
+        tier: state.fee.tier, custom: state.fee.custom != null, estimating: state.building,
+        feeText: p ? amount(p.networkFee) : null, showsCoinControl: false, editPill: true,
+      })}
+      ${pills}
+      ${warning ? `<div class="kl-warning-card" role="note">${SYMBOLS.warning}<span>${esc(warning)}</span></div>` : ""}
+      ${foot}
+      ${state.combinesCoins && p && !state.txId ? combineNoteHtml() : ""}
+      ${state.sendError ? `<p class="error-text small kl-review-note">${esc(state.sendError)}</p>` : ""}`;
+  };
+
+  // What the paying address holds once this is sent; its change alone while that can't be read.
+  const balancePill = (change, balance) => (balance != null
+    ? `Balance after: ${amount(balance + change > 0n ? balance + change : 0n)}`
     : `Balance change: ${signed(change)}`);
 
+  const canSwipe = () => Boolean(state.plan) && !state.building && !state.txId && !state.sending;
+
+  /** Redraws what changed on the step showing (a plan, a fee, a balance arriving). */
   const paint = () => {
-    if (!handle?.isOpen()) return;
-    const host = handle.panel.querySelector("[data-plan]");
-    host.innerHTML = unitText(planHtml());
-    for (const b of host.querySelectorAll("[data-tier]")) b.onclick = () => chooseTier(b.dataset.tier);
-    const feeButton = host.querySelector("#fee");
-    if (feeButton) feeButton.onclick = () => { state.fee.editing = true; paint(); host.querySelector("#custom-fee")?.select(); };
-    const custom = host.querySelector("#custom-fee");
-    if (custom) {
-      custom.oninput = () => { const clean = sanitizeAmountInput(custom.value); if (clean !== custom.value) custom.value = clean; };
-      custom.onkeydown = (event) => { if (event.key === "Enter") commitCustomFee(); };
-      host.querySelector("#fee-ok").onclick = commitCustomFee;
-    }
-    bindSlideButton(host, confirm);
+    if (!here()) return;
+    if (handle.step) { handle.step.refresh(); return; }
+    if (!handle.swipe) return;
+    handle.swipe.setBody(reviewHtml());
+    bindReview();
+    handle.swipe.setEnabled(canSwipe());
+    const heading = handle.el.closest(".sk-swipe-host")?.querySelector(".ss-title");
+    if (heading) heading.textContent = titleNow();
   };
 
   /** A speed replaces a typed fee. */
   const chooseTier = (tier) => {
     if (state.sending || state.txId || !Object.values(FeeTier).includes(tier)) return;
-    state.fee = { tier, custom: null, touched: true, editing: false };
-    rebuild();
-  };
-  /** A typed total - more than zero, else the speed stays. */
-  const commitCustomFee = () => {
-    const value = parseSompi(handle.panel.querySelector("#custom-fee")?.value ?? "");
-    state.fee.editing = false;
-    state.fee.touched = true;
-    if (value != null && value > 0n) state.fee.custom = value;
+    state.fee = { tier, custom: null, touched: true };
     rebuild();
   };
 
+  /** Rebuilds the plan for the operation and the fee now, 300 ms after the last change. */
   const rebuild = () => {
     const token = ++state.token;
     state.plan = null;
     state.planFeerate = null;
     state.planError = null;
     state.combinesCoins = false;
-    const op = operation();
+    let op = null;
+    try { op = operation(); } catch (error) { state.planError = errorText(error); }
     state.building = Boolean(op);
     paint();
     if (!op) return;
     const fee = feeChoice();
+    // a spending address paying: its balance, for the pill
+    const payer = payerNow();
+    if (payer && state.payerBalance == null) addressBalanceSompi(payer.address).then((b) => { state.payerBalance = b; paint(); });
     setTimeout(async () => {
-      if (token !== state.token) return;
+      if (token !== state.token || closed) return;
       try {
         await prepareSigner(op);
         // built at the fee shown, as it will be sent (iOS e426432)
@@ -1283,57 +1381,164 @@ function openTxSheet({ title, confirmTitle, doneTitle = "Transaction sent", warn
     }, 300);
   };
 
+  const exit = () => {
+    if (closed) return;
+    closed = true;
+    try { unsubscribe?.(); } catch { /* gone */ }
+    restore();
+  };
+
+  // --- the steps ---------------------------------------------------------------------------
+  const flow = createStepFlow(["entry", "review", "fee"], (id, direction) => {
+    if (closed) return;
+    handle = null;
+    if (id === "entry") drawEntry(direction);
+    else if (id === "review") drawReview(direction);
+    else if (id === "fee") drawFee(direction);
+  });
+
+  const drawEntry = (direction) => {
+    const step = showStep({
+      screen: `${FLOW_SCREEN}-entry`,
+      title: titleNow(),
+      question: entry.question,
+      bodyHtml: entry.html(),
+      className: `kl-entry-step ${entry.className || ""}`,
+      onCancel: exit,
+      continueTitle: "Review",
+      canContinue: () => Boolean(entry.canContinue?.() ?? true),
+      onContinue: () => flow.go("review"),
+      direction,
+    });
+    handle = { el: step.el, step };
+    entry.bind?.(step, { changed: rebuild, next: () => { if (entry.canContinue?.() ?? true) flow.go("review"); } });
+  };
+
+  const drawReview = (direction) => {
+    const screen = showSwipeUp({
+      screen: FLOW_SCREEN,
+      title: titleNow(),
+      onBack: entry ? () => flow.go("entry") : null,
+      onCancel: exit,
+      barTitle: swipe.bar,
+      labels: swipe.labels,
+      bodyHtml: reviewHtml(),
+      enabled: canSwipe(),
+      direction,
+      getPreview: () => ({ amountSompi: swipe.showsAmount ? spentSompi() : null, recipient: swipe.recipient ?? null }),
+      getFailureMessage: () => state.sendError,
+      onAction: () => { confirm(); },
+      onDone: () => {
+        const id = state.txId;
+        exit();
+        try { onFinished?.(id); } catch { /* optional */ }
+      },
+    });
+    handle = { el: screen.body, swipe: screen };
+    bindReview();
+  };
+
+  const bindReview = () => {
+    const body = handle?.el;
+    if (!body) return;
+    for (const b of body.querySelectorAll("[data-tier]")) b.onclick = () => chooseTier(b.dataset.tier);
+    const edit = body.querySelector("#fee-edit");
+    // the fee's Edit (iOS openFeeEditor): the plan's fee on the keypad
+    if (edit) edit.onclick = () => { if (state.plan && !state.sending && !state.txId) flow.go("fee"); };
+    if (!entry) bindInputs?.(body, rebuild);
+  };
+
+  const drawFee = (direction) => {
+    const step = showFeeEditor({
+      screen: `${FLOW_SCREEN}-fee`,
+      feeSompi: state.plan?.networkFee ?? null,
+      direction,
+      onCancel: () => flow.go("review"),
+      onConfirm: (sompi) => {
+        if (!state.sending && !state.txId) {
+          state.fee = { tier: state.fee.tier, custom: sompi, touched: true };
+          rebuild();
+        }
+        flow.go("review");
+      },
+    });
+    handle = { el: step.el, step };
+  };
+
+  // --- sending -------------------------------------------------------------------------------
   async function confirm() {
-    if (!state.plan || state.sending || state.building) return;
-    // The slide is the confirmation: no second prompt (iOS e67074c) - the warning is the red card.
-    if (!(await confirmPassword())) return;
-    const op = operation();
-    if (!op) return;
+    const screen = handle?.swipe;
+    if (!screen) return;
+    // The swipe-up screen is already sending: busy at once, through the password (iOS authorize).
+    // The swipe is the confirmation: no second prompt, even for the destructive ones - their
+    // warning is the red card (iOS e67074c).
+    state.sendError = null;
+    screen.setBusy(true);
+    if (!state.plan || state.building || state.sending || state.txId) {
+      state.sendError = "Still working out the cost. Try again in a moment.";
+      screen.setBusy(false);
+      return;
+    }
+    const plan = state.plan;
+    // the password turned down: nothing was sent, the review comes back as it was
+    if (!(await confirmPassword())) { if (!closed) screen.returnToForm(); return; }
+    if (closed) return;
+    let op = null;
+    try { op = operation(); } catch { op = null; }
+    if (!op || state.plan !== plan) {
+      state.sendError = "The cost changed. Check it and swipe again.";
+      screen.setBusy(false);
+      paint();
+      return;
+    }
     const fee = feeChoice();
     state.sending = true;
-    state.sendError = null;
     paint();
     try {
       await prepareSigner(op);
       // never pays more than the price shown (iOS 4f5d95e), at the fee shown (iOS e426432)
-      const maxPrice = typeof state.plan?.priceFee === "bigint" ? state.plan.priceFee : null;
+      const maxPrice = typeof plan.priceFee === "bigint" ? plan.priceFee : null;
       // ...at exactly the rate it was built at, never a bigger network fee (iOS 7e2b6cd, IOS-061)
-      const maxNetworkFee = typeof state.plan?.networkFee === "bigint" ? state.plan.networkFee : null;
-      const id = await (await runtime()).actions.perform(op, { maxPrice, fee, exactFeerate: state.planFeerate ?? null, maxNetworkFee });
+      const maxNetworkFee = typeof plan.networkFee === "bigint" ? plan.networkFee : null;
+      const actions = (await runtime()).actions;
+      const id = await actions.perform(op, { maxPrice, fee, exactFeerate: state.planFeerate ?? null, maxNetworkFee });
       state.txId = id;
-      handle.setBar({ trailing: "Done" });
-      onDone(id);
-      showTxDone({ txId: id, title: doneTitle, onClose: () => { handle.close(); try { onFinished?.(id); } catch { /* optional */ } } });
+      state.sending = false;
+      try { onDone(id); } catch { /* the screen still shows it */ }
+      // The swipe-up screen shows the transaction and its progress until Done (iOS 5bab351).
+      const sent = { txid: id, amountSompi: swipe.showsAmount ? spentSompi() : null, recipient: swipe.recipient ?? null, explorerUrl: wallet.explorerTxUrl(id) };
+      const stage = () => actions.txStage?.(id) ?? TxStage.sent;
+      let last = stage();
+      screen.setSent(sent, txStageStepsHtml(last));
+      screen.setBusy(false);
+      unsubscribe = actions.subscribe?.(() => {
+        const st = stage();
+        if (st !== last && !closed) { last = st; screen.setSent(sent, txStageStepsHtml(st)); }
+      }) ?? null;
+      if (actions.txStage?.(id) == null) { try { actions.follow?.(id, null); } catch { /* shows as sent */ } }
+      paint();
+      return;
     } catch (error) {
       state.sendError = errorText(error);
-      // the price moved: build the plan again so the new price shows and is confirmed again
-      if ((error?.code === "priceChanged" || error?.code === "feeChanged") && handle?.isOpen()) {
-        state.sending = false;
+      state.sending = false;
+      // the price or the fee moved: the plan is built again, so Try Again shows the new cost to
+      // confirm (iOS priceChanged / feeChanged)
+      if (error?.code === "priceChanged" || error?.code === "feeChanged") {
         const shown = state.sendError;
         rebuild();
         state.sendError = shown;
-        paint();
-        return;
       }
     }
-    state.sending = false;
+    screen.setBusy(false);
     paint();
   }
 
-  // A step of a flow (Renew after "How long?", iOS 26bd5dc): Back, not Cancel, leads back.
-  let wentBack = false;
-  handle = openPanel({
-    title, leading: back ? "Back" : "Cancel", full: true,
-    body: `<div data-inputs class="kl-inputs">${inputsHtml}</div><div data-plan class="kl-send-sheet"></div>`,
-    onClose: () => { if (wentBack && !state.txId && !state.sending) back?.(); },
-  });
-  if (back) handle.panel.querySelector(".panel-bar > [data-close]")?.addEventListener("click", () => { wentBack = true; });
-  bindInputs?.(handle.panel, rebuild);
+  flow.go(entry ? "entry" : "review");
   rebuild();
   chattingBalance().then((balance) => { state.balance = balance; paint(); });
   // A busy network starts on Fast unless you already chose (iOS e426432).
   runtime().then((rt) => rt.actions.refreshFeeEstimate?.()).then((estimate) => {
-    if (!handle.isOpen() || state.txId) return;
+    if (closed || state.txId) return;
     state.busy = Boolean(estimate?.isBusy);
     if (state.busy && !state.fee.touched && state.fee.custom == null && state.fee.tier === FeeTier.normal) {
       state.fee.tier = FeeTier.fast;
@@ -1342,7 +1547,6 @@ function openTxSheet({ title, confirmTitle, doneTitle = "Transaction sent", warn
       paint();
     }
   }).catch(() => { /* the fee card still prices Normal */ });
-  return handle;
 }
 
 /** The chatting address's balance (sompi), read from a node; null when it can't be read. */
@@ -1364,6 +1568,7 @@ const segmented = (name, options, selected) => `
 
 function bindSegmented(panel, name, onPick) {
   const group = panel.querySelector(`[data-seg="${name}"]`);
+  if (!group) return;
   for (const b of group.querySelectorAll("[data-value]")) {
     b.onclick = () => {
       for (const other of group.querySelectorAll("[data-value]")) other.setAttribute("aria-checked", String(other === b));
@@ -1375,91 +1580,118 @@ function bindSegmented(panel, name, onPick) {
 /** "1 year" / "2 years", or on a short clock (testnet) "10 min" / "20 min". */
 const yearsText = (y) => periods(y);
 const maxYears = () => Number(registry()?.manifest?.params.maxYears ?? 2n);
-const amountField = (id) => `
-  <div class="form-card"><div class="form-row">
-    <input class="plain-input kl-amount" id="${id}" inputmode="decimal" placeholder="0" autocomplete="off" />
-    <span class="muted">${esc(KAS_UNIT)}</span>
-  </div></div>`;
+
+/** An entry step's amount on the keypad (iOS KaspaKeypadAmountEntry, no Max, KAS only): the big
+ *  number, a footnote under it ("Listed at 10 KAS"), the keys. */
+const keypadEntryOptions = (typed, footnote = "") => ({ typed, unit: KAS_UNIT, canSwitch: false, showsMax: false, footnote });
+
+/** Wires an entry step's keypad: `get()` / `set(text)` hold the typed amount; `onChange()` after a
+ *  key that changed it. */
+function bindKeypadEntry(step, { get, set, footnote = "", onChange }) {
+  bindKeypad(step.body, (key) => {
+    const current = get();
+    const next = applyKeypadKey(key, current, 8);
+    if (next === current) return false;
+    set(next);
+    paintKeypadAmountEntry(step.body, keypadEntryOptions(next, footnote));
+    onChange?.();
+    step.refresh();
+    return true;
+  });
+}
 
 // --- Claim (iOS KachatClaimSheet) ----------------------------------------------------------
 
+/**
+ * Claiming a name (iOS KachatClaimSheet, KaPay 05db583 / 5bab351), like a send: "For how long?" - a
+ * button per length with its price, a tap goes on - then a costs-only review (the price, the bond
+ * and the deposit, the commit, the fees, the total) with the fee and swipe up to claim: the BlockDAG
+ * while the commit goes out, then Claim Started with the registration's own progress, or Failed with
+ * Try Again. Closing it leaves the claim running (the claims button lists it).
+ *
+ * The fee is a speed only: iOS also takes a typed fee there, as a rate both transactions pay
+ * (customFeerate), which the shared engine's quote and startRegistration don't take - so the review
+ * has no Edit, as on KaChat-Desktop.
+ */
 function openClaimSheet(target) {
   // the fee speed of both the commit now and the registration later (iOS e426432); `touched` once
   // you chose - a busy network then no longer moves it to Fast
   // notOpen: registry v5 before its migration deadline - why claiming waits, and until when (iOS dd836cb)
-  const state = { years: 1n, quote: null, quoteError: null, notOpen: null, starting: false, startError: null, token: 0, feeTier: FeeTier.normal, quoteTier: null, feeTouched: false, busy: false };
-  const yearOptions = Array.from({ length: Math.max(1, maxYears()) }, (_, i) => [i + 1, yearsText(i + 1)]);
-  const step = (n, text) => `<div class="form-row kl-step"><span class="kl-step-n">${n}</span><span class="small">${esc(text)}</span></div>`;
-  let handle = null;
+  const state = {
+    years: 1n, quote: null, quoteError: null, notOpen: null, starting: false, startError: null, token: 0,
+    feeTier: FeeTier.normal, quoteTier: null, feeTouched: false, busy: false, progressId: null,
+  };
+  const count = Math.max(1, maxYears());
+  const restore = takeOverScreen();
+  let closed = false;
+  let unsubscribe = null;
+  let handle = null; // { el, swipe? }
+  const here = () => Boolean(!closed && handle?.el?.isConnected);
 
-  const costHtml = () => {
-    const q = state.quote;
-    let rows;
-    if (q) {
-      // the first period at the registration price, any further one at the renewal price (v4)
-      rows = `${labeledRow("Price (to miners)", amount(q.price))}
-        ${labeledRow("Bond (returned on release)", amount(q.bond))}
-        ${labeledRow("Registry deposit (returned on release)", amount(q.gapDeposit))}
-        ${labeledRow("Commit (returned at registration)", amount(q.commit))}
-        ${labeledRow("Network fees", amount(q.networkFee))}
-        ${labeledRow("Total", amount(q.total), true)}
-        <div class="form-row kl-locked-note accent">${SYMBOLS.lock || ""}<span class="small">${esc(`${amount(q.bond + q.gapDeposit)} stays locked with your name while you hold it (bond + registry deposit). You get it back when you release the name.`)}</span></div>`;
-    } else if (state.notOpen) {
-      rows = labeledRow("Total", "-");
-    } else if (state.quoteError) {
-      rows = `<div class="form-row error-text">${esc(state.quoteError)}</div>`;
-    } else {
-      rows = '<div class="form-row between"><span>Total</span><span class="spinner small-spin"></span></div>';
-    }
-    const foot = q && !q.affordable
-      ? `<span class="error-text">${esc("Not enough KAS on your chatting address for this name.")}</span>`
-      : "The price goes to the miners - KaChat takes nothing. The bond and the deposit come back when you release the name.";
-    return `
-      ${state.notOpen ? `
-        <div class="form-section">
-          <div class="form-card"><div class="form-row kl-notopen-row"><span class="kl-orange">${SYMBOLS.clock}</span><span class="small">${esc(state.notOpen)}</span></div></div>
-          <div class="form-footer">Every name from the old registry comes over with the same owner and expiry first.</div>
-        </div>` : ""}
-      ${state.busy ? `
-        <div class="kl-busy-notice" role="status">
-          <span class="kl-orange">${SYMBOLS.warning}</span>
-          <span class="kl-busy-copy"><strong>The network is busy</strong><span class="muted tiny">At Normal this may wait a while. Fast or Priority pays a little more to get into a block sooner.</span></span>
-        </div>` : ""}
-      <div class="form-section">
-        <div class="form-header">Network fee</div>
-        <div class="form-card"><div class="form-row">${segmented("fee", [[FeeTier.normal, "Normal"], [FeeTier.fast, "Fast"], [FeeTier.priority, "Priority"]], state.feeTier)}</div></div>
-        <div class="form-footer">Claiming sends two transactions: the commit now, the registration about a minute later. Both use this speed.</div>
-      </div>
-      <div class="form-section">
-        <div class="form-header">Cost</div>
-        <div class="form-card">${rows}</div>
-        <div class="form-footer">${unitText(foot)}</div>
-      </div>
-      ${q ? `<div class="sk-pills"><span class="sk-pill">Available: ${esc(amount(q.spendable))}</span></div>` : ""}
-      <div class="form-section">
-        <div class="form-header">How claiming works</div>
-        <div class="form-card">
-          ${step(1, "A hidden commit goes on chain first. Nobody can see which name it is for.")}
-          ${step(2, "About a minute later KaPay registers the name by itself. Keep it open; if you close it, it continues next time.")}
-          ${step(3, yearlyPeriods()
-            ? "The name is yours for the years you paid, at most 2 ahead. A 1-year name can be extended to 2 years; from 10 days before it expires you can renew it."
-            : `The name is yours for the time you paid, at most ${periods(maxYears())} ahead. From ${duration(params()?.renewWindowMs ?? 0n)} before it expires you can renew it.`)}
-        </div>
-      </div>
-      ${q?.combinesCoins && q.affordable ? combineNoteHtml() : ""}
-      ${slideButtonHtml({ title: `Claim ${target.name}.kachat`, busy: state.starting, enabled: Boolean(state.quote?.affordable) && state.quoteTier === state.feeTier })}
-      ${state.startError ? `<p class="error-text small center-text">${esc(state.startError)}</p>` : ""}`;
+  /** What registering for `y` periods costs (the first period at the registration price, any
+   *  further one at the renewal price), from the manifest. */
+  const priceFor = (y) => {
+    const p = params();
+    if (!p) return null;
+    try { return paramsRegisterCost(p, new TextEncoder().encode(target.name).length, BigInt(y)); } catch { return null; }
   };
 
+  const reviewHtml = () => {
+    const q = state.quote;
+    const rows = [textRow("Name", `${target.name}.kachat`), textRow("Length", yearsText(state.years))];
+    let cost;
+    if (q) {
+      cost = reviewCardHtml([
+        textRow("Price (to miners)", amount(q.price)),
+        textRow("Bond (returned on release)", amount(q.bond)),
+        textRow("Registry deposit (returned on release)", amount(q.gapDeposit)),
+        textRow("Commit (returned at registration)", amount(q.commit)),
+        textRow("Network fees", amount(q.networkFee)),
+        textRow("Total", amount(q.total), true),
+      ]);
+    } else if (state.quoteError) {
+      cost = `<div class="sk-card"><span class="error-text small">${esc(state.quoteError)}</span></div>`;
+    } else {
+      cost = reviewCardHtml([reviewRowHtml("Total", state.notOpen ? '<span class="muted">-</span>' : '<span class="spinner small-spin"></span>')]);
+    }
+    const feeText = q && state.quoteTier === state.feeTier ? esc(amount(q.networkFee))
+      : state.quoteError || state.notOpen ? '<span class="muted">—</span>' : '<span class="spinner small-spin"></span>';
+    return `
+      ${state.notOpen ? `
+        <div class="sk-card">
+          <div class="kl-notopen-row"><span class="kl-orange">${SYMBOLS.clock}</span><span class="small">${esc(state.notOpen)}</span></div>
+          <div class="muted tiny">Every name from the old registry comes over with the same owner and expiry first.</div>
+        </div>` : ""}
+      ${reviewCardHtml(rows)}
+      ${cost}
+      ${q ? `<div class="kl-locked-note accent">${SYMBOLS.lock}<span class="small">${esc(`${amount(q.bond + q.gapDeposit)} stays locked with your name while you hold it (bond + registry deposit). You get it back when you release the name.`)}</span></div>` : ""}
+      ${state.busy ? busyNoticeHtml() : ""}
+      <div class="sk-card">
+        <div class="sk-fee-row"><span>Network Fee</span><span class="sk-fee-value">${feeText}</span></div>
+        <div class="segmented wide" role="radiogroup" aria-label="Fee">
+          ${FEE_TIERS.map((t) => `<button type="button" role="radio" data-tier="${t.id}" aria-checked="${state.feeTier === t.id}">${t.label}</button>`).join("")}
+        </div>
+        <div class="muted tiny">Claiming sends two transactions: the commit now, the registration about a minute later. Both pay this fee rate.</div>
+      </div>
+      ${q ? `<div class="sk-pills"><span class="sk-pill">Available: ${esc(amount(q.spendable))}</span></div>` : ""}
+      ${q?.combinesCoins && q.affordable ? combineNoteHtml("Your KAS is in many small coins. KaPay combines them into one before registering, for a tiny extra network fee.") : ""}
+      ${q && !q.affordable ? `<p class="error-text small kl-review-note">${esc("Not enough KAS on your chatting address for this name.")}</p>` : ""}
+      ${state.startError ? `<p class="error-text small kl-review-note">${esc(state.startError)}</p>` : ""}`;
+  };
+
+  const canSwipe = () => Boolean(state.quote?.affordable) && state.quoteTier === state.feeTier && !state.starting && !state.progressId;
+
   const paint = () => {
-    if (!handle?.isOpen()) return;
-    const host = handle.panel.querySelector("[data-cost]");
-    host.innerHTML = unitText(costHtml());
-    bindSegmented(host, "fee", (value) => {
-      state.feeTouched = true;
-      if (value !== state.feeTier) { state.feeTier = value; requote(); }
-    });
-    bindSlideButton(host, start);
+    if (!here() || !handle.swipe) return;
+    handle.swipe.setBody(reviewHtml());
+    for (const b of handle.el.querySelectorAll("[data-tier]")) {
+      b.onclick = () => {
+        if (state.starting || state.progressId) return;
+        state.feeTouched = true;
+        if (b.dataset.tier !== state.feeTier) { state.feeTier = b.dataset.tier; requote(); }
+      };
+    }
+    handle.swipe.setEnabled(canSwipe());
   };
 
   const requote = async () => {
@@ -1469,9 +1701,10 @@ function openClaimSheet(target) {
     state.notOpen = null;
     state.quoteTier = null;
     const tier = state.feeTier;
+    const years = state.years;
     paint();
     try {
-      const q = await (await runtime()).actions.quote({ name: target.name, years: state.years, gap: target.gap, feeTier: tier });
+      const q = await (await runtime()).actions.quote({ name: target.name, years, gap: target.gap, feeTier: tier });
       if (token === state.token) { state.quote = q; state.quoteTier = tier; }
     } catch (error) {
       if (token === state.token) {
@@ -1483,48 +1716,146 @@ function openClaimSheet(target) {
     if (token === state.token) paint();
   };
 
+  const exit = () => {
+    if (closed) return;
+    closed = true;
+    try { unsubscribe?.(); } catch { /* gone */ }
+    restore();
+  };
+
+  /** Under Claim Started (iOS KachatClaimOutcome): the registration's own card, and why KaPay should
+   *  stay open until the name registers. */
+  const showOutcome = () => {
+    if (!here() || !state.progressId) return;
+    const r = (runtimeActions()?.pending ?? []).find((x) => x.id === state.progressId);
+    handle.swipe.setSucceeded(r ? `
+      <div class="kl-claim-outcome">
+        ${registrationCardHtml(r)}
+        ${needsDriving(r) ? `<p class="muted tiny center-text">${esc(KEEP_OPEN_NOTE)}</p>` : ""}
+      </div>` : "");
+    // the card's View, Done, Try Again and Cancel Commit
+    const outcome = handle.el.closest(".sk-swipe-host")?.querySelector(".sk-swipe-outcome");
+    if (outcome) bindRegistrationCards(outcome);
+  };
+
   async function start() {
-    // the price shown is the most the registration will ever pay (iOS 4f5d95e, IOS-054)
-    const q = state.quote;
-    const tier = state.quoteTier;
-    if (!q?.affordable || state.starting || BigInt(q.years) !== state.years || tier !== state.feeTier) return;
-    if (!(await confirmPassword())) return;
-    if (!handle?.isOpen() || state.quote !== q) return;
+    const screen = handle?.swipe;
+    if (!screen) return;
+    // The swipe let go: busy at once (its screen is already sending), then the password, then the
+    // commit (iOS 5bab351 authorizeAndStart).
     state.starting = true;
     state.startError = null;
-    paint();
-    try {
-      const commitTxId = await (await runtime()).actions.startRegistration({ name: target.name, years: BigInt(q.years), maxPrice: q.price, feeTier: tier });
-      // the claim becomes its progress half sheet; closing that leaves the claim running (iOS b219bb0)
-      const pending = runtimeActions()?.pending ?? [];
-      const started = pending.find((x) => x.commitTxId === commitTxId) ?? [...pending].reverse().find((x) => x.name === target.name && isOpen(x));
-      handle.close();
-      watchRegistrations();
-      if (started) openRegistrationProgress(started.id);
+    screen.setBusy(true);
+    const fail = (message) => {
+      state.startError = message;
+      state.starting = false;
+      screen.setBusy(false);
+      paint();
+    };
+    const priceChanged = "The price changed. Check it and swipe again.";
+    // the price shown is the most the registration will ever pay (iOS 4f5d95e, IOS-054), at the
+    // speed it was quoted at
+    const q = state.quote;
+    const tier = state.quoteTier;
+    if (!q?.affordable) { fail(q ? "Not enough KAS on your chatting address for this name." : priceChanged); return; }
+    if (BigInt(q.years) !== state.years || tier !== state.feeTier) { fail(priceChanged); return; }
+    if (!(await confirmPassword())) {
+      // nothing was sent: back to the review as it was
+      state.starting = false;
+      if (!closed) { screen.returnToForm(); paint(); }
       return;
+    }
+    if (closed) return;
+    if (state.quote !== q) { fail(priceChanged); return; }
+    let commitTxId;
+    try {
+      commitTxId = await (await runtime()).actions.startRegistration({ name: target.name, years: BigInt(q.years), maxPrice: q.price, feeTier: tier });
     } catch (error) {
-      state.startError = errorText(error);
+      fail(errorText(error));
+      return;
     }
     state.starting = false;
-    paint();
+    watchRegistrations();
+    const actions = runtimeActions();
+    const pending = actions?.pending ?? [];
+    const started = pending.find((x) => x.commitTxId === commitTxId) ?? [...pending].reverse().find((x) => x.name === target.name && isOpen(x));
+    // no registration to follow (it finished at once): nothing left to show
+    if (!started) { screen.setSucceeded(""); screen.setBusy(false); exit(); return; }
+    // The screen shows its progress; closing it leaves the claim running (iOS b219bb0).
+    state.progressId = started.id;
+    showOutcome();
+    screen.setBusy(false);
+    unsubscribe = actions?.subscribe?.(() => showOutcome()) ?? null;
   }
 
-  handle = openPanel({
-    title: "Claim Name", leading: "Cancel", full: true,
-    body: `
-      <div class="form-section">
-        <div class="form-card">
-          ${labeledRow("Name", `${target.name}.kachat`, true)}
-          <div class="form-row">${segmented("years", yearOptions, 1)}</div>
-        </div>
-      </div>
-      <div data-cost class="kl-send-sheet"></div>`,
+  const flow = createStepFlow(["years", "review"], (id, direction) => {
+    if (closed) return;
+    handle = null;
+    if (id === "years") drawYears(direction);
+    else drawReview(direction);
   });
-  bindSegmented(handle.panel, "years", (value) => { state.years = BigInt(value); requote(); });
+
+  /** "For how long?": one button per length with its price; a tap picks it and goes on. Only
+   *  Cancel at the bottom. */
+  const drawYears = (direction) => {
+    const step = showStep({
+      screen: `${FLOW_SCREEN}-claim`,
+      title: "Claim Name",
+      question: "For how long?",
+      className: "kl-claim-years-step",
+      bodyHtml: `
+        <p class="kl-claim-years-name">${esc(`${target.name}.kachat`)}</p>
+        <div class="kl-claim-lengths">
+          ${Array.from({ length: count }, (_, i) => {
+            const y = i + 1;
+            const price = priceFor(y);
+            return `<button type="button" class="kl-claim-length" data-claim-years="${y}">
+              <span class="kl-claim-length-label">${esc(yearsText(y))}</span>
+              ${price != null ? `<span class="kl-claim-length-price">${esc(amount(price))}</span>` : ""}
+              <span class="kl-claim-length-chevron">${ICONS.chevron}</span>
+            </button>`;
+          }).join("")}
+        </div>
+        <p class="muted small kl-claim-years-note">The price goes to the miners - KaChat takes nothing.</p>`,
+      onCancel: exit,
+      canContinue: false,
+      direction,
+    });
+    handle = { el: step.el };
+    for (const b of step.body.querySelectorAll("[data-claim-years]")) {
+      b.onclick = () => {
+        const y = BigInt(b.dataset.claimYears);
+        if (y !== state.years) { state.years = y; requote(); }
+        flow.go("review");
+      };
+    }
+  };
+
+  const drawReview = (direction) => {
+    const screen = showSwipeUp({
+      screen: FLOW_SCREEN,
+      title: "Claim Name",
+      onBack: () => { if (!state.starting && !state.progressId) flow.go("years"); },
+      onCancel: exit,
+      barTitle: "Swipe up to Claim",
+      labels: SWIPE_UP_LABELS.claim,
+      bodyHtml: reviewHtml(),
+      enabled: canSwipe(),
+      direction,
+      getPreview: () => ({ amountSompi: state.quote?.total ?? null, recipient: `${target.name}.kachat` }),
+      getFailureMessage: () => state.startError,
+      onAction: () => { start(); },
+      onDone: exit,
+    });
+    handle = { el: screen.body, swipe: screen };
+    paint();
+  };
+
+  flow.go("years");
   requote();
   // A busy network starts on Fast unless you already chose (iOS e426432).
   runtime().then((rt) => rt.actions.refreshFeeEstimate?.()).then((estimate) => {
-    if (!handle.isOpen()) return;
+    if (closed) return;
     state.busy = Boolean(estimate?.isBusy);
     if (state.busy && !state.feeTouched && state.feeTier === FeeTier.normal) { state.feeTier = FeeTier.fast; requote(); } else paint();
   }).catch(() => { /* priced at Normal */ });
@@ -1538,16 +1869,21 @@ function openBuySheet(info) {
   const soonMs = p ? paramsExpiresSoonMs(p) : 30n * 86_400_000n;
   const soon = info.expiresAt - soonMs < BigInt(Date.now());
   openTxSheet({
-    title: "Buy Name", confirmTitle: "Confirm Purchase", doneTitle: "Name bought",
+    title: "Buy Name", doneTitle: "Name bought",
     footer: soon ? `Less than ${duration(soonMs)} is left before this name expires. You'd have to renew it soon.` : "The payment reaches the seller and the name reaches you in the same transaction - both happen, or neither does.",
     rows: [{ title: "Name", value: info.display }, { title: "Price (to the seller)", value: amount(info.price) }, { title: "Expires", value: day(info.expiresAt) }],
     operation: () => Operation.buy(info),
+    // Swipe up to Buy (iOS 5bab351): the BlockDAG while it goes out, then Name Bought and its progress
+    swipeUp: { bar: "Swipe up to Buy", labels: SWIPE_UP_LABELS.buy, recipient: info.display },
   });
 }
 
-/** Make an Offer (iOS KachatLiveOfferSheet, v3): made to the name's current owner, up to 7 days. */
+/** Make an Offer (iOS KachatLiveOfferSheet, KaPay 05db583): "How much do you offer?" - when it
+ *  becomes refundable, and the amount on the keypad - then the review and swipe up to offer. Made
+ *  to the name's current owner (v3), up to 7 days. */
 function openOfferSheet(name, info) {
-  const state = { amount: null, days: 3, virtualDaa: null };
+  const state = { typed: "", days: 3, virtualDaa: null };
+  const offerAmount = () => positive(parseSompi(state.typed));
   const wantedAfter = () => state.virtualDaa + BigInt(state.days) * 86_400n * DAA_PER_SECOND;
   /** `days` from now, but never past the name's expiry (MAINNET.md C1, iOS 0312a3f, EXT-020):
    *  with yearly names that rarely matters, near the end of a period it does. */
@@ -1563,74 +1899,107 @@ function openOfferSheet(name, info) {
     const after = refundAfter();
     return after != null && after < wantedAfter();
   };
-  /** The "Refundable after" card says so when the name's expiry caps the refund time. */
-  const paintCapped = (panel) => {
-    const el = panel.querySelector("[data-offer-capped]");
+  const cappedDay = () => day(BigInt(info.expiresAt) - 600_000n);
+  const cappedText = () => (cappedByExpiry() ? `This name expires sooner, so your offer is refundable from ${cappedDay()}.` : "");
+  const footnote = info.isListed ? `Listed at ${amount(info.price)}` : "";
+  const belowListing = () => Boolean(info.isListed && offerAmount() != null && info.price < offerAmount());
+  const operation = () => (offerAmount() != null && refundAfter() != null ? Operation.offer(info, offerAmount(), refundAfter()) : null);
+  let entryStep = null;
+  const paintCapped = () => {
+    const el = entryStep?.body.querySelector("[data-offer-capped]");
     if (!el) return;
-    el.hidden = !cappedByExpiry();
-    el.textContent = cappedByExpiry() ? `This name expires sooner, so your offer is refundable from ${day(BigInt(info.expiresAt) - 600_000n)}.` : "";
+    el.textContent = cappedText();
+    el.hidden = !el.textContent;
   };
-  const belowListing = () => Boolean(info.isListed && state.amount != null && info.price < state.amount);
   openTxSheet({
-    title: "Make an Offer", confirmTitle: "Send Offer", doneTitle: "Offer sent",
-    footer: () => (belowListing() ? "This name is listed for less than your offer. Consider buying it instead." : null),
+    title: "Make an Offer", doneTitle: "Offer sent",
+    footer: () => (belowListing()
+      ? "This name is listed for less than your offer. Consider buying it instead."
+      : "Your KAS stays locked on chain until the owner accepts or declines, you withdraw the offer, or it expires - then anyone can send it back to you."),
     rows: () => [
       { title: "Name", value: `${name}.kachat` },
       ...(info.isListed ? [{ title: "Listed at", value: amount(info.price) }] : []),
       { title: "Expires", value: day(info.expiresAt) },
-      ...(state.amount != null ? [{ title: "Offer", value: amount(state.amount) }] : []),
+      ...(offerAmount() != null ? [{ title: "Offer", value: amount(offerAmount()) }] : []),
+      ...(refundAfter() != null ? [{ title: "Refundable after", value: cappedByExpiry() ? cappedDay() : state.days === 1 ? "1 day" : `${state.days} days` }] : []),
     ],
-    operation: () => (state.amount != null && refundAfter() != null ? Operation.offer(info, state.amount, refundAfter()) : null),
-    inputsHtml: `
-      <div class="form-section">
-        <div class="form-header">Your offer</div>
-        ${amountField("kl-offer-amount")}
-        <div class="form-footer">${unitText("Your KAS stays locked on chain until the owner accepts or declines, you withdraw the offer, or it expires - then anyone can send it back to you.")}</div>
-      </div>
-      <div class="form-section">
-        <div class="form-header">Refundable after</div>
-        <div class="form-card"><div class="form-row">${segmented("days", [[1, "1 Day"], [3, "3 Days"], [7, "7 Days"]], 3)}</div></div>
-        <div class="form-footer" data-offer-capped hidden></div>
-      </div>`,
-    bindInputs(panel, changed) {
-      const input = panel.querySelector("#kl-offer-amount");
-      input.oninput = () => { state.amount = positive(parseSompi(input.value)); changed(); };
-      bindSegmented(panel, "days", (value) => { state.days = Number(value); paintCapped(panel); changed(); });
-      runtime().then((rt) => rt.engine.currentVirtualDaaScore()).then((daa) => { state.virtualDaa = daa; paintCapped(panel); changed(); }).catch(() => {});
+    operation,
+    entry: {
+      question: "How much do you offer?",
+      className: "ss-keypad-step ss-amount-step kl-offer-entry",
+      html: () => `
+        <div class="kl-entry-picker">
+          <span class="kl-entry-label">Refundable after</span>
+          ${segmented("days", [[1, "1 Day"], [3, "3 Days"], [7, "7 Days"]], state.days)}
+          <p class="kl-entry-caption" data-offer-capped ${cappedText() ? "" : "hidden"}>${esc(cappedText())}</p>
+        </div>
+        ${keypadAmountEntryHtml(keypadEntryOptions(state.typed, footnote))}`,
+      canContinue: () => operation() != null,
+      bind(step, { changed }) {
+        entryStep = step;
+        bindSegmented(step.body, "days", (value) => { state.days = Number(value); paintCapped(); changed(); step.refresh(); });
+        bindKeypadEntry(step, { get: () => state.typed, set: (v) => { state.typed = v; }, footnote, onChange: changed });
+      },
     },
+    swipeUp: { bar: "Swipe up to Offer", labels: transactionSwipeLabels("Offer sent"), recipient: `${name}.kachat` },
   });
+  runtime().then((rt) => rt.engine.currentVirtualDaaScore()).then((daa) => {
+    state.virtualDaa = daa;
+    paintCapped();
+    entryStep?.refresh();
+  }).catch(() => { /* the offer stays unbuildable */ });
 }
 
-/** Renew (iOS 26bd5dc): "How long?" first - the periods as full-width choices with what each
- *  costs - then the review with the fee and Renew; its Back leads to "How long?" again. Each period
- *  costs the renewal price (registry v4). */
+/** checkmark.circle.fill / circle, for Renew's radio rows. */
+const RADIO_ON = '<svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9.6" fill="currentColor"/><path d="m8 12.3 2.7 2.7 5.3-5.6" fill="none" stroke="var(--kaspa)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const RADIO_OFF = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="9.2"/></svg>';
+
+/** Renew (iOS KachatRenewSheet, KaPay 05db583): "How long?" first - the periods as full-width radio
+ *  rows with what each costs, nothing picked until one is clicked - then the review with the fee and
+ *  swipe up to renew; its Back leads to "How long?" again. Each period costs the renewal price
+ *  (registry v4). */
 function openRenewSheet(info) {
   const perYear = renewPrice(info.name) ?? 0n;
-  showSheet({
-    title: "How long?",
-    subtitle: "A renewal starts the next period at the current expiry, not from today.",
-    rows: Array.from({ length: Math.max(1, maxYears()) }, (_, i) => ({
-      label: yearsText(i + 1), subtitle: amount(perYear * BigInt(i + 1)), icon: SYMBOLS.renew,
-      onClick: () => openRenewReview(info, BigInt(i + 1)),
-    })),
-    cancelSubtitle: "Keep the name as it is.",
-  });
-}
-
-/** Renew, step 2: what the chosen period costs, and Renew. */
-function openRenewReview(info, years) {
-  const state = { years };
-  const perYear = renewPrice(info.name) ?? 0n;
+  const count = Math.max(1, maxYears());
+  const state = { years: null };
+  const choicesHtml = () => Array.from({ length: count }, (_, i) => {
+    const y = i + 1;
+    const on = state.years === y;
+    return `<button type="button" class="kl-renew-choice ${on ? "on" : ""}" role="radio" aria-checked="${on}" data-renew-years="${y}">
+      ${on ? RADIO_ON : RADIO_OFF}
+      <span class="kl-renew-choice-label">${esc(yearsText(y))}</span>
+      <span class="kl-renew-choice-price">${esc(amount(perYear * BigInt(y)))}</span>
+    </button>`;
+  }).join("");
   openTxSheet({
-    back: () => openRenewSheet(info),
-    title: "Renew", confirmTitle: "Renew", doneTitle: "Renewed",
+    title: "Renew", doneTitle: "Renewed",
     footer: "A renewal starts the next period at the current expiry, not from today, so a name that expired a while ago gets less time. The price goes to the miners.",
     rows: () => [
       { title: "Name", value: info.display },
       { title: pricePerPeriodTitle(), value: amount(perYear) },
-      { title: "New period", value: `${day(info.expiresAt)} – ${day(info.expiresAt + state.years * periodMs())}` },
+      ...(state.years ? [{ title: "New period", value: `${day(info.expiresAt)} – ${day(info.expiresAt + BigInt(state.years) * periodMs())}` }] : []),
     ],
-    operation: () => Operation.renew(info, state.years),
+    operation: () => (state.years ? Operation.renew(info, BigInt(state.years)) : null),
+    entry: {
+      question: "How long?",
+      html: () => `
+        <p class="muted small kl-renew-sub">A renewal starts the next period at the current expiry, not from today.</p>
+        <div class="kl-renew-choices" role="radiogroup" aria-label="How long?" data-renew-choices>${choicesHtml()}</div>`,
+      canContinue: () => state.years != null,
+      bind(step, { changed }) {
+        const host = step.body.querySelector("[data-renew-choices]");
+        host.onclick = (event) => {
+          const pick = event.target.closest("[data-renew-years]");
+          if (!pick) return;
+          state.years = Number(pick.dataset.renewYears);
+          host.innerHTML = unitText(choicesHtml());
+          host.querySelector(`[data-renew-years="${state.years}"]`)?.focus({ preventScroll: true });
+          changed();
+          step.refresh();
+        };
+      },
+    },
+    swipeUp: { bar: "Swipe up to Renew", labels: transactionSwipeLabels("Renewed"), recipient: info.display },
   });
 }
 
@@ -1641,15 +2010,16 @@ function fillsPeriod(info, years, p) {
 }
 
 /** Registry v2 extend (iOS KachatExtendSheet): years added to the current paid period
- *  (periodStart kept), up to 2 years past its start - in practice a 1-year name extended to 2. */
+ *  (periodStart kept), up to 2 years past its start - in practice a 1-year name extended to 2.
+ *  The review, swipe up to extend (KaPay 05db583). */
 function openExtendSheet(info) {
   const p = params();
   const available = p ? (info.extendableYears(p) > 1n ? info.extendableYears(p) : 1n) : 1n;
   const perYear = renewPrice(info.name) ?? 0n;
   const state = { years: 1n };
   const title = () => (p && fillsPeriod(info, state.years, p) ? (yearlyPeriods() ? `Extend to ${p.maxYears} years` : `Extend to ${periods(p.maxYears)}`) : "Extend");
-  const handle = openTxSheet({
-    title: title(), confirmTitle: "Extend", doneTitle: "Extended",
+  openTxSheet({
+    title, doneTitle: "Extended",
     footer: yearlyPeriods()
       ? "Extending adds years to the current paid period, which holds at most 2 years. The price goes to the miners."
       : `Extending adds time to the current paid period, which holds at most ${periods(maxYears())}. The price goes to the miners.`,
@@ -1660,149 +2030,187 @@ function openExtendSheet(info) {
       { title: "New expiry", value: day(info.expiresAt + state.years * periodMs()) },
     ],
     operation: () => Operation.extend(info, state.years < available ? state.years : available),
-    inputsHtml: available > 1n
-      ? `<div class="form-section"><div class="form-card"><div class="form-row">${segmented("years", Array.from({ length: Number(available) }, (_, i) => [i + 1, yearsText(i + 1)]), 1)}</div></div></div>`
-      : "",
-    bindInputs(panel, changed) {
+    inputsHtml: () => (available > 1n
+      ? `<div class="sk-card">${segmented("years", Array.from({ length: Number(available) }, (_, i) => [i + 1, yearsText(i + 1)]), state.years)}</div>`
+      : ""),
+    bindInputs(body, changed) {
       if (available <= 1n) return;
-      bindSegmented(panel, "years", (value) => {
-        state.years = BigInt(value);
-        panel.querySelector(".panel-bar .nav-title").textContent = title();
-        changed();
-      });
+      bindSegmented(body, "years", (value) => { state.years = BigInt(value); changed(); });
     },
+    swipeUp: { bar: "Swipe up to Extend", labels: transactionSwipeLabels("Extended"), recipient: info.display },
   });
-  return handle;
 }
 
+/** List for Sale / Change Price (iOS KachatListSheet, KaPay 05db583): the price on the keypad, then
+ *  the review and swipe up to list. */
 function openListSheet(info) {
-  const state = { price: null };
+  const state = { typed: "" };
+  const price = () => positive(parseSompi(state.typed));
+  const footnote = info.isListed ? `Listed at ${amount(info.price)}` : "";
+  const done = info.isListed ? "Price changed" : "Listed for sale";
   openTxSheet({
-    title: info.isListed ? "Change Price" : "List for Sale", confirmTitle: info.isListed ? "Change Price" : "List", doneTitle: info.isListed ? "Price changed" : "Listed for sale",
+    title: info.isListed ? "Change Price" : "List for Sale", doneTitle: done,
     footer: "Anyone can buy it at this price: the payment reaches you and the name reaches them in one transaction. Delist any time.",
-    rows: info.isListed ? [{ title: "Listed at", value: amount(info.price) }] : [],
-    operation: () => (state.price != null ? Operation.list(info, state.price) : null),
-    inputsHtml: `<div class="form-section"><div class="form-header">Price</div>${amountField("kl-price")}</div>`,
-    bindInputs(panel, changed) {
-      const input = panel.querySelector("#kl-price");
-      input.oninput = () => { state.price = positive(parseSompi(input.value)); changed(); };
+    rows: () => [
+      { title: "Name", value: info.display },
+      ...(info.isListed ? [{ title: "Listed at", value: amount(info.price) }] : []),
+      ...(price() != null ? [{ title: info.isListed ? "New price" : "Price", value: amount(price()) }] : []),
+    ],
+    operation: () => (price() != null ? Operation.list(info, price()) : null),
+    entry: {
+      question: info.isListed ? "What's the new price?" : "What's your price?",
+      className: "ss-keypad-step ss-amount-step",
+      html: () => keypadAmountEntryHtml(keypadEntryOptions(state.typed, footnote)),
+      canContinue: () => price() != null,
+      bind(step, { changed }) {
+        bindKeypadEntry(step, { get: () => state.typed, set: (v) => { state.typed = v; }, footnote, onChange: changed });
+      },
+    },
+    swipeUp: {
+      bar: info.isListed ? "Swipe up to Change Price" : "Swipe up to List",
+      labels: transactionSwipeLabels(done), recipient: info.display, showsAmount: false,
     },
   });
 }
 
+/** Transfer (iOS KachatTransferSheet, KaPay 05db583): "Who gets the name?" on the Send screens'
+ *  recipient card - an address or a domain on any service, .kachat first (iOS 6ac48a7), the
+ *  resolved address shown with Other domains under it; Paste, Scan QR (a ?query is dropped) and
+ *  Contacts under the field, and the saved name when the address is in your contacts (iOS bfe7ef9,
+ *  8118f09) - then the review and swipe up to transfer. Only a Schnorr address can own a name. */
 function openTransferSheet(info) {
-  const state = { resolved: null, resolutions: [], othersOpen: false, error: null, resolving: false, token: 0 };
-  let statusEl = null;
-  let refreshPlan = () => {};
-  const showStatus = () => {
-    if (!statusEl) return;
-    statusEl.innerHTML = state.resolving
-      ? '<span class="spinner small-spin"></span>'
-      : state.resolved ? `${state.resolved.domain ? `<span class="tiny kl-green">${esc(state.resolved.domain)}</span>` : ""}<span class="mono tiny muted break">${esc(state.resolved.address)}</span>${savedNameHtml(state.resolved.address)}`
-      : state.error ? `<span class="tiny error-text">${esc(state.error)}</span>` : "";
-    // the other services' answers for a typed name (iOS OtherDomainsDropdown)
-    if (state.resolutions.length) {
-      statusEl.insertAdjacentHTML("beforeend", otherDomainsHtml({ resolutions: state.resolutions, selectedTld: state.resolved?.domain ? splitTypedName(state.resolved.domain).tld : null, open: state.othersOpen }));
-      bindOtherDomains(statusEl, {
-        onToggle: () => { state.othersOpen = !state.othersOpen; showStatus(); },
-        onPick: (tld) => {
-          const pick = state.resolutions.find((r) => r.tld === tld && r.address);
-          if (!pick) return;
-          state.error = null;
-          state.resolved = null;
-          setResolved(pick.address, pick.display);
-          state.othersOpen = false;
-          showStatus();
-          refreshPlan();
-        },
-      });
-    }
-  };
+  const state = { input: "", recipient: null, error: "", resolving: false, resolutions: [], othersOpen: false };
+  let entryStep = null;
+
   /** A resolved address must be a Schnorr P2PK one - only those can own a name. */
-  const setResolved = (address, domain = null) => {
-    const key = KachatNamesRegistry.keyOf(String(address).toLowerCase());
-    if (!key) { state.error = "That name's address can't own a .kachat name."; return; }
-    try { KachatNamesActions.validateKey(key, ""); } catch { state.error = "That name's address can't own a .kachat name."; return; }
-    state.resolved = { address: String(address).toLowerCase(), key, domain };
+  const ownerOf = (address) => {
+    const a = String(address || "").toLowerCase();
+    const key = a ? KachatNamesRegistry.keyOf(a) : null;
+    if (!key) return null;
+    try { KachatNamesActions.validateKey(key, ""); } catch { return null; }
+    return { address: a, key };
   };
-  const resolve = async (text, token, changed) => {
-    state.resolved = null;
-    state.resolutions = [];
-    state.error = null;
-    state.othersOpen = false;
-    const t = text.trim().toLowerCase();
-    if (!t) return;
+  const fail = (message, resolutions = []) => { const error = new Error(message); error.resolutions = resolutions; return error; };
+  const resolve = async (text) => {
+    const t = String(text || "").trim().toLowerCase();
     if (t.startsWith("kaspatest:") || t.startsWith("kaspa:")) {
       const key = KachatNamesRegistry.keyOf(t);
-      if (!key) { state.error = "Not a Schnorr address on this network."; return; }
-      try { KachatNamesActions.validateKey(key, ""); } catch { state.error = "That address's key is not valid."; return; }
-      state.resolved = { address: t, key };
-      return;
+      if (!key) throw fail("Not a Schnorr address on this network.");
+      try { KachatNamesActions.validateKey(key, ""); } catch { throw fail("That address's key is not valid."); }
+      return { address: t, key, domain: null, tld: null, resolutions: [] };
     }
     // Any domain, .kachat first, like every address field (iOS 6ac48a7).
-    if (!looksLikeName(t)) { state.error = "Enter an address or a domain."; return; }
-    state.resolving = true;
-    showStatus();
-    try {
-      const results = await resolveEverywhere(t);
-      if (token !== state.token) return;
-      state.resolutions = results;
-      const primary = primaryResolution(results, t);
-      // one shared message; what the name is elsewhere opens by itself (iOS 5a5122d)
-      if (!primary) { state.error = notFoundMessage(t, results); state.othersOpen = results.some((r) => r.address); }
-      else setResolved(primary.address, primary.display);
-    } catch {
-      state.error = "Couldn't look that name up.";
-    }
-    state.resolving = false;
+    if (!looksLikeName(t)) throw fail("Enter an address or a domain.");
+    let results;
+    try { results = await resolveEverywhere(t); } catch { throw fail("Couldn't look that name up."); }
+    // one shared message; what the name is elsewhere opens by itself (iOS 5a5122d)
+    const primary = primaryResolution(results, t);
+    if (!primary) throw fail(notFoundMessage(t, results), results);
+    const owner = ownerOf(primary.address);
+    if (!owner) throw fail("That name's address can't own a .kachat name.", results);
+    return { ...owner, domain: primary.display, tld: primary.tld, resolutions: results };
   };
-  openTxSheet({
-    title: "Transfer", confirmTitle: "Transfer", doneTitle: "Name transferred",
-    warning: "A transfer can't be undone. The new owner gets the name with its current expiry; your profile stays with your address.",
-    rows: () => [{ title: "Name", value: info.display }, ...(state.resolved ? [{ title: "To", value: state.resolved.address }] : [])],
-    operation: () => (state.resolved ? Operation.transfer(info, state.resolved.key) : null),
-    inputsHtml: `
-      <div class="form-section">
-        <div class="form-header">New owner</div>
-        <div class="form-card">
-          <div class="form-row kl-to-row">
-            <input class="plain-input" id="kl-to" placeholder="${IS_TESTNET ? "kaspatest" : "kaspa"}:... or domain" autocomplete="off" autocapitalize="off" spellcheck="false" />
-            <button class="icon plain accent" id="kl-to-paste" aria-label="Paste" title="Paste">${ICONS.clipboard}</button>
-            <button class="icon plain accent" id="kl-to-scan" aria-label="Scan QR" title="Scan QR">${ICONS.qr}</button>
-            ${addressBookButtonHtml()}
-          </div>
-          <div class="form-row kl-resolve" id="kl-to-status"></div>
-        </div>
-        <div class="form-footer">An address or a domain - .kachat names are looked up first, and it's resolved to the address shown.</div>
-      </div>`,
-    bindInputs(panel, changed) {
-      const input = panel.querySelector("#kl-to");
-      statusEl = panel.querySelector("#kl-to-status");
-      refreshPlan = changed;
-      let timer = null;
-      input.oninput = () => {
-        clearTimeout(timer);
-        const token = ++state.token;
-        timer = setTimeout(async () => {
-          await resolve(input.value, token, changed);
-          if (token !== state.token) return;
-          showStatus();
-          changed();
-        }, 400);
-      };
-      // The Send screens' recipient buttons beside the field (iOS bfe7ef9): Paste, Scan QR (a
-      // ?query is dropped) and the Address Book.
-      const fill = (text) => { input.value = String(text || "").trim().split("?")[0]; input.oninput(); };
-      panel.querySelector("#kl-to-paste").onclick = async () => {
-        try { fill(await navigator.clipboard.readText()); } catch { toast("Clipboard unavailable - paste with ⌘V instead."); }
-      };
-      panel.querySelector("#kl-to-scan").onclick = async () => {
-        const code = await scanQr({ title: "Scan QR Code", hint: "Point camera at a Kaspa address QR code" });
-        if (code) fill(code);
-      };
-      const book = panel.querySelector("#address-book");
-      if (book) book.onclick = () => openAddressBookPicker((entry) => fill(entry.address));
+  const lookup = recipientLookup({
+    read: () => state.input,
+    resolve,
+    onChange: (found) => {
+      state.recipient = found.recipient;
+      state.error = found.error;
+      state.resolutions = found.resolutions;
+      state.resolving = found.resolving;
+      // nothing for the ending typed, but another service has the name: shown straight away
+      state.othersOpen = Boolean(found.error) && found.resolutions.some((r) => r.address);
+      paintRecipient();
+      changedPlan();
     },
+  });
+  let changedPlan = () => {};
+  const recipientStatus = () => ({
+    resolving: state.resolving,
+    error: state.error,
+    resolvedAddress: state.recipient?.domain ? state.recipient.address : null,
+    resolvedName: state.recipient?.domain || null,
+    valid: Boolean(state.recipient && !state.recipient.domain),
+  });
+  const otherDomains = () => (state.resolutions.length
+    ? otherDomainsHtml({ resolutions: state.resolutions, selectedTld: state.recipient?.tld || splitTypedName(state.input).tld, open: state.othersOpen })
+    : "");
+  const bindExtras = () => {
+    if (!entryStep?.el.isConnected) return;
+    bindOtherDomains(entryStep.el, {
+      onToggle: () => { state.othersOpen = !state.othersOpen; paintRecipient(); },
+      onPick: (tld) => {
+        const pick = state.resolutions.find((r) => r.tld === tld && r.address);
+        if (!pick) return;
+        const owner = ownerOf(pick.address);
+        if (owner) {
+          state.recipient = { ...owner, domain: pick.display, tld: pick.tld, resolutions: state.resolutions };
+          state.error = "";
+        } else {
+          state.recipient = null;
+          state.error = "That name's address can't own a .kachat name.";
+        }
+        state.othersOpen = false;
+        paintRecipient();
+        changedPlan();
+      },
+    });
+  };
+  const paintRecipient = () => {
+    const status = entryStep?.el.isConnected ? entryStep.el.querySelector("#recipient-status") : null;
+    if (!status) return;
+    status.innerHTML = unitText(recipientStatusHtml({ input: state.input, status: recipientStatus(), extraHtml: otherDomains() }));
+    bindExtras();
+    entryStep.refresh();
+  };
+  /** A new owner from Paste, Scan QR or Contacts: into the field, looked up at once. */
+  const setText = (text) => {
+    state.input = String(text || "").trim();
+    const field = entryStep?.el.querySelector("#recipient");
+    if (field) field.value = state.input;
+    lookup.now();
+  };
+  const canContinue = () => Boolean(state.recipient) && !state.resolving;
+
+  openTxSheet({
+    title: "Transfer", doneTitle: "Name transferred",
+    warning: "A transfer can't be undone. The new owner gets the name with its current expiry; your profile stays with your address.",
+    rows: () => [
+      { title: "Name", value: info.display },
+      ...(state.recipient ? [{ title: "To", value: state.recipient.domain ? `${state.recipient.domain} · ${compactAddress(state.recipient.address)}` : state.recipient.address }] : []),
+    ],
+    operation: () => (state.recipient && !state.resolving ? Operation.transfer(info, state.recipient.key) : null),
+    entry: {
+      question: "Who gets the name?",
+      html: () => `
+        ${recipientCardHtml({ input: state.input, status: recipientStatus(), extraHtml: otherDomains() })}
+        <p class="muted tiny kl-entry-caption">An address or a domain - .kachat names are looked up first, and it's resolved to the address shown.</p>`,
+      canContinue,
+      bind(step, { changed, next }) {
+        entryStep = step;
+        changedPlan = changed;
+        const field = step.body.querySelector("#recipient");
+        field.oninput = () => { state.input = field.value; lookup.schedule(); };
+        field.onkeydown = (event) => {
+          if (event.key !== "Enter" || event.isComposing || !canContinue()) return;
+          event.preventDefault();
+          next();
+        };
+        step.body.querySelector("#paste").onclick = async () => {
+          try { setText((await navigator.clipboard.readText()).split("?")[0]); } catch { toast("Clipboard unavailable - paste with ⌘V instead."); }
+        };
+        step.body.querySelector("#scan").onclick = async () => {
+          const code = await scanQr({ title: "Scan QR Code", hint: "Point camera at a Kaspa address QR code" });
+          if (code && entryStep?.el.isConnected) setText(String(code).trim().split("?")[0]);
+        };
+        bindAddressBookButton(step.body, (address) => setText(address));
+        bindExtras();
+        // the cursor in the field on arrival (iOS focusOnAppear), after what's already there
+        field.focus();
+        try { field.setSelectionRange(field.value.length, field.value.length); } catch { /* fine */ }
+      },
+    },
+    swipeUp: { bar: "Swipe up to Transfer", labels: transactionSwipeLabels("Name transferred"), recipient: info.display, showsAmount: false },
   });
 }
 
@@ -2009,7 +2417,7 @@ export async function showLiveNameDetail({ info: initial, onBack, screen = "kach
   const delist = () => {
     const info = state.info;
     openTxSheet({
-      title: "Delist", confirmTitle: "Delist", doneTitle: "Delisted",
+      title: "Delist", doneTitle: "Delisted",
       rows: [{ title: "Name", value: info.display }, { title: "Listed at", value: amount(info.price) }],
       operation: () => Operation.list(info, 0n),
     });
@@ -2017,7 +2425,7 @@ export async function showLiveNameDetail({ info: initial, onBack, screen = "kach
   const release = () => {
     const info = state.info;
     openTxSheet({
-      title: "Release Name", confirmTitle: "Release", doneTitle: "Name released",
+      title: "Release Name", doneTitle: "Name released",
       warning: "Releasing gives the name up for good: it becomes free for anyone to register, and the time you paid for is lost. You get the bond and the registry deposit back.",
       rows: [{ title: "Name", value: info.display }],
       operation: () => Operation.release(info),
@@ -2079,7 +2487,11 @@ export async function showLiveNameDetail({ info: initial, onBack, screen = "kach
     if (here()) paint();
   };
 
-  const unsubscribe = registry()?.onChange(() => { if (here()) reload(); }) ?? (() => {});
+  const stopRegistry = registry()?.onChange(() => { if (here()) reload(); }) ?? (() => {});
+  // back from a name transaction's steps (they take the popup, KaPay 05db583): what it changed shows
+  const onRestored = () => { if (here()) reload(); };
+  restoreHooks.add(onRestored);
+  const unsubscribe = () => { stopRegistry(); restoreHooks.delete(onRestored); };
   paint();
   reload();
 }
@@ -2348,7 +2760,7 @@ export function liveDomainsTab({ address, repaint, forAddress = false }) {
               await actions.returnExpiredOffers(entry.offers).catch(() => null);
               await actions.withdrawDeclinedOffers(entry.offers).catch(() => null);
             }
-          } catch { entry.offers = []; }
+          } catch { /* a failed read keeps the offers shown (KaPay f4f5c0f) */ }
           // A lapse is just the clock running out - no registry change announces it - so the list
           // reloads when the next name lapses (iOS aa36d2a dropLapsed).
         }
