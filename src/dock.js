@@ -1,14 +1,16 @@
-// The dock - iOS MainTabView's tab bar, wallet-only: Storage | .kachat | + Actions | Portfolio |
-// Profile, the "+" in the middle and Profile on the right. The "+" isn't a tab: it opens the wallet's tiles (Send, Receive,
-// Request Payment, Fund Chatting Address) over whichever tab is showing.
+// The dock - KaPay iOS MainTabView's tab bar (AppTab.dock, iOS 64b5f53 / 723a1ee / 109721c /
+// 040f91a): Portfolio | Cold Storage | Wallet | .kachat | Settings, Wallet in the middle and the
+// tab the wallet opens on after unlocking (iOS 59593af). There is no "+" any more: the Wallet tab's
+// floating up/down arrow opens Send and Receive (iOS 6d4bf75 / 5bab351).
 // Selected items take the accent, the rest the system grey; labels are 10 pt under 26 pt
 // glyphs. Each tab keeps its own place: switching back returns to the screen you left there
 // (iOS keeps every tab's NavigationStack alive). Tapping the tab you are on does nothing.
 //
 // Screens say whether they sit in a tab (the dock shows) or are a sheet / full-screen flow
-// (it hides) by name: showsDock() lists the Profile tab's screens; any screen named "cold:...",
-// "portfolio:..." or "kachat:..." belongs to those tabs; the Address Book's "book:..." screens
-// are Profile's (a card there).
+// (it hides) by name: showsDock() lists the Wallet tab's screens; any screen named "cold:...",
+// "portfolio:..." or "kachat:..." belongs to those tabs, "settings" to Settings; the Contacts
+// screens ("book:...") are the Wallet tab's (a card there). The tab ids stay as they were
+// ("profile" is the Wallet tab).
 
 import { esc, toast, onRender } from "./ui.js";
 
@@ -17,40 +19,38 @@ const ICON = {
   cold: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true"><path d="M12 2.5l7.5 2.8v5.9c0 4.8-3.2 8.9-7.5 10.4-4.3-1.5-7.5-5.6-7.5-10.4V5.3L12 2.5z"/><rect x="9" y="11" width="6" height="4.8" rx="1"/><path d="M10.3 11V9.6a1.7 1.7 0 0 1 3.4 0V11"/></svg>',
   // chart.pie
   portfolio: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true"><path d="M11 3.1A9 9 0 1 0 20.9 13H11z"/><path d="M14 2.6V10h7.4A8.6 8.6 0 0 0 14 2.6z"/></svg>',
-  // at - the .kachat marketplace
-  kachat: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-4 8"/></svg>',
-  // plus.circle - the wallet's tiles
-  new: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9.5"/><path d="M12 7.5v9M7.5 12h9"/></svg>',
-  // person.crop.circle
-  profile: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="12" cy="12" r="9.5"/><circle cx="12" cy="9.5" r="3.3"/><path d="M5.6 18.6c1.4-2.3 3.7-3.5 6.4-3.5s5 1.2 6.4 3.5"/></svg>',
+  // iOS KachatTabIcon.domainsImage (574f3c5): a name tag - its point on the left, the hole it
+  // hangs by - with an "@" on it
+  kachat: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true"><path d="M1.3 12L7.3 4.2H19.6a3 3 0 0 1 3 3v9.6a3 3 0 0 1-3 3H7.3z"/><circle cx="6.2" cy="12" r="1.3"/><text x="15.1" y="12.4" fill="currentColor" stroke="none" font-size="11.5" font-weight="800" font-family="ui-rounded, \'SF Pro Rounded\', system-ui, sans-serif" text-anchor="middle" dominant-baseline="central">@</text></svg>',
+  // wallet.bifold, as KaPosts draws its Wallet tab (iOS adc1110)
+  profile: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 7.5A2.5 2.5 0 0 1 6 5h11.5A1.5 1.5 0 0 1 19 6.5V8"/><path d="M3.5 7.5v10A2.5 2.5 0 0 0 6 20h12.5a1.5 1.5 0 0 0 1.5-1.5v-9A1.5 1.5 0 0 0 18.5 8H6a2.5 2.5 0 0 1-2.5-2.5"/><circle cx="16.3" cy="14" r=".6" fill="currentColor"/></svg>',
+  // gearshape, as KaChat's Settings (iOS 59593af)
+  settings: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>',
 };
 
-// The "+" (Actions) in the middle, Profile on the very right (the user's order).
-const TABS = [["cold", "Storage"], ["kachat", ".kachat"], ["new", "Actions"], ["portfolio", "Portfolio"], ["profile", "Profile"]];
+// iOS AppTab.dock: Wallet in the middle (owner's call, 2026-10-24), Settings last (2026-10-27).
+const TABS = [["portfolio", "Portfolio"], ["cold", "Cold Storage"], ["profile", "Wallet"], ["kachat", ".kachat"], ["settings", "Settings"]];
 
 const roots = {};
-const actions = {};
-// Tabs showing a red dot (iOS 28d9d68: Profile, whenever the bell has something unread).
+// Tabs showing a red dot (iOS 28d9d68: Wallet, whenever the bell has something unread).
 const badges = new Set();
 const last = {};
 let current = "profile";
 let enabled = false;
 const profileScreens = new Set();
 
-/** The Profile tab's screens that keep the dock (the rest of its screens are sheets / flows). */
+/** The Wallet tab's screens that keep the dock (the rest of its screens are sheets / flows). */
 export function showsDock(...screens) { for (const s of screens) profileScreens.add(s); }
 
 /** Each tab's first screen. */
 export function registerTab(id, showRoot) { roots[id] = showRoot; }
 
-/** A dock item that does something instead of opening a tab (the "+"). */
-export function registerAction(id, run) { actions[id] = run; }
-
 /** Back to the screen the current tab is on (its remembered place, else its first screen) -
- *  for a flow opened over a tab, e.g. from the "+". */
+ *  for a flow opened over a tab, e.g. from the Wallet tab's Send and Receive. */
 export function returnToTab() { (last[current] || roots[current])?.(); }
 
-/** The dock appears once a wallet is open, and goes with it (lock, log out). */
+/** The dock appears once a wallet is open, and goes with it (lock, log out); it opens on Wallet
+ *  (iOS AppTab.home, 59593af). */
 export function enableDock(on) { enabled = on; if (!on) { for (const k of Object.keys(last)) delete last[k]; current = "profile"; } }
 
 export function currentTab() { return current; }
@@ -62,7 +62,6 @@ export function remember(thunk) { last[current] = thunk; }
 export function resetTab(id) { delete last[id]; }
 
 export function selectTab(id) {
-  if (actions[id]) { actions[id](); return; }
   if (id === current || !roots[id]) return;
   current = id;
   (last[id] || roots[id])();
@@ -73,6 +72,7 @@ function belongsToTab(screen) {
   if (/^portfolio:/.test(screen)) return "portfolio";
   if (/^book:/.test(screen)) return "profile";
   if (/^kachat:/.test(screen)) return "kachat";
+  if (screen === "settings") return "settings";
   if (profileScreens.has(screen)) return "profile";
   return null;
 }
@@ -98,7 +98,7 @@ onRender((screen) => {
   dockEl.hidden = !visible;
   if (!visible) return;
   dockEl.innerHTML = TABS.map(([id, label]) => `
-    <button class="dock-item" data-dock="${id}" ${actions[id] ? "" : `role="tab" aria-selected="${id === current}"`} aria-label="${esc(label)}">
+    <button class="dock-item" data-dock="${id}" role="tab" aria-selected="${id === current}" aria-label="${esc(label)}">
       ${ICON[id]}<span>${esc(label)}</span>${badges.has(id) ? '<span class="dock-dot"></span>' : ""}
     </button>`).join("");
   for (const button of dockEl.querySelectorAll("[data-dock]")) button.onclick = () => selectTab(button.dataset.dock);

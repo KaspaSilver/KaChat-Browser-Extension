@@ -1,5 +1,7 @@
-// The Address Book (iOS 00767a4 / cda0d99 AddressBookManager + AddressBookView): Kaspa addresses
-// you saved with a name you'll recognize, and a note. A card on Profile.
+// Contacts (iOS 00767a4 / cda0d99 AddressBookManager + AddressBookView; named the Address Book
+// until KaPay 8118f09): Kaspa addresses you saved with a name you'll recognize, and a note. A card
+// on the Wallet tab. Everything people read says Contacts; the code names and storage keys keep
+// "address book", so nothing saved moves.
 //
 // One book per wallet (its chatting address, so per network too): switching accounts never shows
 // who another wallet knows. It lives in this browser's extension storage only - no sync, no
@@ -137,14 +139,19 @@ async function remove(address) {
 
 // --- Pictures ---------------------------------------------------------------------------------
 
-const BOOK = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 4.5A2.5 2.5 0 0 1 7.5 2H19v17H7.5A2.5 2.5 0 0 0 5 21.5z"/><path d="M5 21.5A2.5 2.5 0 0 1 7.5 19H19v3H7.5"/></svg>';
-const BOOK_FILL = '<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7.5 2H19v17H7.5A2.5 2.5 0 0 0 5 21.5v-17A2.5 2.5 0 0 1 7.5 2zM7.5 20H19v2H7.5a1 1 0 0 1 0-2z"/></svg>';
+// person.text.rectangle(.fill), KaChat's contact card, wherever contacts appear (KaPay 8118f09;
+// was book.closed) - the same drawing as KaChat-Desktop's address-book.js.
+const CONTACT_CARD = '<rect x="2.5" y="4.5" width="19" height="15" rx="2.5"/><circle cx="8.5" cy="9.9" r="2.2"/><path d="M5.1 16.4c.5-1.9 1.8-2.9 3.4-2.9s2.9 1 3.4 2.9"/><path d="M14.5 10h4M14.5 14h4"/>';
+const contactCard = (size, width = 1.8) => `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="${width}" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${CONTACT_CARD}</svg>`;
+const BOOK = contactCard(20, 2);
+const BOOK_FILL = '<svg width="13" height="13" viewBox="0 0 24 24" aria-hidden="true"><path fill-rule="evenodd" fill="currentColor" d="M4.5 4h15A2.5 2.5 0 0 1 22 6.5v11a2.5 2.5 0 0 1-2.5 2.5h-15A2.5 2.5 0 0 1 2 17.5v-11A2.5 2.5 0 0 1 4.5 4ZM10.8 9.9a2.3 2.3 0 1 0-4.6 0a2.3 2.3 0 1 0 4.6 0ZM4.9 16.6h7.2c-.5-2.1-1.9-3.3-3.6-3.3s-3.1 1.2-3.6 3.3ZM14.4 9.1h4.2a.9.9 0 0 1 0 1.8h-4.2a.9.9 0 0 1 0-1.8ZM14.4 13.1h4.2a.9.9 0 0 1 0 1.8h-4.2a.9.9 0 0 1 0-1.8Z"/></svg>';
+/** The Contacts card's icon on the Wallet tab. */
+export const CONTACTS_ICON = contactCard(22);
 const PERSON = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="12" cy="8.5" r="4"/><path d="M4 20.5c1.3-3.8 4.4-5.8 8-5.8s6.7 2 8 5.8z"/></svg>';
 const SEND = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.5 2.5L10 14M21.5 2.5L14.5 21.5l-4.5-7.5-7.5-4.5z"/></svg>';
 const SHARE = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12M7.5 7.5L12 3l4.5 4.5"/><path d="M5 12v8h14v-8"/></svg>';
 const PENCIL = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16.5 3.5l4 4L8 20H4v-4z"/></svg>';
 const TRASH = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6.5 7l1 13h9l1-13"/></svg>';
-const IMPORT_EXPORT = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2.5v10"/><path d="M8.5 6L12 2.5 15.5 6"/><path d="M8 9H6a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-8a1 1 0 0 0-1-1h-2"/></svg>';
 const IMPORT_FILE = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12M7.5 10.5L12 15l4.5-4.5"/><path d="M5 15v5h14v-5"/></svg>';
 const PLUS = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>';
 const SCAN = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3"/><rect x="8" y="8" width="8" height="8" rx="1"/></svg>';
@@ -173,10 +180,10 @@ const shortAddress = (a) => (a.length > 22 ? `${a.slice(0, 14)}...${a.slice(-6)}
 const view = { query: "" };
 let detailAddress = null;
 
-/** The Address Book tab's first screen (iOS AddressBookView). */
 let backTo = null;
 
-/** The Address Book, a card on Profile. `onBack`: where Back goes (kept for the detail's Back). */
+/** Contacts (iOS AddressBookView), a card on the Wallet tab. `onBack`: where Back goes (kept for
+ *  the detail's Back). */
 export async function showAddressBook({ onBack } = {}) {
   if (onBack) backTo = onBack;
   await loading;
@@ -198,12 +205,9 @@ function rowsHtml(list) {
 
 function paintList() {
   const list = search(view.query);
+  // Add, Import and Export live behind one floating + (iOS 06b5e8a), not in the bar.
   render(`
-    <header class="navbar">
-      <button class="nav-back" id="back" aria-label="Back">${ICONS.back}<span>Back</span></button>
-      <div class="nav-title">Address Book</div>
-      <div class="nav-right"><button class="icon plain accent" id="ab-io" aria-label="Import or export" title="Import or export">${IMPORT_EXPORT}</button><button class="icon plain accent" id="ab-add" aria-label="Add Address" title="Add Address">${PLUS}</button></div>
-    </header>
+    ${navHeader({ title: "Contacts" })}
     <section class="ab-screen">
       ${entries.length ? `
         <label class="ab-search">
@@ -213,15 +217,16 @@ function paintList() {
         <div class="ab-list" id="ab-list">${list.length ? rowsHtml(list) : '<p class="muted small center-text">No matches.</p>'}</div>`
         : `
         <div class="ab-empty">
-          <span class="accent">${BOOK}</span>
-          <div class="strong">No saved addresses</div>
+          <span class="accent">${contactCard(44, 1.6)}</span>
+          <div class="strong">No contacts yet</div>
           <p class="muted small">Save the Kaspa addresses you use with a name you'll recognize. They stay in KaPay, for this wallet only.</p>
-          <button class="with-icon" id="ab-add-empty">${PLUS}<span>Add Address</span></button>
+          <button class="with-icon" id="ab-add-empty">${PLUS}<span>Add Contact</span></button>
         </div>`}
-    </section>`, "book:home");
+      <div class="fab-room"></div>
+    </section>
+    <button class="fab" id="ab-actions" aria-label="Add, import or export" title="Add, import or export">${PLUS}</button>`, "book:home");
   $("#back").onclick = () => (backTo || (() => dock.returnToTab()))();
-  $("#ab-add").onclick = () => openEditor({ onSaved: (e) => showDetail(e.address) });
-  $("#ab-io").onclick = showImportExport;
+  $("#ab-actions").onclick = showImportExport;
   const empty = $("#ab-add-empty");
   if (empty) empty.onclick = () => openEditor({ onSaved: (e) => showDetail(e.address) });
   const input = $("#ab-search");
@@ -240,7 +245,7 @@ function bindRows() {
   for (const row of app.querySelectorAll("[data-ab]")) row.onclick = () => showDetail(row.dataset.ab);
 }
 
-// Repaint whichever Address Book screen is showing when the book or a picture changes.
+// Repaint whichever Contacts screen is showing when the book or a picture changes.
 onAddressBookChange(() => {
   if (app.dataset.screen === "book:home") {
     const input = $("#ab-search");
@@ -259,7 +264,7 @@ function showDetail(address) {
   const entry = entryFor(address);
   detailAddress = normalize(address);
   if (!entry) {
-    render(`${navHeader({ title: "" })}<section class="ab-screen"><p class="muted center-text">Not in your Address Book</p></section>`, "book:detail");
+    render(`${navHeader({ title: "" })}<section class="ab-screen"><p class="muted center-text">Not in your contacts</p></section>`, "book:detail");
     $("#back").onclick = showAddressBook;
     return;
   }
@@ -279,7 +284,7 @@ function showDetail(address) {
         ${action("ab-share", SHARE, "Share Address")}
         ${action("ab-send", SEND, "Send KAS")}
         ${action("ab-edit", PENCIL, "Edit")}
-        ${action("ab-delete", TRASH, "Delete from Address Book", "danger-text")}
+        ${action("ab-delete", TRASH, "Delete Contact", "danger-text")}
       </div>
     </section>`, "book:detail");
   $("#back").onclick = showAddressBook;
@@ -297,7 +302,7 @@ function showDetail(address) {
   $("#ab-send").onclick = () => openSend?.(entry.address, () => showDetail(entry.address));
   $("#ab-edit").onclick = () => openEditor({ existing: entry, onSaved: (e) => showDetail(e.address), onRemoved: showAddressBook });
   $("#ab-delete").onclick = () => showSheet({
-    title: `Delete ${entryName(entry)} from your Address Book?`,
+    title: `Delete ${entryName(entry)} from your contacts?`,
     rows: [{ label: "Delete", icon: TRASH, danger: true, onClick: async () => { await remove(entry.address); showAddressBook(); } }],
   });
 }
@@ -309,7 +314,7 @@ export function setAddressBookSend(fn) { openSend = fn; }
 // --- Add / edit -------------------------------------------------------------------------------
 
 /**
- * Add to Address Book / Edit Address (iOS AddressBookEditor): the photo, the name, the address
+ * Add Contact / Edit Contact (iOS AddressBookEditor): the photo, the name, the address
  * (Paste, Scan QR) and a note. `address` prefills a new entry (Send's "save this address").
  */
 export function openEditor({ existing = null, address = "", name = "", onSaved = () => {}, onRemoved = () => {} } = {}) {
@@ -408,7 +413,7 @@ export function openEditor({ existing = null, address = "", name = "", onSaved =
         <button class="form-row km-form-button" id="ab-save">Save</button>
       </div></div>
       ${existing ? `<div class="form-section"><div class="form-card">
-        <button class="form-row km-form-button danger-text" id="ab-remove">Remove from Address Book</button>
+        <button class="form-row km-form-button danger-text" id="ab-remove">Delete Contact</button>
       </div></div>` : ""}`;
     const bind = (id, fn) => { const el = host.querySelector(`#${id}`); if (el) fn(el); };
     paintStatus();
@@ -460,7 +465,7 @@ export function openEditor({ existing = null, address = "", name = "", onSaved =
   };
 
   handle = openPanel({
-    title: existing ? "Edit Address" : "Add to Address Book",
+    title: existing ? "Edit Contact" : "Add Contact",
     leading: "Cancel", full: true, stack: true,
     body: '<div data-ab-form></div>',
   });
@@ -470,13 +475,13 @@ export function openEditor({ existing = null, address = "", name = "", onSaved =
   paint();
 }
 
-// --- The picker (Send's Address Book button) ---------------------------------------------------
+// --- The picker (the recipient card's Contacts button) -----------------------------------------
 
 /** The book as a sheet to pick from (iOS AddressBookPickerSheet): calls `onPick(entry)`. */
 export function openAddressBookPicker(onPick) {
   let query = "";
   const handle = openPanel({
-    title: "Address Book", leading: "Cancel", full: true, stack: true,
+    title: "Contacts", leading: "Cancel", full: true, stack: true,
     body: `
       <label class="ab-search">
         <span class="muted">${ICONS.search}</span>
@@ -489,7 +494,7 @@ export function openAddressBookPicker(onPick) {
     const list = search(query);
     host.innerHTML = entries.length
       ? (list.length ? rowsHtml(list) : '<p class="muted small center-text">No matches.</p>')
-      : '<div class="ab-empty"><div class="strong">No saved addresses</div><p class="muted small">Add addresses in the Address Book on Profile.</p></div>';
+      : `<div class="ab-empty"><span class="muted">${contactCard(36, 1.6)}</span><div class="strong">No contacts yet</div><p class="muted small">Add contacts in Wallet > Contacts.</p></div>`;
     for (const row of host.querySelectorAll("[data-ab]")) {
       row.onclick = () => {
         const entry = entryFor(row.dataset.ab);
@@ -504,12 +509,13 @@ export function openAddressBookPicker(onPick) {
   paint();
 }
 
-/** The recipient card's Address Book button (shown once the book has an entry). */
+/** The recipient card's Contacts button - always there, even with no contacts yet, when the
+ *  picker says so (KaPay 8118f09). */
 export function addressBookButtonHtml() {
-  return entries.length ? `<button class="icon plain accent" id="address-book" aria-label="Address Book" title="Address Book">${BOOK}</button>` : "";
+  return `<button class="icon plain accent" id="address-book" aria-label="Contacts" title="Contacts">${BOOK}</button>`;
 }
 
-/** The saved name of `address` under the recipient card (iOS: book.closed.fill + the name). */
+/** The saved name of `address` under the recipient card (iOS: person.text.rectangle.fill + the name). */
 export function savedNameHtml(address) {
   const entry = entryFor(address);
   return entry ? `<div class="sk-status accent ab-saved">${BOOK_FILL}<span>${esc(entryName(entry))}</span></div>` : "";
@@ -519,20 +525,23 @@ export function savedNameHtml(address) {
 //
 // The export is plain JSON that any KaChat (iOS, Android, Desktop) and any wallet can read:
 // { type: "kachat-address-book", version: 1, exportedAt, walletAddress, entries } with each
-// entry's photo (base64 JPEG) attached. Import adds every address not saved here (even one deleted
+// entry's photo (base64 JPEG) attached. The file is "KaPay Contacts <date>.json" (KaPay 8118f09);
+// the type inside is unchanged, so a "KaPay Address Book" or "KaChat Address Book" file from
+// before still imports. Import adds every address not saved here (even one deleted
 // since - importing is asking for it back) and updates one already saved only from a newer edit.
 
 const EXPORT_KIND = "kachat-address-book";
 const IMPORT_PARAM = "book";
 
-/** "Import or Export" (iOS's half sheet, without Nextcloud). */
+/** The floating +'s half sheet (iOS 06b5e8a / 8118f09 actionsSheet, without Nextcloud). */
 function showImportExport() {
   showSheet({
-    title: "Import or Export",
+    title: "Contacts",
     cancel: false,
     rows: [
-      { label: "Import File", subtitle: "Add addresses from an Address Book export.", icon: IMPORT_FILE, onClick: importFile },
-      { label: "Export File", subtitle: "Save this Address Book, with its photos, to a file.", icon: SHARE, onClick: exportFile },
+      { label: "Add Contact", subtitle: "Save a Kaspa address with a name you'll recognize.", icon: PLUS, onClick: () => openEditor({ onSaved: (e) => showDetail(e.address) }) },
+      { label: "Import File", subtitle: "Add contacts from a contacts export.", icon: IMPORT_FILE, onClick: importFile },
+      { label: "Export File", subtitle: "Save your contacts, with their photos, to a file.", icon: SHARE, onClick: exportFile },
     ],
   });
 }
@@ -546,7 +555,7 @@ const fromIso = (value) => {
 };
 
 function exportFile() {
-  if (!entries.length) { toast("Nothing to export yet. Add an address first."); return; }
+  if (!entries.length) { toast("Nothing to export yet. Add a contact first."); return; }
   const file = {
     type: EXPORT_KIND,
     version: 1,
@@ -566,7 +575,7 @@ function exportFile() {
     const url = URL.createObjectURL(new Blob([JSON.stringify(file, null, 2)], { type: "application/json" }));
     const link = document.createElement("a");
     link.href = url;
-    link.download = `KaPay Address Book ${stamp}.json`;
+    link.download = `KaPay Contacts ${stamp}.json`;
     document.body.appendChild(link);
     link.click();
     link.remove();
@@ -582,13 +591,13 @@ async function importText(text) {
   if (!walletKey) throw new Error("Open a wallet first.");
   let file = null;
   try { file = JSON.parse(text); } catch { file = null; }
-  if (!file || file.type !== EXPORT_KIND || !Array.isArray(file.entries)) throw new Error("That file isn't a KaChat Address Book export.");
+  if (!file || file.type !== EXPORT_KIND || !Array.isArray(file.entries)) throw new Error("That file isn't a contacts export.");
   // only the running network's addresses (iOS 218dc42, IOS-063): a mainnet book never takes testnet ones
   // and says so (EXT-017): how many were the other network's, or that every one was
   // A nameless entry is a real entry (note, photo) and merges like any other: a newer one with an
   // empty name clears an older entry's name (NEXTCLOUD_SYNC.md, iOS 160f0e6, XP-031)
   const addressed = file.entries.filter((e) => e && isValidKaspaAddress(normalize(e.address)));
-  if (!addressed.length) throw new Error("That Address Book export has no addresses.");
+  if (!addressed.length) throw new Error("That contacts export has no contacts.");
   const valid = addressed.filter((e) => !invalidReason(normalize(e.address)));
   if (!valid.length) {
     throw new Error(NETWORK === "testnet"
@@ -628,7 +637,7 @@ function importFile() {
   if (!isTab) {
     showAlert({
       title: "Import File",
-      message: "Picking a file closes this popup. Open KaPay in a tab to import the Address Book there.",
+      message: "Picking a file closes this popup. Open KaPay in a tab to import your contacts there.",
       confirmLabel: "Open in Tab",
       cancelLabel: "Cancel",
       onConfirm: async () => {
@@ -647,7 +656,7 @@ function importFile() {
     try {
       const { added, updated, skipped } = await importText(await file.text());
       const note = skipped ? ` Skipped ${skipped} from the other network.` : "";
-      toast((added + updated ? `Imported: ${added} added, ${updated} updated.` : skipped ? "Already up to date." : "Already up to date. Every address in the file is saved.") + note);
+      toast((added + updated ? `Imported: ${added} added, ${updated} updated.` : skipped ? "Already up to date." : "Already up to date. Every contact in the file is saved.") + note);
     } catch (error) {
       toast(error?.message || "Couldn't read that file.");
     }
@@ -655,8 +664,8 @@ function importFile() {
   input.click();
 }
 
-// The tab opened by "Open in Tab" lands on the Address Book with Import or Export up, once the
-// wallet is unlocked and the Profile tab has drawn.
+// The tab opened by "Open in Tab" lands on Contacts with its actions up, once the wallet is
+// unlocked and the Wallet tab has drawn.
 if (isTab && new URLSearchParams(location.search).get(IMPORT_PARAM) === "import") {
   let done = false;
   onRender((screen) => {

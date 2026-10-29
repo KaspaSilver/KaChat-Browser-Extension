@@ -119,14 +119,15 @@ export async function copySecret(text, message) {
 /**
  * An iOS half-sheet (ConfirmActionSheet / the account pencil sheet): a title, optional
  * subtitle, rows with a subtitle each, and Cancel. Tapping outside or Escape cancels.
- *   rows: [{ label, subtitle, icon, danger, onClick }]
+ *   rows: [{ label, subtitle, icon, danger, onClick }], or { header } for a section title over
+ *   the rows after it (the Portfolio +'s Add / Import & Export, iOS 59593af)
  */
 export function showSheet({ title, subtitle = "", headerHtml = "", rows = [], cancel = true, cancelSubtitle = "Leave everything as it is.", footerHtml = "" }) {
   document.querySelector(".sheet-backdrop")?.remove();
   const backdrop = document.createElement("div");
   backdrop.className = "sheet-backdrop";
   let currentRows = rows;
-  const rowHtml = (row, i) => `
+  const rowHtml = (row, i) => row.header ? `<div class="sheet-section-title">${esc(row.header)}</div>` : `
     <button class="sheet-row ${row.danger ? "danger" : ""} ${row.tint ? `tint-${row.tint}` : ""}" data-row="${i}" ${row.disabled ? "disabled" : ""}>
       ${row.icon ? `<span class="sheet-icon">${row.icon}</span>` : ""}
       <span class="sheet-text"><span class="sheet-label">${esc(row.label)}</span>${row.subtitle ? `<span class="muted small">${esc(row.subtitle)}</span>` : ""}</span>

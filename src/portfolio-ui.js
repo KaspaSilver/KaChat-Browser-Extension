@@ -9,6 +9,8 @@ const svg = (body, { size = 20, fill = "none", stroke = "currentColor", width = 
 
 export const SF = {
   gearFill: (size = 13) => `<svg width="${size}" height="${size}" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" fill-rule="evenodd" d="M10.3 1.6h3.4l.5 2.7c.7.2 1.4.5 2 .9l2.3-1.6 2.4 2.4-1.6 2.3c.4.6.7 1.3.9 2l2.7.5v3.4l-2.7.5c-.2.7-.5 1.4-.9 2l1.6 2.3-2.4 2.4-2.3-1.6c-.6.4-1.3.7-2 .9l-.5 2.7h-3.4l-.5-2.7c-.7-.2-1.4-.5-2-.9l-2.3 1.6-2.4-2.4 1.6-2.3c-.4-.6-.7-1.3-.9-2l-2.7-.5v-3.4l2.7-.5c.2-.7.5-1.4.9-2L3.5 6l2.4-2.4 2.3 1.6c.6-.4 1.3-.7 2-.9zM12 8.2a3.8 3.8 0 1 0 0 7.6 3.8 3.8 0 0 0 0-7.6z"/></svg>`,
+  // plus, semibold: the floating + (iOS 59593af)
+  plus: (size = 22) => svg('<path d="M12 5v14M5 12h14"/>', { size, width: 2.4 }),
   plusCircleFill: (size = 22) => `<svg width="${size}" height="${size}" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10.5" fill="currentColor"/><path d="M12 7v10M7 12h10" stroke="#000" stroke-width="2.2" stroke-linecap="round"/></svg>`,
   chevronRight: (size = 12) => svg('<path d="M9 5l7 7-7 7"/>', { size, width: 3 }),
   arrowUp: (size = 11) => svg('<path d="M12 20V4M5 11l7-7 7 7"/>', { size, width: 2.6 }),

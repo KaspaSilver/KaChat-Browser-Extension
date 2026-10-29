@@ -61,7 +61,9 @@ function paintHome() {
       ${realizedPLCardHtml()}
       ${feesCardHtml()}
       ${transactionsSectionHtml()}
-    </div>`, "portfolio:home");
+      <div class="fab-room"></div>
+    </div>
+    ${view.selecting ? "" : `<button class="fab" id="pf-actions" aria-label="Add, import or export" title="Add, import or export">${SF.plus(22)}</button>`}`, "portfolio:home");
   dock.bindTabTop();
   dock.remember(() => showPortfolio());
   // The toolbar's balance hides with every other amount (iOS shows "•••••• KAS" there).
@@ -203,9 +205,7 @@ function transactionsSectionHtml() {
       <button class="pf-icon-button pf-delete-selected ${view.selected.size ? "destructive" : ""}" id="pf-delete-selected" aria-label="Delete selected" ${view.selected.size ? "" : "disabled"}>${SF.trash(18)}${view.selected.size ? `<span>${view.selected.size}</span>` : ""}</button>
       <button class="pf-text-button" id="pf-select-done">Done</button>`
     : `
-      <button class="pf-text-button" id="pf-select" ${rows.length ? "" : "disabled"}>Select</button>
-      <button class="pf-icon-button accent" id="pf-add" aria-label="Add to this portfolio">${SF.plusCircleFill(22)}</button>
-      <button class="pf-icon-button accent" id="pf-io" aria-label="Import or export">${SF.importExport(18)}</button>`;
+      <button class="pf-text-button" id="pf-select" ${rows.length ? "" : "disabled"}>Select</button>`;
   return `
     <div class="pf-tx-head"><span class="pf-tx-title">Transactions</span><span class="pf-spacer"></span>${head}</div>
     <div class="pf-list ${view.selecting ? "selecting" : ""}">
@@ -287,8 +287,9 @@ function bindHome() {
     $("#pf-select-done").onclick = () => { view.selecting = false; view.selected.clear(); paintHome(); };
   } else {
     $("#pf-select").onclick = () => { view.selecting = true; view.selected.clear(); paintHome(); };
-    $("#pf-add").onclick = showAddChooser;
-    $("#pf-io").onclick = showImportExport;
+    // Select lives on the section header; adding, importing and exporting under the floating +
+    // (iOS 59593af).
+    $("#pf-actions").onclick = showActions;
   }
   for (const wrap of app.querySelectorAll("[data-tx]")) bindRow(wrap);
 }
@@ -559,29 +560,24 @@ function bindReorderDrag(list, onMove) {
 }
 
 // =================================================================================================
-// Add chooser, Import or Export, Move to Portfolio
+// The floating +'s sheet, Move to Portfolio
 // =================================================================================================
 
-async function showAddChooser() {
+/** The floating +'s half sheet (iOS 59593af actionsSheet): every way to add to this portfolio,
+ *  then importing and exporting it. A sheet rather than a menu so each row says what it does. */
+async function showActions() {
   const chatting = (await wallet.cachedAddresses(store.accountId).catch(() => null))?.main || null;
   showSheet({
-    title: "Add to Portfolio",
+    title: "Portfolio",
     cancel: false,
     rows: [
+      { header: "Add" },
       { label: "Add Transaction", subtitle: "Record a buy or a sell by hand.", icon: SF.pencil(18), onClick: () => showEditor(null) },
       { label: "Add Kaspa Address", subtitle: "Track an address's balance as part of this portfolio.", icon: SF.arrowLeftRight(18), onClick: () => showAddAddress() },
-      // One tap for the address KaChat itself spends from: its buys and sells, and every network
-      // fee it paid (messages, handshakes, payments) for the Fees Spent card.
+      // One tap for the address the wallet itself spends from: its buys and sells, and every
+      // network fee it paid for the Fees Spent card.
       ...(chatting ? [{ label: "Add Chatting Address", subtitle: "Your chatting address's buys and sells, and every network fee it has paid.", icon: SF.bubbles(18), onClick: () => showAddAddress(chatting) }] : []),
-    ],
-  });
-}
-
-function showImportExport() {
-  showSheet({
-    title: "Import or Export",
-    cancel: false,
-    rows: [
+      { header: "Import & Export" },
       { label: "Import CSV", subtitle: "Read transactions in from a file.", icon: SF.importFile(18), onClick: importCsv },
       { label: "Export CSV", subtitle: "Write this portfolio's transactions out to a file.", icon: SF.exportFile(18), onClick: exportCsv },
     ],
@@ -901,16 +897,22 @@ function importCsv() {
   input.onchange = async () => {
     const file = input.files?.[0];
     if (!file) return;
-    let count = 0;
-    try { count = await core.importCsv(await file.text()); } catch { count = 0; }
-    if (count > 0) pfToast(`Imported ${count} transaction${count === 1 ? "" : "s"}`);
-    else pfToast("Import failed. Check the CSV format", { error: true });
+    let result = { count: 0, portfolioNames: [] };
+    try { result = await core.importCsv(await file.text()); } catch { /* nothing imported */ }
+    pfToast(importMessage(result), { error: result.count === 0 });
   };
   input.click();
 }
 
-// The tab opened by "Open in Tab" lands on the Portfolio with Import or Export up, once the wallet
-// is unlocked and the Profile tab has drawn.
+/** The toast after a CSV import: how many rows, and into which portfolio (iOS 59593af). */
+function importMessage(result) {
+  if (!result.count) return "Import failed. Check the CSV format";
+  const rows = result.count === 1 ? "1 transaction" : `${result.count} transactions`;
+  return result.portfolioNames.length ? `Imported ${rows} into ${result.portfolioNames.join(", ")}` : `Imported ${rows}`;
+}
+
+// The tab opened by "Open in Tab" lands on the Portfolio with its actions up, once the wallet
+// is unlocked and the Wallet tab has drawn.
 if (isTab && new URLSearchParams(location.search).get(IMPORT_PARAM) === "import") {
   let done = false;
   onRender((screen) => {
@@ -919,7 +921,7 @@ if (isTab && new URLSearchParams(location.search).get(IMPORT_PARAM) === "import"
     setTimeout(async () => {
       dock.selectTab("portfolio");
       history.replaceState(null, "", location.pathname + "?view=tab");
-      setTimeout(showImportExport, 50);
+      setTimeout(showActions, 50);
     }, 0);
   });
 }
