@@ -126,7 +126,7 @@ function base() {
       isEnabled: () => KachatNamesService.isLaunched,
       getUtxosByAddresses: (addresses) => engine.utxosForRegistry(addresses),
       restBase: () => getEndpoint("kaspaApi"),
-      indexerBase: () => getEndpoint("kasiaIndexer"),
+      indexerBase: () => getEndpoint("kachatNamesIndexer"),
       // the names indexer is only used while it is at most about a minute behind the network;
       // otherwise the registry walks the chain itself (iOS 7aa6c6d)
       virtualDaaScore: () => engine.currentVirtualDaaScore(),

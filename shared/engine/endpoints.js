@@ -6,6 +6,9 @@
 //   kaspaApi     — Kaspa REST API (api.kaspa.org): balances, tx history, fees
 //   kasiaIndexer — Kasia message indexer (COMM message query)
 //   pushIndexer  — Kasia push/notification indexer
+//   kachatNamesIndexer — where .kachat names and profiles are read (iOS 7abc06e8 kachatNamesIndexerURL,
+//                  Connection Settings > Domains): its own field, apart from the message indexer, so
+//                  anyone can run the names indexer themselves
 //   knsApi       — KNS domain/profile API
 //   trustedNode  — wRPC node endpoint ("" = auto-discover via the resolver)
 import { IS_TESTNET } from "./network.js";
@@ -14,7 +17,8 @@ import { IS_TESTNET } from "./network.js";
 // to testnet shows testnet values, switching back brings the mainnet ones back untouched.
 const ENDPOINTS_KEY = IS_TESTNET ? "kachat-endpoints-testnet-v1" : "kachat-endpoints-v1";
 
-/** KaChat's own indexer on mainnet (iOS AppSettings.defaultIndexerURL). */
+/** KaChat's own indexer on mainnet (iOS AppSettings.defaultIndexerURL): chat, groups, KaPosts,
+ *  public chats, push, .kachat names and translation, all on one name. */
 export const DEFAULT_MAINNET_INDEXER = "https://indexer.kachat.app";
 const MAINNET_ENDPOINT_DEFAULTS = Object.freeze({
   kaspaApi: "https://api.kaspa.org",
@@ -27,6 +31,7 @@ const MAINNET_ENDPOINT_DEFAULTS = Object.freeze({
   kapostIndexer: DEFAULT_MAINNET_INDEXER,
   broadcastIndexer: DEFAULT_MAINNET_INDEXER,
   pushIndexer: DEFAULT_MAINNET_INDEXER,
+  kachatNamesIndexer: DEFAULT_MAINNET_INDEXER,
   knsApi: "https://api.knsdomains.org/mainnet/api/v1",
   translationService: DEFAULT_MAINNET_INDEXER,
   trustedNode: "",
@@ -35,8 +40,8 @@ const MAINNET_ENDPOINT_DEFAULTS = Object.freeze({
   nodeScan: "",
 });
 // Testnet has no KaChat indexer by default (owner, 2026-10-28: the old testnet host is gone from
-// the app until testnet has a kachat.app one): those fields are blank there unless someone points
-// one at their own.
+// the app until testnet has a kachat.app one): chat, push, KaPosts, public chats and .kachat names
+// are blank there - names are read from the chain - unless someone points a field at their own.
 export const DEFAULT_TESTNET_INDEXER = "";
 // What testnet starts with (iOS ConnectionProfile.defaults(.testnet)): the public testnet-10 REST
 // API, KNS's testnet registry and automatic node discovery. Custom URLs are kept.
@@ -46,6 +51,7 @@ const TESTNET_ENDPOINT_DEFAULTS = Object.freeze({
   kapostIndexer: DEFAULT_TESTNET_INDEXER,
   broadcastIndexer: DEFAULT_TESTNET_INDEXER,
   pushIndexer: DEFAULT_TESTNET_INDEXER,
+  kachatNamesIndexer: DEFAULT_TESTNET_INDEXER,
   knsApi: "https://api.knsdomains.org/tn10/api/v1",
   // Translating text has nothing to do with the chain: testnet uses the same service (iOS 2ca41aa).
   translationService: DEFAULT_MAINNET_INDEXER,
@@ -56,8 +62,7 @@ export const ENDPOINT_DEFAULTS = IS_TESTNET ? TESTNET_ENDPOINT_DEFAULTS : MAINNE
 /** The mainnet defaults, for hints and comparisons. */
 export const MAINNET_DEFAULTS = MAINNET_ENDPOINT_DEFAULTS;
 // The node "Default (Recommended)" connects to. iOS talks gRPC to toccata.kaspium.io; a browser
-// can only open wRPC over WebSocket, so the desktop's default is KaChat's own wRPC node (see
-// engine/rpc.js DEFAULT_NODE). Kept as the one place that name is spelled out for the UI.
+// can only open wRPC over WebSocket.
 // The hosted "Better" choice: Kasia's public mainnet node, the one the Kasia web app connects to
 // by default (VITE_DEFAULT_MAINNET_KASPA_NODE_URL in its .env.production), wRPC over TLS with
 // Borsh encoding like everything this client speaks. Replaces KaChat's own node here, which
@@ -88,6 +93,29 @@ let overrides = loadStored();
     delete overrides.kasiaIndexer;
     try { localStorage.setItem(ENDPOINTS_KEY, JSON.stringify(overrides)); } catch {}
   }
+})();
+
+// The .kachat names indexer got its own field (iOS 7abc06e8). Settings saved before it existed read
+// names from the message indexer, so a custom one is copied over once; neither old default host
+// serves names, so one of those goes back to the default.
+(function migrateNamesIndexer() {
+  const flag = `${ENDPOINTS_KEY}-names-indexer`;
+  let changed = false;
+  try {
+    if (!localStorage.getItem(flag)) {
+      if (overrides.kachatNamesIndexer == null && overrides.kasiaIndexer != null && String(overrides.kasiaIndexer).trim()) {
+        overrides.kachatNamesIndexer = String(overrides.kasiaIndexer).trim();
+        changed = true;
+      }
+      localStorage.setItem(flag, "1");
+    }
+  } catch { /* storage blocked: nothing to carry over */ }
+  const names = overrides.kachatNamesIndexer;
+  if (names != null && RETIRED_INDEXER_URLS.includes(String(names).trim().replace(/\/+$/, ""))) {
+    delete overrides.kachatNamesIndexer;
+    changed = true;
+  }
+  if (changed) { try { localStorage.setItem(ENDPOINTS_KEY, JSON.stringify(overrides)); } catch {} }
 })();
 
 // Someone who picked "Kasia Public Node" goes back to Automatic Node Scan: that node is retired.

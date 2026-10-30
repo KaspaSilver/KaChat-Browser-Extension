@@ -337,7 +337,7 @@ async function showConnectionSettings({ onBack }) {
     book: Array.isArray(book) ? book : [],
     restApi: getEndpointOverride("kaspaApi"),
     // the .kachat names indexer (iOS 59593af, Connection > Domains); blank = the network's default
-    kachatIndexer: getEndpointOverride("kasiaIndexer"),
+    kachatIndexer: getEndpointOverride("kachatNamesIndexer"),
     bookLabel: "",
     bookAddress: "",
     bookError: "",
@@ -419,14 +419,14 @@ async function showConnectionSettings({ onBack }) {
       if (connectionTab === "domains" && app.querySelector("#kachat-source")) $("#kachat-source").innerHTML = kachatSourceHtml();
     });
   };
-  const indexerDefault = ENDPOINT_DEFAULTS.kasiaIndexer;
+  const indexerDefault = ENDPOINT_DEFAULTS.kachatNamesIndexer;
 
   const domainsTab = () => `
     <div class="form-section">
       <div class="form-header">.kachat Names</div>
       <div class="form-card">
         <div class="form-row stack-tight"><span class="muted small">.kachat Indexer URL</span>
-          <input id="kachat-indexer" class="plain-input mono" value="${esc(draft.kachatIndexer)}" placeholder="${esc(indexerDefault || MAINNET_DEFAULTS.kasiaIndexer)}" autocomplete="off" spellcheck="false" />
+          <input id="kachat-indexer" class="plain-input mono" value="${esc(draft.kachatIndexer)}" placeholder="${esc(indexerDefault || MAINNET_DEFAULTS.kachatNamesIndexer)}" autocomplete="off" spellcheck="false" />
           <span class="error-text small" id="kachat-indexer-error">${/^http:\/\//i.test(draft.kachatIndexer.trim()) ? HTTPS_REQUIRED : ""}</span>
         </div>
         <div class="form-row between"><span>Reading names from</span><span id="kachat-source">${kachatSourceHtml()}</span></div>
@@ -550,14 +550,14 @@ async function showConnectionSettings({ onBack }) {
       // anything else is awaited - one request for both.
       const origins = [];
       if (parsed.value !== defaultRest && parsed.value !== ENDPOINT_DEFAULTS.kaspaApi) origins.push(`${new URL(parsed.value).origin}/*`);
-      if (indexerParsed.value && indexerParsed.value !== MAINNET_DEFAULTS.kasiaIndexer) origins.push(`${new URL(indexerParsed.value).origin}/*`);
+      if (indexerParsed.value && indexerParsed.value !== MAINNET_DEFAULTS.kachatNamesIndexer) origins.push(`${new URL(indexerParsed.value).origin}/*`);
       if (origins.length && ext?.permissions?.request) {
         let granted = false;
         try { granted = await ext.permissions.request({ origins }); } catch { granted = false; }
         if (!granted) { draft.error = "KaPay needs your permission to reach that address."; paint(); return; }
       }
-      const indexerChanged = (indexerParsed.value || ENDPOINT_DEFAULTS.kasiaIndexer) !== getEndpoint("kasiaIndexer");
-      setEndpoint("kasiaIndexer", indexerParsed.value);
+      const indexerChanged = (indexerParsed.value || ENDPOINT_DEFAULTS.kachatNamesIndexer) !== getEndpoint("kachatNamesIndexer");
+      setEndpoint("kachatNamesIndexer", indexerParsed.value);
       // the registry picks its source again with the new indexer
       if (indexerChanged) kachatRegistry()?.refresh().catch(() => {});
       setEndpoint("kaspaApi", parsed.value);
