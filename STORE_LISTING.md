@@ -8,7 +8,7 @@ both.
 |---|---|
 | Upload | `packages/kapay-extension-<version>-chromium.zip`, built with `npm run package` (it also writes Firefox files; ignore them) |
 | Developer dashboard | https://chrome.google.com/webstore/devconsole |
-| Privacy policy URL | **https://kachat.app/wallet-privacy.html** - must be live before submitting. Its source is `web_site/wallet-privacy.html` in the KaChat iPhone repo; it still says "KaChat Wallet" and needs the KaPay name |
+| Privacy policy URL | **https://home.kachat.app/privacy/** - Cyber Ventures LLC's one policy for every KaChat app; it names the KaPay Extension |
 | Every update | raise `version` in `public/manifest.json` and `package.json` together; the store refuses a version it has already seen |
 
 ## Store listing tab
