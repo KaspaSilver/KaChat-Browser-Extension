@@ -10,6 +10,7 @@ both.
 | Developer dashboard | https://chrome.google.com/webstore/devconsole |
 | Privacy policy URL | **https://home.kachat.app/privacy/** - Cyber Ventures LLC's one policy for every KaChat app; it names the KaPay Extension |
 | Every update | raise `version` in `public/manifest.json` and `package.json` together; the store refuses a version it has already seen |
+| Swap | works once the store's item ID (dashboard, after the first upload) is in `KAPAY_EXTENSION_IDS` on the desktop.kachat.app Pages project, followed by a redeploy (KaChat-Desktop Build 261, docs/CLOUDFLARE_PAGES.md). Until then Swap says "not available right now" |
 
 ## Store listing tab
 

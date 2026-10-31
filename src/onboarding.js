@@ -12,7 +12,7 @@
 
 import * as vault from "./vault.js";
 import * as wallet from "./wallet.js";
-import { getLocal, setLocal, removeLocal } from "./browser.js";
+import { ext, getLocal, setLocal, removeLocal } from "./browser.js";
 import {
   app, esc, render, $, toast, noteActivity, resetActivityPing, ICONS, navHeader, showSheet,
 } from "./ui.js";
@@ -73,6 +73,8 @@ function wordmarkHtml(tagline = "") {
 }
 
 export async function showWelcome() {
+  // The same version Settings > About shows (the manifest's).
+  const appVersion = ext?.runtime?.getManifest?.().version || "";
   // Saved accounts are listed only while the vault is open - names never sit unencrypted.
   let saved = [];
   if ((await vault.hasVault()) && (await vault.isUnlocked())) {
@@ -109,6 +111,7 @@ export async function showWelcome() {
         <button id="create">${ICONS.plusCircle}<span>Create New Account</span></button>
         <button id="import" class="secondary">${ICONS.download}<span>Import Existing Account</span></button>
       </div>
+      ${appVersion ? `<p class="onboard-version">Version ${esc(appVersion)}</p>` : ""}
     </section>`, "accounts");
   $("#app-settings").onclick = () => goSettings({ appSettings: true, onBack: showWelcome });
   $("#create").onclick = () => { createDraft = null; showCreate(); };

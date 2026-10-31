@@ -9,8 +9,9 @@
 //
 // The ChangeNOW API key never ships in the extension: every call goes to KaChat-Desktop's hosted
 // relay (desktop.kachat.app/nc-proxy/), which adds the server's key to the four swap calls only
-// (owner, 2026-10-23). The relay has to allow this extension's origin; until it does, or when the
-// server has no key, Swap says "Swap is not available right now".
+// (owner, 2026-10-23). Each call names this extension's ID (x-kachat-extension); the relay takes it
+// only from an ID on its KAPAY_EXTENSION_IDS list (KaChat-Desktop Build 261). Until this ID is
+// listed, or when the server has no key, Swap says "Swap is not available right now".
 
 import { esc, toast, showSheet, showAlert, ICONS } from "./ui.js";
 import { openPanel } from "./kachat-ui.js";
@@ -40,7 +41,8 @@ const TRASH = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" strok
 const isRelayRefusal = (error) => error?.unavailable || (error?.status === 403 && /only relayed/i.test(String(error?.message || error?.body || "")));
 
 const client = createChangeNowClient({
-  fetchImpl: (url, init) => fetch(url, init),
+  // The relay's tools/relay-rules.mjs EXTENSION_ID_HEADER.
+  fetchImpl: (url, init) => fetch(url, { ...init, headers: { ...init?.headers, "x-kachat-extension": ext.runtime.id } }),
   urlFor: (url) => {
     const parsed = new URL(url);
     return `${RELAY_ROOT}${encodeURIComponent(parsed.origin)}${parsed.pathname === "/" ? "" : parsed.pathname}${parsed.search}`;
